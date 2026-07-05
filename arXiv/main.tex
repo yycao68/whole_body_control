@@ -1,0 +1,50 @@
+% =========================================================
+%  Whole-Body Impedance MPC — journal submission version
+%  ANONYMIZED for double-anonymous review (IEEE T-RO).
+%  The paper content lives in body.tex, shared with
+%  arxiv_main.tex (the non-anonymous arXiv version).
+% =========================================================
+\documentclass[journal]{IEEEtran}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{bm}
+\usepackage{cite}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}{Proposition}
+\newtheorem{lemma}{Lemma}
+
+\interdisplaylinepenalty=2500
+
+% Convenience macros
+\newcommand{\Mbar}{\bar{M}^{-1}}
+\newcommand{\Larm}{\Lambda_{\text{arm}}}
+\newcommand{\Fmpc}{F_{\text{mpc}}}
+\newcommand{\dhat}{\hat{d}}
+\newcommand{\Naug}{\bar{N}_{12}}
+
+\begin{document}
+
+% ----------------------------------------------------------
+\title{Interaction Dynamics for Floating-Base Robots:
+       A Contact-Consistent, Constant-Model Predictive
+       Interaction Layer for Safe Physical Human--Robot Interaction}
+
+% Double-anonymous review: author information omitted (IEEE RAS rules).
+\author{Anonymous~Author(s)%
+\thanks{Paper submitted for double-anonymous review. Author names and
+affiliations are omitted in accordance with IEEE T-RO policy.}}
+
+\maketitle
+% PaperPlaza compliance: no page numbers (header digits trip the
+% margin-imposition check; the submission system adds its own numbering).
+\thispagestyle{empty}
+\pagestyle{empty}
+
+\input{body}
+
+\end{document}

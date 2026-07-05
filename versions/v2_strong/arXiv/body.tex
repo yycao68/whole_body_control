@@ -1,0 +1,1201 @@
+\begin{abstract}
+Safe physical human--robot interaction on floating-base robots is
+fundamentally a problem of regulating interaction dynamics under changing
+contact constraints.
+This paper develops a contact-consistent normalization of those dynamics:
+after priority-consistent cancellation of balance and contact tasks, the
+end-effector interaction channel reduces to a linear double integrator whose
+discrete state matrix is constant within each contact mode.
+Robot configuration and support conditions enter only through the
+contact-consistent task inertia and hence the input matrix.
+This representation turns floating-base pHRI from a nonlinear whole-body
+control problem into a configuration-invariant predictive interaction problem
+with reusable rollouts, cached contact-mode matrices, and ${\geq}1$\,kHz
+updates.
+The resulting controller regulates the normalized interaction dynamics with a
+receding-horizon QP, a contact-mode-indexed disturbance observer for
+offset-free force rejection, and a null-space realization that preserves
+higher-priority balance tasks.
+We further prove that classical operational-space impedance is the
+infinite-horizon, zero-input limit of the same predictive interaction law;
+impedance is therefore not a separate design principle but a limiting case of
+normalized predictive interaction dynamics.
+Simulation on a 17-DOF biped and a Unitree G1 model validates the structural
+claims: the contact-mode-indexed disturbance observer delivers offset-free force
+rejection---steady-state error under a sustained 8\,N load drops from
+${\sim}13$\,mm without the observer to ${\sim}0.1$\,mm with it---the
+contact-consistent inertia further improves static precision over a free-space
+model ($0.11$ vs $1.00$\,mm), and the constant-model predictor operates at
+${\geq}1$\,kHz across genuine contact-mode switches.
+The results position whole-body impedance behavior, disturbance rejection,
+and contact-mode switching as consequences of a single interaction-dynamics
+representation.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Interaction dynamics, whole-body control, model predictive control,
+impedance control, floating-base robots, physical human--robot interaction,
+contact-consistent dynamics, legged manipulation.
+\end{IEEEkeywords}
+
+% ----------------------------------------------------------
+\section{Introduction}
+
+Legged and floating-base robots must increasingly do more than locomote: they
+must physically interact with people and their surroundings while keeping
+balance. Safe interaction on such platforms is fundamentally a problem of
+\emph{interaction dynamics}---the closed-loop relation between the arm
+end-effector force and motion---coupled, through the contact constraints, to
+the whole-body balance task.
+These objectives are tightly coupled---arm motions shift the center of
+mass~(CoM), changing contact force distribution, while ground reactions
+propagate back through the body and appear as disturbances at the
+end-effector.
+Classical fixed-base impedance control~\cite{hogan1985impedance} and its
+MPC extensions~\cite{cao2023passive,cao2026impedance} cannot address this
+coupling because they assume the robot base is rigidly anchored.
+
+The dominant paradigm for whole-body control of legged systems decouples
+the problem into two layers: a centroidal MPC that optimizes ground
+reaction forces~(GRFs) using a linearized single rigid-body dynamics~(SRBD)
+model~\cite{dicarlo2018dynamic,kim2019highly}, and an inner WBC layer that
+resolves these forces into joint torques via a prioritized
+QP~\cite{bellicoso2016perception,koolen2016design}.
+This architecture achieves remarkable locomotive agility---the MIT Cheetah
+3~\cite{dicarlo2018dynamic} executes high-speed bounding and stair
+climbing---but allocates 100\% of the robot's control authority to
+locomotion and base-posture maintenance.
+Any external arm interaction is treated as a disturbance to be suppressed,
+not as a channel to be actively regulated.
+A biped reaching to assist a human standing beside it, or a quadruped
+manipulating a valve while maintaining stance, cannot be handled by these
+frameworks with the compliance and zero-steady-state-error guarantees
+required for safe pHRI.
+
+Conversely, impedance MPC methods designed for fixed-base
+manipulators~\cite{cao2026impedance,cao2023passive,haninger2022model,roveda2020model}
+lack an unactuated base state, generalized-coordinate partitioning, or
+contact-consistent mass inverses.
+They assume an infinite-mass ground connection and cannot model the
+propagation of foot contact forces to end-effector apparent inertia.
+Deploying them directly on a floating-base platform produces steady-state
+torque errors and potential instability during contact transitions.
+
+The technical gap is therefore not merely the absence of another whole-body
+controller. It is the absence of a representation in which interaction
+dynamics remain structurally the same as robot posture, contact mode, and
+apparent inertia change. This paper closes that gap through a simple
+sequence: interaction dynamics are first normalized through contact
+consistency, the normalized dynamics become a linear double integrator,
+predictive regulation is applied to that linear interaction model, and
+classical impedance appears as the infinite-horizon limiting case.
+The main contributions are:
+
+\begin{enumerate}
+\item \textbf{Interaction-dynamics normalization.}
+We formulate floating-base arm pHRI as an interaction-dynamics problem and
+derive the contact-consistent residual plant obtained after higher-priority
+balance and contact tasks are removed through the whole-body null space.
+
+\item \textbf{Configuration-invariant predictor.}
+We prove that the normalized end-effector interaction dynamics reduce to an
+exact linear double integrator with constant discrete state matrix $A_d$
+within each contact mode. Contact configuration and robot posture affect the
+predictor only through the input matrix $B_d^{(m)}$, via the
+contact-consistent task inertia $\Larm$.
+
+\item \textbf{Predictive interaction control and impedance equivalence.}
+We regulate the normalized dynamics with a finite-horizon QP and show that
+classical operational-space impedance is recovered as the infinite-horizon,
+zero-input limit. Thus impedance behavior is a special case of predictive
+interaction dynamics rather than a separate controller family.
+
+\item \textbf{Floating-base realization and theory validation.}
+We realize the predictor inside a priority-consistent WBC stack using
+contact-mode-indexed matrices, a disturbance observer, and covariance
+inflation across contact changes. Simulations on a 17-DOF biped and a
+Unitree G1 model validate the constant-predictor structure,
+offset-free disturbance rejection, and stable operation across contact-mode
+switches.
+\end{enumerate}
+
+The remainder of this paper is organized as follows.
+Section~\ref{sec:related} surveys related work.
+Section~\ref{sec:dynamics} formulates interaction dynamics on floating-base
+robots.
+Section~\ref{sec:osf} derives the contact-consistent normalization.
+Section~\ref{sec:impedancempc} presents predictive regulation of the
+normalized dynamics.
+Section~\ref{sec:switching} treats contact-mode changes.
+Section~\ref{sec:theorem} proves the impedance-equivalence result.
+Section~\ref{sec:stability} analyzes stability.
+Section~\ref{sec:torque} gives the whole-body realization and compares the
+framework with prior work.
+Section~\ref{sec:simulation} reports theory-validation simulations.
+Section~\ref{sec:conclusion} concludes.
+
+% ----------------------------------------------------------
+\section{Related Work}\label{sec:related}
+
+\subsection{Centroidal MPC for Locomotion}
+
+The dominant approach to predictive whole-body control projects the robot's
+dynamics onto its centroidal frame.
+Di~Carlo et~al.~\cite{dicarlo2018dynamic} introduced the convex SRBD
+formulation for MIT Cheetah~3, linearizing the rotation dynamics about a
+nominal pitch-roll and treating each support foot as a rigid contact.
+The resulting time-varying linear system admits a QP solution at 40\,Hz for
+the outer MPC, while an inner Whole-Body Impulse Control~(WBIC) layer maps
+GRFs to joint torques at 500\,Hz.
+This bi-level architecture is foundational to the present work; however,
+Kim et~al.~\cite{kim2019highly} dedicate both layers entirely to
+locomotion---external arm forces are filtered out through centroidal inertia
+assumptions and rigid GRF assignment, and no mechanism exists for compliant
+manipulation.
+
+Bellicoso et~al.~\cite{bellicoso2016perception} proposed a hierarchical WBC
+scheme for the ANYmal quadruped that solves a cascaded sequence of QPs to
+track base and end-effector tasks simultaneously.
+While effective for continuous trotting and terrain adaptation, the WBC
+stack uses classical PD task objectives with instantaneous feedback
+($N{=}1$); there is no receding-horizon mechanism to predict and pre-load
+corrective torque before a disturbance develops.
+Sustained contact forces produce the steady-state error quantified in
+\eqref{eq:sse} below.
+
+Koolen et~al.~\cite{koolen2016design} implemented a momentum-based
+controller for Atlas that regulates centroidal momentum via a QP
+distributing contact forces.
+The formulation shares the centroidal perspective but does not include a
+predictive loop for arm impedance and relies on high-gain stiffness to
+suppress interaction errors.
+
+Sleiman et~al.~\cite{sleiman2021unified} proposed a unified MPC framework
+for whole-body dynamic locomotion and manipulation on legged robots,
+simultaneously optimizing body posture, gait timing, and arm end-effector
+trajectories over a receding horizon.
+This represents the state of the art for integrated loco-manipulation and
+is the closest prior work to the present architecture.
+The key structural difference is that the arm task in~\cite{sleiman2021unified}
+is formulated as a fixed-base QP subproblem: the task-space inertia uses
+$M^{-1}$ rather than the contact-consistent $\Mbar$, and no integrating
+disturbance state is included to guarantee zero steady-state pHRI error
+under sustained contact.
+
+\subsection{Trajectory Optimization and Nonlinear MPC}
+
+Winkler et~al.~\cite{winkler2018gait} developed TOWR, a phase-based
+trajectory optimizer that simultaneously synthesizes gait sequences,
+foothold locations, and full-body motions over multi-second horizons using a
+nonlinear program solved by interior-point methods.
+The full rigid-body model captures leg-inertia coupling that SRBD ignores,
+but restricts operation to ${\sim}20$--50\,Hz and offline planning.
+Real-time pHRI management at 1\,kHz is outside the scope of this approach.
+
+Grandia et~al.~\cite{grandia2023perceptive} extended TOWR with a real-time
+model-predictive framework using sequential convex approximations, achieving
+20\,Hz replanning for rough terrain.
+While this improves responsiveness compared to pure offline planning, it
+still lacks the integrating disturbance estimation required for zero
+steady-state error under sustained contact.
+
+\subsection{Impedance MPC for Manipulation}
+
+Force control for robotic manipulators---encompassing impedance, admittance,
+and hybrid position/force strategies---is surveyed comprehensively
+in~\cite{villani2016force}.
+The foundational impedance control law of Hogan~\cite{hogan1985impedance}
+was unified with position and torque control into a passivity-preserving
+framework by Albu-Sch\"{a}ffer, Ott, and
+Hirzinger~\cite{albu2007unified}, providing the theoretical basis on which
+predictive extensions build.
+
+The present paper is a direct structural extension of a line of prior
+work on saturated and predictive control.
+Anti-windup designs for output tracking under actuator saturation and
+constant disturbances~\cite{cao2004antiwindup}, and the associated
+domain-of-attraction analysis~\cite{cao2002antiwindup}, established that an
+integrating disturbance channel achieves zero steady-state tracking error
+for fixed-base saturated linear systems---the foundational insight carried
+forward here to the floating-base, contact-switching setting via the Kalman
+augmented state.
+The min--max MPC formulation for LPV systems~\cite{cao2005minmax} introduced
+parameter-varying input matrices with input constraints, the direct
+precursor to the contact-mode-indexed $B_d^{(m)}$ library of the present
+work.
+Building on these fixed-base results, Cao, Cheng, and
+Li~\cite{cao2023passive} introduced a passive MPC framework for pHRI on
+fixed-base manipulators in which the outer MPC optimizes impedance
+parameters $\{M_d,D_d\}$ over a receding horizon; passivity is enforced via
+a virtual energy tank.
+Because impedance parameters enter nonlinearly into the prediction matrices,
+iterative solvers are required and update rates are limited to 10--30\,Hz.
+The two-layer Impedance MPC for pHRI~\cite{cao2026impedance} resolved this
+rate limitation on fixed-base manipulators: an analytical feedforward
+cancels gravity, Coriolis, and task-space inertia, reducing the residual
+plant to a double integrator with a \emph{constant} state-transition
+matrix, while the MPC decision variables become corrective \emph{forces}
+$\Fmpc$ and a Kalman-augmented disturbance state provides a formal
+zero-steady-state-error guarantee---sub-0.05\,mm under a sustained 15\,N
+force on a 7-DOF manipulator, versus 44.8\,mm for classical impedance
+control.
+That framework is the direct base of the present paper, which extends it
+from fixed-base manipulators to floating-base humanoids: the constant-$A_d$
+structure is preserved by substituting the contact-consistent mass inverse
+$\Mbar$ into the feedforward linearization, the Kalman state additionally
+absorbs leg-momentum variations and SRBD approximation errors, and the
+contact-mode-indexed structure of~\cite{cao2005minmax} handles stance-phase
+transitions while preserving the precomputed lifted-system sparsity and
+rollout structure.
+
+Haninger, Hegeler, and Peternel~\cite{haninger2022model} optimize force
+references and impedance parameters jointly using stochastic MPC with
+Gaussian Process models of task forces.
+This provides complementary insights into uncertainty-aware impedance
+shaping but does not address floating-base dynamics, underactuation, or
+contact-consistent operational-space formulation.
+
+\subsection{Operational Space Control and Floating-Base Inverse Dynamics}
+
+Khatib~\cite{khatib1987unified} formulated the operational space control
+framework, establishing task-space inertia, Coriolis compensation, and
+dynamically-consistent pseudoinverses as the mathematical foundation for
+task-level manipulation.
+Sentis and Khatib~\cite{sentis2005synthesis} extended this to hierarchical
+synthesis of whole-body behaviors, proving that priority-ordered null-space
+projection guarantees non-interference between tasks---the SK05 law that
+forms the backbone of Level~2 in the present architecture.
+Righetti et~al.~\cite{righetti2011inverse} unified the floating-base
+inverse dynamics perspective with external contact constraints, showing how
+$\Mbar$ arises naturally from an orthogonal decomposition of the constrained
+dynamics.
+The present work builds on~\cite{khatib1987unified,sentis2005synthesis,righetti2011inverse}
+by embedding a predictive MPC layer in the residual null space of the
+floating-base contact-consistent hierarchy.
+
+% ----------------------------------------------------------
+\section{Interaction Dynamics on Floating-Base Robots}\label{sec:dynamics}
+
+\subsection{Generalized Coordinates}
+
+A floating-base robot (humanoid, quadruped) has $n$ actuated joints and a
+6-DOF unactuated base~\cite{righetti2011inverse}. The generalized
+coordinates are:
+\begin{equation}\label{eq:gencoord}
+  q = \begin{bmatrix} q_b \\ q_j \end{bmatrix} \in \mathbb{R}^{n+6},
+  \quad q_b \in SE(3),\; q_j \in \mathbb{R}^n
+\end{equation}
+where $q_b=(p_b,R_b)$ is the base position and orientation and $q_j$ are
+the $n$ joint angles. The velocity vector is:
+\begin{equation}\label{eq:vel}
+  \dot{q} = \begin{bmatrix} v_b \\ \dot{q}_j \end{bmatrix} \in \mathbb{R}^{n+6},
+  \quad v_b = \begin{bmatrix} \dot{p}_b \\ \omega_b \end{bmatrix}
+\end{equation}
+
+\subsection{Equations of Motion}
+
+The floating-base equations of motion~\cite{righetti2011inverse} are:
+\begin{equation}\label{eq:eom}
+  M(q)\ddot{q} + C(q,\dot{q})\dot{q} + G(q) = S^\top\tau + J_c^\top(q)\lambda
+\end{equation}
+where $M(q)\in\mathbb{R}^{(n+6)\times(n+6)}$ is the positive-definite
+inertia matrix; $h=C(q,\dot{q})\dot{q}+G(q)\in\mathbb{R}^{n+6}$ collects
+Coriolis, centrifugal, and gravity terms; $S=[0_{n\times6},\,I_n]$ is the
+selection matrix (the base has no direct actuation); $\tau\in\mathbb{R}^n$
+are commanded joint torques; $J_c(q)\in\mathbb{R}^{n_c\times(n+6)}$ is the
+contact Jacobian; and $\lambda\in\mathbb{R}^{n_c}$ are ground reaction
+forces~(GRFs).
+
+Partitioning \eqref{eq:eom} into base and joint blocks:
+\begin{equation}\label{eq:partition}
+  \begin{bmatrix}M_b & M_{bj} \\ M_{bj}^\top & M_j\end{bmatrix}
+  \begin{bmatrix}\ddot{q}_b \\ \ddot{q}_j\end{bmatrix}
+  +\begin{bmatrix}h_b \\ h_j\end{bmatrix}
+  =\begin{bmatrix}0 \\ \tau\end{bmatrix}
+  +\begin{bmatrix}J_{c,b}^\top \\ J_{c,j}^\top\end{bmatrix}\lambda
+\end{equation}
+
+\subsection{Rigid Contact Constraints}
+
+A rigid contact at point $i$ enforces zero contact-point
+velocity: $J_{c,i}(q)\dot{q}=0$~\cite{righetti2011inverse}.
+Differentiating yields the acceleration-level constraint:
+\begin{equation}\label{eq:contact_acc}
+  J_{c,i}\ddot{q} = -\dot{J}_{c,i}\dot{q}
+\end{equation}
+
+Stacking all contacts and combining with \eqref{eq:eom}:
+\begin{equation}\label{eq:KKT}
+  \begin{bmatrix}M & -J_c^\top \\ J_c & 0\end{bmatrix}
+  \begin{bmatrix}\ddot{q} \\ \lambda\end{bmatrix}
+  =\begin{bmatrix}S^\top\tau-h \\ \gamma_c\end{bmatrix},
+  \quad \gamma_c\triangleq-\dot{J}_c\dot{q}
+\end{equation}
+
+Solving for the GRFs:
+\begin{equation}\label{eq:GRF}
+  \lambda = \Lambda_c(q)\bigl(-\dot{J}_c\dot{q}-J_cM^{-1}(S^\top\tau-h)\bigr)
+\end{equation}
+where $\Lambda_c=(J_cM^{-1}J_c^\top)^{-1}$ is the contact-space inertia.
+
+\subsection{Contact-Consistent Mass Inverse}
+
+Define the contact-space inertia and the corresponding constrained
+inverse~\cite{khatib1987unified,righetti2011inverse}:
+\begin{equation}\label{eq:Pc}
+  \Lambda_c=(J_cM^{-1}J_c^\top)^{-1}
+\end{equation}
+\begin{equation}\label{eq:Mbar}
+  \Mbar = M^{-1}-M^{-1}J_c^\top\Lambda_cJ_cM^{-1}
+\end{equation}
+$\Mbar$ replaces $M^{-1}$ in all operational-space formulas when contacts
+are active. Equation~\eqref{eq:Mbar} is the Schur-complement inverse of the
+constrained dynamics and is symmetric positive semidefinite on the admissible
+acceleration subspace when $M\succ0$ and $J_c$ has full row rank. The
+associated contact-consistent projector may be written in left/right forms
+depending on the metric, but \eqref{eq:Mbar} is the definition used in the
+task inertia $\Lambda_i=(J_i\Mbar J_i^\top)^{-1}$.
+
+\subsection{Centroidal Dynamics}
+
+The centroidal momentum $h_G=[k^\top,L^\top]^\top=A(q)\dot{q}\in\mathbb{R}^6$
+aggregates the robot's linear and angular momentum about its
+CoM~\cite{orin2013centroidal}. Differentiating:
+\begin{equation}\label{eq:centroidal}
+  \dot{h}_G = G_c(q)\lambda + \begin{bmatrix}mg \\ 0\end{bmatrix},
+  \quad
+  G_c = \begin{bmatrix}I_3 & I_3 & \cdots \\
+                       (p_1{-}p_G)^\times & (p_2{-}p_G)^\times & \cdots\end{bmatrix}
+\end{equation}
+
+For the outer MPC, \eqref{eq:centroidal} is approximated by the
+\textbf{SRBD} model~\cite{dicarlo2018dynamic}, treating the robot as a
+lumped mass $m$ with constant inertia $I_G$. Linearizing about a nominal
+orientation yields:
+\begin{equation}\label{eq:SRBD}
+  \dot{x}_c = A_c x_c + B_c(\{p_i\})u_c
+\end{equation}
+where $x_c\in\mathbb{R}^{12}$ is the centroidal state and $u_c$ collects
+contact forces. The SRBD approximation error is
+$O(m_{\text{leg}}/m_{\text{total}})^2$, acceptable for robots where leg
+mass is below 20--30\% of total mass.
+
+% ----------------------------------------------------------
+\section{Contact-Consistent Interaction Dynamics}
+\label{sec:osf}
+
+\subsection{Task-Space Dynamics}
+
+For a task variable $x_i=\phi_i(q)\in\mathbb{R}^{m_i}$ with Jacobian
+$J_i=\partial\phi_i/\partial q$, substituting \eqref{eq:eom} into the
+task-space acceleration yields the contact-consistent task-space
+dynamics~\cite{khatib1987unified,righetti2011inverse}:
+\begin{equation}\label{eq:taskdyn}
+  \Lambda_i(q)\ddot{x}_i + \mu_i = F_i
+\end{equation}
+where $\Lambda_i=(J_i\Mbar J_i^\top)^{-1}$ is the task-space inertia;
+$\mu_i=\bar{J}_i^\top h - \Lambda_i\dot{J}_i\dot{q}$ collects projected
+Coriolis, centrifugal, and gravity terms; $\bar{J}_i=\Mbar J_i^\top\Lambda_i$
+is the dynamically-consistent pseudoinverse; and $F_i$ is the commanded
+operational-space force.
+
+\subsection{Hierarchical Task Synthesis (SK05)}
+
+For $k$ tasks in priority order (Task~1 = highest), the Sentis--Khatib
+law~\cite{sentis2005synthesis} synthesizes the control torque as:
+\begin{equation}\label{eq:SK05}
+  \tau = J_1^\top F_1 + \bar{N}_1^\top J_2^\top F_2
+       + \bar{N}_{12}^\top J_3^\top F_3 + \cdots
+       + \bar{N}_{1\cdots k}^\top\tau_{\text{null}}
+\end{equation}
+where $\bar{N}_{1\cdots i}=\prod_{j=1}^{i}(I-\bar{J}_jJ_j)$ is the
+accumulated contact-consistent null-space projector.
+Under an exact model, dynamically consistent projectors, inactive actuator
+saturation, and no change in the active contact/friction inequalities, the
+key property $J_j\bar{N}_{1\cdots i}=0$ for all $j\leq i$ gives zero
+acceleration at all higher-priority task coordinates.
+Thus the arm predictive interaction layer is designed to be non-interfering
+with contact maintenance and balance in the ideal hierarchy; in
+implementation, saturation and contact active-set changes are handled by
+conservative force limits and by the contact-mode update protocol.
+
+Each task force $F_i$ in \eqref{eq:SK05} is typically a PD law:
+\begin{equation}\label{eq:PD}
+  F_i = \Lambda_i(\ddot{x}_{di}+K_{D,i}\dot{e}_i+K_{P,i}e_i)+\mu_i
+\end{equation}
+Under a persistent disturbance force $F_h$:
+\begin{equation}\label{eq:sse}
+  e_{\infty,i}
+  = K_{P,i}^{-1}\Lambda_i^{-1}F_h
+  = K_{x,i}^{-1}F_h \neq 0,\qquad
+  K_{x,i}\triangleq\Lambda_iK_{P,i}.
+\end{equation}
+Here $K_{P,i}$ is the acceleration-level proportional gain in
+\eqref{eq:PD}, while $K_{x,i}$ is the equivalent Cartesian stiffness in
+N/m. The simulation baselines report $K_x$ directly; therefore the D1
+theoretical offset under an 8\,N force and $K_x=800$\,N/m is
+$8/800=10$\,mm.
+This residual steady-state error is the fundamental limitation of the SK05
+PD law and the primary motivation for regulating the arm task through
+predictive interaction dynamics.
+
+% ----------------------------------------------------------
+\section{Predictive Regulation of Interaction Dynamics}\label{sec:impedancempc}
+
+\subsection{Architecture Overview}
+
+The control objectives are:
+\begin{enumerate}
+  \item maintain balance with contact forces inside friction cones;
+  \item track an arm end-effector reference $p_d(t)$;
+  \item reject pHRI forces with zero steady-state tracking error.
+\end{enumerate}
+
+These objectives are addressed by three nested control levels:
+
+\textbf{Level~1 (Centroidal MPC, 40--100\,Hz):} plans CoM trajectory and
+GRFs over a 500\,ms horizon via the SRBD model \eqref{eq:SRBD}.
+
+\textbf{Level~2 (WBC Hierarchy, 500\,Hz):} resolves the Level~1 GRFs into
+joint torques using the SK05 law \eqref{eq:SK05} for contact and balance
+tasks, leaving the arm end-effector task slot open.
+
+\textbf{Level~3 (predictive interaction regulation, $\geq$1\,kHz):} fills the arm slot with a
+receding-horizon QP that predicts and rejects pHRI disturbances, replacing
+the PD law \eqref{eq:PD} with a predictive force command.
+
+\subsection{Contact-Consistent Residual Plant}
+
+After Level~2 commits torques for contact maintenance and balance, the
+residual arm end-effector dynamics are:
+\begin{equation}\label{eq:plant}
+  \Larm(q)\ddot{x}_{\text{arm}}+\mu_{\text{arm}} = F_{\text{arm}}+d_{\text{ext}}
+\end{equation}
+where $\Larm=(J_{\text{arm}}\Mbar J_{\text{arm}}^\top)^{-1}$ uses the
+contact-consistent mass inverse \eqref{eq:Mbar},
+$\mu_{\text{arm}}=\bar{J}_{\text{arm}}^\top h - \Larm\dot{J}_{\text{arm}}\dot{q}$,
+and $d_{\text{ext}}$ is the pHRI wrench projected to arm task space.
+
+\subsection{Contact-Consistent Feedforward and Horizon Freezing}
+
+We execute an analytical operational-space feedforward:
+\begin{subequations}\label{eq:feedforward}
+\begin{align}
+  F_{\text{arm}} &= \Larm(q)\ddot{p}_d + \mu_{\text{arm}} - \Fmpc \label{eq:ff_a}\\
+  \tau_{\text{ff,arm}} &= S\,\Naug^\top J_{\text{arm}}^\top F_{\text{arm}} \label{eq:ff_b}
+\end{align}
+\end{subequations}
+
+Level~2 updates $\Naug(q)$, $\Larm(q)$, and $\mu_{\text{arm}}$ at 500\,Hz.
+Level~3 runs at $\geq$1\,kHz; on interleaved cycles the projector and
+feedforward terms are held at their most recent Level~2 values.
+The configuration changes by at most $\|\dot{q}\|\Delta t_2\approx0.002$\,rad
+per Level~2 interval, so the frozen-matrix error is first-order small.
+
+Substituting the feedforward \eqref{eq:ff_a} into the residual plant
+\eqref{eq:plant} cancels the $\Larm\ddot p_d+\mu_{\text{arm}}$ terms, and with
+the error convention $e_{\text{arm}}=x_{\text{arm}}-p_d$ (actual minus
+desired) and $d(t)\triangleq\Larm^{-1}d_{\text{ext}}$ the residual tracking
+error dynamics reduce to:
+\begin{equation}\label{eq:errordyn}
+  \ddot{e}_{\text{arm}} = -\Larm^{-1}(q)\,\Fmpc + d(t).
+\end{equation}
+The corrective force $\Fmpc$ thus enters with a restoring sign, so a positive
+$\Fmpc$ drives $e_{\text{arm}}\to0$.
+
+\begin{proposition}[Constant $A_d$ and Local LTI Horizon Freezing]
+\label{prop:constant_Ad}
+Within a fixed contact mode, by evaluating the configuration-dependent task
+inertia at the current sampling instant $k$, the discrete-time state
+transition matrix for $x_{e,k}=[e_{\text{arm}}^\top,\dot{e}_{\text{arm}}^\top]^\top$
+reduces to a constant linear system:
+\begin{equation}\label{eq:Ad}
+  A_d = \begin{bmatrix}I_3 & \Delta t\,I_3 \\ 0 & I_3\end{bmatrix},
+  \quad
+  B_d(q_k) = \begin{bmatrix}0 \\ -\Larm^{-1}(q_k)\,\Delta t\end{bmatrix}
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+The continuous residual error dynamics \eqref{eq:errordyn} have state matrix
+$A_c=\left[\begin{smallmatrix}0&I_3\\0&0\end{smallmatrix}\right]$, which is
+nilpotent ($A_c^2=0$). The matrix exponential therefore terminates at first
+order, $A_d=e^{A_c\Delta t}=I+A_c\Delta t$, which is \emph{exact} and
+independent of configuration---the double-integrator structure in
+\eqref{eq:Ad}. Evaluating $\Larm(q_k)$ at the current sample freezes
+$B_d(q_k)=[0;\,-\Larm^{-1}(q_k)\Delta t]$ over the horizon, so $(A_d,B_d(q_k))$ is
+LTI within the receding window; the configuration drift
+$\|\dot q\|\Delta t_2$ between Level-2 updates enters only $B_d$ and is
+first-order small.
+\end{proof}
+
+The constant $A_d$ property permits the lifted rollout pattern, powers of
+$A_d$, and sparsity structure of the QP to be computed offline. The numerical
+input matrix $B_d(q_k)$ still depends on the frozen task inertia $\Larm(q_k)$,
+so $\Gamma$, $H$, and the linear term are updated online after horizon
+freezing. Thus the online computation is a small dense update on a fixed
+structure, not a full nonlinear MPC rebuild.
+
+\subsection{Receding-Horizon QP}
+
+The input matrix indexed to contact mode $m$ is:
+\begin{equation}\label{eq:Bd}
+  B_{d,k}^{(m)} = \begin{bmatrix}0 \\ -(\Lambda_{\text{arm}}^{(m)}(q_k))^{-1}\Delta t\end{bmatrix}
+\end{equation}
+
+The constant $A_d$ property permits the lifted rollout pattern, powers of
+$A_d$, and sparsity structure of the QP to be computed offline. The
+numerical input matrix $B_{d,k}^{(m)}$ still depends on the frozen task
+inertia $\Larm(q_k)$, so $\Gamma$, $H$, and the linear term are updated online
+after horizon freezing.
+The $N$-step prediction matrix $\Gamma_k^{(m)}$ is constructed from
+$(A_d,B_{d,k}^{(m)})$ by standard lifted-system expansion.
+The receding-horizon QP is:
+\begin{equation}\label{eq:QP}
+  \min_{U}\;\tfrac{1}{2}U^\top H_k^{(m)}U + h_k^{(m)\top}U
+  \quad\text{s.t.}\quad \|\Fmpck{k}\|_\infty\leq F_{\max}
+\end{equation}
+with $H_k^{(m)}=\Gamma_k^{(m)\top}\bar{Q}\Gamma_k^{(m)}+\bar{R}$ and
+$h_k^{(m)}=\Gamma_k^{(m)\top}\bar{Q}x_{\text{free},k}^{(m)}$.
+The contact-mode index $m$ plays the role of the scheduling variable in the
+LPV-MPC framework of~\cite{cao2005minmax}, while the configuration
+dependence enters through the frozen $\Larm(q_k)$ inside $B_{d,k}^{(m)}$.
+The box constraint $\|\Fmpc\|_\infty\leq F_{\max}$ is chosen so that arm
+joint torques $\tau_{\text{arm}}=J_{\text{arm}}^\top\Fmpc$ remain below
+hardware limits at all configurations within the operating
+workspace~\cite{cao2002antiwindup}.
+Mapping individual joint torque limits exactly into the Cartesian QP would
+require a configuration-dependent constraint matrix $J_{\text{arm}}^\top$;
+we therefore use the conservative Cartesian force bound to keep a fixed QP
+structure even though the numerical Hessian is updated from $\Larm(q_k)$.
+The QP~\eqref{eq:QP} is strictly convex and solved by OSQP~\cite{stellato2020osqp}
+in $<0.1$\,ms for $N=20$.
+
+\subsection{Kalman Disturbance Augmentation}
+
+The disturbance $d(t)$ in \eqref{eq:errordyn} captures: (i)~external pHRI
+forces; (ii)~unmodeled contact reactions from the feet; and (iii)~SRBD
+approximation error.
+Augmenting with an integrating disturbance state $\dhat\in\mathbb{R}^3$:
+\begin{equation}\label{eq:augstate}
+  \begin{bmatrix}x_{e,k+1}\\\dhat_{k+1}\end{bmatrix}
+  =\underbrace{\begin{bmatrix}A_d & B_d^{(m)} \\ 0 & I\end{bmatrix}}_{A_{\text{aug}}}
+  \begin{bmatrix}x_{e,k}\\\dhat_{k}\end{bmatrix}
+  +\begin{bmatrix}B_d^{(m)}\\0\end{bmatrix}\Fmpck{k}+w_k
+\end{equation}
+with $w\sim\mathcal{N}(0,Q_w)$ and $v\sim\mathcal{N}(0,R_v)$.
+Unlike the strict random-walk model of~\cite{cao2026impedance}, in which
+process noise drives only the disturbance state, $Q_w$ here retains a
+small block on $x_e$---two orders of magnitude below the $\dhat$
+block (Section~\ref{sec:simulation})---to regularize the filter against
+the frozen-matrix and SRBD residuals of the floating-base setting; the
+offset-free property is unaffected, as it follows from the integrating
+structure of $A_{\text{aug}}$, not from the noise partition.
+The Kalman gain $K_f$ is computed offline from the steady-state discrete
+algebraic Riccati equation.
+The integrating structure of $A_{\text{aug}}$ guarantees $\dhat_{k}\to d$
+for any bounded constant disturbance~\cite{cao2004antiwindup}.
+
+The free-response prediction fed into the QP is:
+\begin{equation}\label{eq:freeresponse}
+  x_{\text{free}}^{(m)} = A_d^N x_e + \sum_{j=0}^{N-1}A_d^j B_d^{(m)}\dhat
+\end{equation}
+This causes the optimizer to pre-load corrective force before the
+disturbance fully manifests at the end-effector.
+
+% ----------------------------------------------------------
+\section{Contact-Mode Changes in Interaction Dynamics}\label{sec:switching}
+
+\subsection{Contact-Mode Switch Protocol}
+
+When a foot lifts off or touches down, $J_c$ changes discontinuously;
+consequently $\Mbar$, $\Larm$, and $B_d$ all jump.
+At contact switch time $t_s$, the following protocol is executed in order:
+\begin{enumerate}
+  \item Recompute $\Mbar$ with the new $J_c$.
+  \item Recompute $\Larm$; select new mode index $m_{\text{new}}$; update $B_{d,k}^{(m_{\text{new}})}$ from the frozen configuration.
+  \item \textbf{Covariance inflation:} $P_{\text{aug}}\leftarrow\alpha P_{\text{aug}}$,
+        $\alpha\in[3,5]$, to allow rapid re-estimation of the disturbance.
+  \item \textbf{Hold $\dhat$:} do not reset to zero---balance-related
+        disturbances persist across contact transitions.
+\end{enumerate}
+The Kalman filter re-converges within approximately $5\tau_{\text{Kalman}}$
+samples, after which the disturbance estimate is again accurate.
+
+\subsection{Contact-Mode-Indexed Matrix Library}
+
+For a robot cycling through $K$ repeating contact modes, the contact Jacobian
+row pattern, lifted-system sparsity, and powers of $A_d$ are cached for each
+mode. At each QP call, the controller freezes the current configuration,
+recomputes $\Larm(q_k)$ and $B_{d,k}^{(m)}$, and updates $\Gamma_k^{(m)}$ and
+$H_k^{(m)}$ on the cached structure. Since $A_d$ is constant
+(Proposition~\ref{prop:constant_Ad}), $A_d^N$ is precomputed once globally.
+For non-periodic or highly variable contact sequences, the same lifted-system
+expansion is reconstructed online; this remains tractable because only the
+input blocks depend on the current contact/configuration state while the
+double-integrator state transition is fixed.
+
+% ----------------------------------------------------------
+\section{Impedance as the Infinite-Horizon Limit}\label{sec:theorem}
+
+\begin{theorem}[Impedance Equivalence of Predictive Interaction Dynamics]\label{thm:equivalence}
+Under rigid contacts, fixed contact mode, and no disturbance, the
+unconstrained infinite-horizon predictive interaction controller (Level~3, $N\to\infty$)
+renders a classical task-space impedance law:
+\begin{equation}\label{eq:impedance}
+  \Larm(q)\ddot{e}+\Larm K_v\dot{e}+\Larm K_e e = F_h
+\end{equation}
+with effective configuration-adaptive mass $M_{d,\emph{eff}}=\Larm(q)$
+depending on both arm posture and contact configuration.
+\end{theorem}
+
+\begin{proof}
+In the infinite-horizon unconstrained limit with $\dhat=0$, the QP reduces to
+the static discrete-LQR (Riccati) feedback $\Fmpc=K_\infty x_e$. Partition
+$K_\infty=[K_p^\star\;K_v^\star]$ and define the acceleration-level gains by
+factoring through the task inertia,
+$K_e=\Larm^{-1}K_p^\star$ and $K_v=\Larm^{-1}K_v^\star$. Equivalently,
+$\Fmpc=\Larm(q)\,(K_e\,e+K_v\,\dot e)$. Substituting into
+\eqref{eq:errordyn} with
+$d=\Larm^{-1}F_h$ gives
+$\ddot e=-(K_e e+K_v\dot e)+\Larm^{-1}F_h$, and premultiplying by $\Larm$
+yields \eqref{eq:impedance}. Hence the effective mass, damping, and stiffness
+are $M_{d,\text{eff}}=\Larm(q)$, $D_{\text{eff}}=\Larm K_v$, and
+$K_{\text{eff}}=\Larm K_e$.
+The gains $(K_e,K_v)$ are the Riccati image of the QP weights $(Q,R)$, not
+the weights themselves; no direct equality between cost weights and physical
+stiffness/damping is assumed.
+The contact-consistent $\Mbar$ in $\Larm$ makes the effective mass adapt to
+both the arm joint configuration and the active contact footprint.
+\end{proof}
+
+Theorem~\ref{thm:equivalence} establishes that predictive interaction
+regulation generalizes classical impedance control: the finite-horizon
+constrained QP adds predictive disturbance rejection, constraint enforcement,
+and contact-mode adaptation while reducing to a classical linear impedance
+law in the infinite-horizon unconstrained limit.
+The QP weights $(Q,R)$ tune the Riccati gains $(K_e,K_v)$ indirectly; the
+physical stiffness and damping are the resulting
+$K_{\text{eff}}=\Larm K_e$ and $D_{\text{eff}}=\Larm K_v$, not the weights
+themselves.
+
+Notably, all three closed-loop impedance parameters---$M_{d,\text{eff}}$,
+$D_{\text{eff}}$, and $K_{\text{eff}}$---adapt automatically as the arm
+configuration and contact state change, while the QP weights $(Q,R)$ remain
+fixed design parameters.
+This adaptation is a structural by-product of $\Larm(q)$ and incurs no
+additional solver cost, preserving the ${\geq}1$\,kHz control rate.
+
+% ----------------------------------------------------------
+\section{Stability of Normalized Interaction Dynamics}\label{sec:stability}
+
+\subsection{Zero Steady-State Error Under Fixed Contact Mode}
+
+\begin{theorem}[Zero Steady-State Error]\label{thm:zss}
+Suppose the disturbance $d(t)$ in \eqref{eq:errordyn} satisfies
+$\|d\|_\infty\leq\bar{d}<\infty$ and is asymptotically constant.
+Under fixed contact mode, the Kalman-augmented closed-loop system with the
+Level~3 QP feedback is asymptotically stable, and
+$\lim_{k\to\infty}\|e_{\emph{arm},k}\|=0$.
+\end{theorem}
+
+\begin{proof}
+The claim combines regulator stability with offset-free disturbance rejection;
+these rest on two \emph{distinct} structural properties, which the augmented
+model separates.
+
+\emph{Regulator (control) side.} The \emph{un-augmented} pair
+$(A_d,B_d^{(m)})$ is controllable: $B_d^{(m)}=[0;\,-\Larm^{-1}\Delta t]$ has
+full column rank whenever $\Larm^{-1}$ is nonsingular, and then
+$[\,B_d^{(m)}\;\; A_dB_d^{(m)}\,]$ has rank $6$. Two singularities can violate
+this---(i)~\emph{kinematic arm singularities} (e.g., a fully-extended elbow)
+where $J_{\text{arm}}$ drops rank, and (ii)~\emph{contact-state singularities}
+where the platform loses all ground contact---so the result is stated on a
+compact, singularity-free subset $\mathcal{W}$. On $\mathcal{W}$ the
+infinite-horizon LQR gain $K_\infty$ places the error-loop eigenvalues strictly
+inside the unit disk.
+
+\emph{Offset-free (observer) side.} The integrating block of
+$A_{\text{aug}}$ has eigenvalues at $1$ and is \emph{not} controllable from
+$\Fmpc$---the input $[B_d^{(m)};0]$ is zero on the $\dhat$ rows. This is by
+design: a constant disturbance is rejected through the internal-model plus
+observer, not by driving the $\dhat$ modes. The property actually required is
+\emph{detectability} of $(A_{\text{aug}},C)$ with $C=[I_6\;0]$; since $\dhat$
+enters the measured state $x_e$ through $B_d^{(m)}$ of full column rank, the
+augmented pair is detectable, and the steady-state Kalman filter gives
+$\dhat_{k}\to d$ for any bounded constant $d$. The free response
+\eqref{eq:freeresponse} then pre-loads $-\dhat$, and the stable error loop
+converges to $e_\infty=0$. The box constraint $\|\Fmpc\|_\infty\le F_{\max}$
+defines a polyhedral invariant set $\mathcal{S}$~\cite{cao2002antiwindup} inside
+which this convergence holds.
+\end{proof}
+
+\subsection{Transient Bound Across Contact Transitions}
+
+Across a contact switch, $B_d$ jumps by
+$\Delta B_d=B_d^{(m_{\text{new}})}-B_d^{(m_{\text{old}})}$.
+The error bound is:
+\begin{equation}\label{eq:transient}
+  \|e(t)\| \leq \|e(t_s)\|
+    + c_1\|\Delta B_d\|\cdot\|\dhat\|
+    + c_2\|d_{\text{new}}\|\cdot\Delta t_{\text{conv}}
+\end{equation}
+where $\Delta t_{\text{conv}}\approx5\tau_{\text{Kalman}}$ is the
+re-convergence time after covariance inflation, and $c_1,c_2>0$ depend on
+the closed-loop eigenvalue placement.
+
+\subsection{Null-Space Barrier Stability}
+
+The contact-consistent null-space torque enforcing joint limits is:
+\begin{equation}\label{eq:null}
+  \tau_{\text{null}}
+    = \bar{N}_{\text{arm}}^\top\bigl(-k_{\text{null}}(q-q_0)
+      -d_{\text{null}}\dot{q}+g(q)\bigr)
+\end{equation}
+where $\bar{N}_{\text{arm}}=I-\bar{J}_{\text{arm}}J_{\text{arm}}$ uses the
+contact-consistent pseudoinverse and $g(q)$ is the joint-limit barrier
+gradient.
+Under the same ideal hierarchy assumptions used above, projection through
+$\bar{N}_{\text{arm}}$ gives zero wrench at the arm task coordinate. With
+torque saturation or friction-cone active-set changes, this decoupling becomes
+approximate and must be enforced by the low-level QP limits.
+
+% ----------------------------------------------------------
+\section{Whole-Body Realization and Framework Comparison}
+\label{sec:torque}
+
+\subsection{Whole-Body Torque Realization}
+
+Combining all three levels:
+\begin{equation}\label{eq:fulltorque}
+  \tau = \tau_{\text{contact}}
+       + \bar{N}_1^\top\tau_{\text{balance}}
+       + \Naug^\top\bigl[\tau_{\text{ff,arm}}
+         + J_{\text{arm}}^\top\Fmpc + \tau_{\text{null}}\bigr]
+\end{equation}
+Equation~\eqref{eq:fulltorque} is the whole-body realization of the
+normalized interaction-dynamics controller.
+The hierarchical null-space structure follows the SK05
+law~\cite{sentis2005synthesis} extended to the contact-consistent
+floating-base setting~\cite{khatib1987unified,righetti2011inverse}.
+The contribution here is not the null-space hierarchy itself, but the
+normalized predictive interaction force $\Fmpc$ that occupies the residual
+arm channel. Under exact dynamics and inactive saturation/friction active-set
+changes, the projections $\bar{N}_1^\top$ and $\Naug^\top$ isolate this
+interaction layer from contact maintenance and balance, while the
+Kalman-augmented QP provides the offset-free disturbance rejection that the
+classical OS PD law \eqref{eq:PD} cannot achieve.
+
+\subsection{Architectural Comparison}\label{sec:comparison}
+
+Table~\ref{tab:comparison} summarizes the mathematical and architectural
+distinctions between the proposed framework and the most relevant prior
+work. The proposed input matrix is indexed by contact mode and by the frozen
+configuration through $\Larm(q_k)$.
+
+\begin{table*}[!t]
+\caption{Architectural and Mathematical Comparison}
+\label{tab:comparison}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}llllll}
+\toprule
+\textbf{Aspect} & \textbf{Base \cite{cao2026impedance}} & \textbf{Bellicoso et al.\ \cite{bellicoso2016perception}} & \textbf{Kim et al.\ \cite{kim2019highly}} & \textbf{Proposed} \\
+\midrule
+Primary objective    & Fixed-base pHRI           & Quadruped locomotion  & Dynamic locomotion    & Normalized interaction dynamics for floating-base pHRI \\
+Task-space inertia   & $(JM^{-1}J^\top)^{-1}$   & N/A                   & N/A                   & $(J\Mbar J^\top)^{-1}$ \\
+Prediction horizon   & $N$-step QP               & $N=1$                 & $\sim$10--30 steps    & $N$-step QP (${\geq}$1\,kHz) \\
+Disturbance handling & Kalman, fixed base        & WBC weight tuning     & Centroidal inertia    & Kalman: pHRI + leg momentum \\
+Input matrix         & $B_d$ fixed               & N/A                   & N/A                   & $B_{d,k}^{(m)}$, contact/configuration indexed \\
+Null-space use       & Joint centering           & Posture tracking      & Locomotion            & Predictive interaction QP \\
+Steady-state error   & Zero (fixed base)         & Nonzero under load    & Nonzero under load    & Zero (Theorem~\ref{thm:zss}) \\
+Contact transitions  & N/A                       & Mode switching        & Gait phases           & Covariance-inflation protocol \\
+\bottomrule
+\end{tabular*}
+\end{table*}
+
+% ----------------------------------------------------------
+\section{Theory-Validation Experiments}\label{sec:simulation}
+
+The simulations are organized as validation of the theory rather than as a
+catalog of scenarios. Scenarios~A and~C test the fixed-contact normalized
+predictor and offset-free disturbance rejection. Scenario~B stress-tests the
+same predictor under periodic contact shocks; with both feet planted at the
+reported gains the disturbance observer is the dominant factor and the
+contact-consistent and free-space predictors coincide. Scenarios~E and~F test
+whether the same interaction layer remains well behaved when the support model
+changes and the input matrix is switched through the contact-mode library. The
+experiments therefore target the paper's central claims: constant normalized
+state dynamics, contact-dependent input matrices, offset-free disturbance
+rejection in the normalized coordinates, and stable operation across
+contact-mode switches.
+
+\subsection{Simulation Platform}
+
+All experiments were conducted in MuJoCo~3.2~\cite{todorov2012mujoco} at a
+2\,kHz integration rate.
+Scenarios~A and~B use a biped comprising a 3-DOF right arm, two 4-DOF legs,
+and a 6-DOF unactuated floating base (17~DOF total, 11~actuated), with
+total mass 46\,kg.
+Scenario~C uses the official \textbf{Unitree G1} MJCF model from MuJoCo
+Menagerie (29~DOF, 33.3\,kg, factory CAD kinematics), augmented with a
+single end-effector site at \texttt{right\_wrist\_yaw\_link}.
+The G1 model uses position actuators ($K_p=500$, $\text{dampratio}=1$);
+Level~3 applies the position-as-torque approximation
+($\Delta q_i=\tau_i/K_p$) to inject predictive interaction forces through the
+position channel.
+
+The legs are held in double support by a joint-space PD balance controller;
+the centroidal-MPC balance planner of Section~\ref{sec:impedancempc} is not
+exercised in these static-/fixed-stance scenarios. The normalized interaction
+layer runs at 1\,kHz with $N=20$, $\Delta t_3=1$\,ms.
+Friction-cone half-angle $\mu=0.6$.
+Level~3 cost weights: $Q=\mathrm{diag}(6\times10^4 I_3,\;60\,I_3)$,
+$R=0.01\,I_3$.
+Kalman noise: $Q_w=\mathrm{diag}(10^{-4}I_6,\;10^{-2}I_3)$,
+$R_v=10^{-6}I_3$.
+Covariance-inflation coefficient $\alpha=4$.
+
+\subsection{Benchmarked Controllers}
+
+Seven controllers are evaluated across all scenarios (Table~\ref{tab:controllers}).
+
+\begin{table}[!t]
+\caption{Benchmarked Controllers}
+\label{tab:controllers}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{lp{6cm}}
+\toprule
+\textbf{Label} & \textbf{Description} \\
+\midrule
+D1 & Operational-space PD (task PD, no priority hierarchy), Cartesian stiffness $K_x=800$\,N/m, damping $D_x=40$\,Ns/m \\
+D2 & Operational-space PI: adds $K_I=150$\,N/(m$\cdot$s) with anti-windup \\
+D3 & Fixed-base impedance MPC~\cite{cao2026impedance} (uses $M^{-1}$ instead of $\Mbar$) \\
+D4 & WBC assembler + null-space PD centering (no prediction) \\
+D5 & Proposed: WBC + predictive interaction regulation, no Kalman \\
+D6 & Proposed: WBC + predictive interaction regulation + Kalman, no inflation ($\alpha=1$) \\
+D7 & Proposed full: WBC + predictive interaction regulation + Kalman + covariance inflation ($\alpha=4$) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+D1 establishes the analytical baseline: for Cartesian stiffness
+$K_x=800$\,N/m and $F_h=8$\,N, \eqref{eq:sse} predicts
+$e_\infty=F_h/K_x=10.0$\,mm exactly.
+
+\subsection{Scenario A: Fixed Double-Support Step Disturbance}
+
+The robot holds a stationary double-support stance.
+At $t=0.5$\,s, a step pHRI force of 8\,N is applied at the end-effector in
+the $x$-direction and held for the remaining 4.5\,s.
+Results are shown in Table~\ref{tab:scenarioA} and Fig.~\ref{fig:scenarioA}.
+
+\begin{table}[!t]
+\caption{Scenario A --- Fixed Stance, 8\,N Step Disturbance}
+\label{tab:scenarioA}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Controller} & \textbf{RMS err [mm]} & \textbf{SS err [mm]} \\
+\midrule
+D1 OS PD          & 9.24  & 10.17 \\
+D2 OS PI          & 6.82  &  5.86 \\
+D3 Fixed-base MPC   & 3.33  &  1.00 \\
+D4 WBC + PD         & 10.06 & 10.87 \\
+D5 Proposed, no Kalman & 11.82 & 12.89 \\
+D6 Proposed, no inflation & \textbf{3.48} & \textbf{0.11} \\
+D7 Proposed full    & \textbf{3.48} & \textbf{0.11} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\columnwidth]{scenario_a_results.png}
+  \caption{Scenario A --- Fixed double-support stance, 8\,N step pHRI at
+           $t=0.5$\,s.
+           \textit{Top:} Cartesian end-effector error norm $\|e\|$ over
+           time.
+           The Kalman-augmented predictive controller removes most of the
+           steady-state offset, while the no-Kalman predictive controller is
+           biased by the sustained pHRI load.
+           \textit{Bottom:} RMS and steady-state~(SS) error bar chart.
+           D4--D6 are omitted for readability and reported in
+           Table~\ref{tab:scenarioA}.}
+  \label{fig:scenarioA}
+\end{figure}
+
+Key findings: (1)~The reactive baselines (D1, D4) leave the theoretical
+$10$\,mm impedance offset ($8\,\text{N}/800\,\text{N/m}$). (2)~The disturbance
+observer and input-centered QP are essential under sustained force: D6/D7
+reduce the steady-state error to $0.11$\,mm, whereas the no-Kalman predictive
+controller (D5) is biased to $12.9$\,mm by the unestimated load. (3)~Even in
+static double support the contact-consistent inertia improves precision: the
+contact-consistent D7 reaches $0.11$\,mm steady-state versus $1.00$\,mm for the
+free-space fixed-base D3. Covariance inflation has no effect here (D6$=$D7)
+because the contact mode never switches.
+
+\subsection{Scenario B: Stance with Periodic Contact-Transition Shocks}
+
+The robot holds double-support stance while a sustained 8\,N pHRI force
+and periodic 6\,N spikes (1\,Hz, 0.1\,s duration) are applied.
+Results are shown in Table~\ref{tab:scenarioB} and Fig.~\ref{fig:scenarioB}.
+
+\begin{table}[!t]
+\caption{Scenario B --- Stance + 1\,Hz Shocks, Sustained 8\,N pHRI}
+\label{tab:scenarioB}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Controller} & \textbf{RMS err [mm]} & \textbf{Peak at switch [mm]} \\
+\midrule
+D1 OS PD          & 10.94 & 15.77 \\
+D2 OS PI          &  5.91 & 10.17 \\
+D3 Fixed-base MPC   & 3.40 & 4.84 \\
+D4 WBC + PD         & 11.89 & 17.24 \\
+D5 Proposed, no Kalman & 13.92 & 18.20 \\
+D6 Proposed, no inflation & \textbf{3.41} & \textbf{4.85} \\
+D7 Proposed full    & \textbf{3.41} & \textbf{4.85} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Under sustained load plus periodic shocks, the disturbance observer is again
+the dominant factor: the no-Kalman predictive controller (D5, $13.92$\,mm RMS)
+is biased by the sustained load, while the Kalman-augmented controllers track
+to ${\approx}3.4$\,mm. Because both feet stay planted throughout---the shocks
+are applied as force spikes, not an actual contact-set change---the free-space
+(D3, $3.40$\,mm) and contact-consistent (D7, $3.41$\,mm) predictors are
+indistinguishable here; the value of contact-consistency requires the support
+model itself to switch (Scenarios~E and~F). Covariance inflation is inert
+(D6$=$D7) because the contact mode never changes.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\columnwidth]{scenario_b_results.png}
+  \caption{Scenario B --- double-support stance, sustained 8\,N pHRI
+           + 6\,N periodic shocks at 1\,Hz.
+           The disturbance observer removes the steady-state bias (D5 is
+           offset, D6/D7 track to a few mm); with both feet planted, the
+           free-space (D3) and contact-consistent (D7) predictors coincide
+           (Table~\ref{tab:scenarioB}).}
+  \label{fig:scenarioB}
+\end{figure}
+
+\subsection{Scenario C: Unitree G1 Real Model, Fixed Stance}
+
+Scenario~A is repeated on the official Unitree G1 MJCF (29~DOF, 33.3\,kg).
+Results are shown in Table~\ref{tab:scenarioC} and Fig.~\ref{fig:scenarioC}.
+
+\begin{table}[!t]
+\caption{Scenario C --- Unitree G1 (33.3\,kg), Fixed Stance, 8\,N Step}
+\label{tab:scenarioC}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Controller} & \textbf{RMS err [mm]} & \textbf{SS err [mm]} \\
+\midrule
+D1 OS PD          & 9.00  & 9.57  \\
+D2 OS PI          & 6.41  & 5.32  \\
+D3 Fixed-base MPC   & 2.37  & 2.84  \\
+D4 WBC + PD         & 9.00  & 9.57  \\
+D5 Proposed, no Kalman & 7.54 & 8.19 \\
+D6 Proposed, no inflation & \textbf{2.37} & \textbf{2.84} \\
+D7 Proposed full    & \textbf{2.37} & \textbf{2.84} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\columnwidth]{scenario_c_g1_results.png}
+  \caption{Scenario C --- Unitree G1 official model (33.3\,kg, 29~DOF),
+           fixed stance, 8\,N step pHRI.
+           In static G1 stance the contact-consistent (D7) and fixed-base
+           (D3) predictive controllers are indistinguishable; the
+           Kalman-augmented controllers improve about $3\times$ over D1.
+           D4--D6 are omitted for readability and reported in
+           Table~\ref{tab:scenarioC}.}
+  \label{fig:scenarioC}
+\end{figure}
+
+As in Scenario~A, the static G1 stance does not distinguish contact-consistent
+from fixed-base predictive control: D3 ($2.84$\,mm SS) and D7 ($2.84$\,mm) are
+indistinguishable, and the Kalman-augmented predictive controllers improve
+about $3\times$ over the reactive D1 ($9.57$\,mm); the no-Kalman predictive
+controller (D5, $8.19$\,mm) barely improves on D1. The residual millimetre-level
+error (vs.\ sub-millimetre on the biped) arises from the 5\,Hz position-actuator bandwidth
+attenuating 1\,kHz MPC corrections; direct joint-torque mode on G1/R1~EDU
+hardware is expected to recover near-full performance.
+
+\subsection{Scenario E: Bracing-Hand Support Transition}
+
+To exercise a \emph{genuine} contact-mode transition without single-support
+balance, the biped is given a left arm that periodically braces against and
+releases a fixed rail while both feet remain planted.
+The active contact set alternates
+$\{\text{L foot},\text{R foot}\}\leftrightarrow\{\text{L foot},\text{R foot},\text{L hand}\}$
+($J_c$: $6\leftrightarrow9$ rows), so $\Mbar$, the right-arm task inertia
+$\Larm$, and the input matrix $B_d$ genuinely switch at each brace and release.
+A sustained 8\,N pHRI force acts on the right (task) arm throughout.
+
+\begin{table}[!t]
+\caption{Scenario E --- Bracing-Hand Support Transition, Sustained 8\,N pHRI}
+\label{tab:scenarioE}
+\renewcommand{\arraystretch}{1.2}
+\footnotesize
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Controller} & \textbf{RMS err [mm]} & \textbf{Peak at switch [mm]} \\
+\midrule
+D5 no Kalman              & 13.28 & 12.98 \\
+D6 Kalman, no infl. ($\alpha=1$) & 4.67 & 6.69 \\
+D7 Kalman + infl. ($\alpha=4$)   & \textbf{4.14} & \textbf{6.29} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This scenario validates the contact-mode-indexed disturbance estimator across a
+genuine contact-set switch. The no-Kalman controller is biased by the sustained
+pHRI load ($13.28$\,mm RMS), while the Kalman-augmented controllers track the
+switch to ${\sim}4$\,mm. Here covariance inflation gives a small further
+improvement (D7 $4.14$\,mm / $6.29$\,mm peak vs D6 $4.67$ / $6.69$), consistent
+with its role of re-estimating $\dhat$ under the changed $B_d^{(m)}$ after a
+real contact-set change. Scenario~F extends the contact-mode
+test to a scheduled \emph{single$\leftrightarrow$double} support-mode
+transition for the interaction layer.
+
+% ----------------------------------------------------------
+\subsection{\texorpdfstring{Scenario F: Quasi-Static Single$\leftrightarrow$Double Support Transition}{Scenario F: Quasi-Static Single-Double Support Transition}}
+\label{sec:scenarioF}
+Scenarios~B and~E hold both feet planted; this scenario exercises a scheduled
+change of the \emph{foot-support model} used by the interaction layer, in
+which the biped shifts its weight over the right foot, lifts the left foot,
+switches the contact-consistent predictor from double to right-foot support,
+holds, and places the foot back:
+\begin{equation*}
+\{\text{L foot},\text{R foot}\}\;\longleftrightarrow\;\{\text{R foot}\},
+\end{equation*}
+so the contact Jacobian used by the interaction-layer model ($J_c$:
+$6\leftrightarrow3$ rows), $\Mbar$, the arm task inertia $\Larm$, and the input
+matrix $B_d$ all switch at the lift and the place.
+The interaction layer runs above the balance controller with a sustained
+$8$\,N pHRI force on the arm; the arm regulates a target fixed relative to the
+torso, isolating its disturbance-rejection task from the balancing motion.
+
+\emph{Balance stand-in and its limitations.} Realizing a standing single-support
+phase requires \emph{ankle-roll} (lateral centre-of-pressure) authority, which
+the biped of Scenarios~A/B/E lacks; hip-roll balancing alone produces a
+foot-tipping moment that cannot be countered and the robot falls. We therefore
+use a modified model (\texttt{biped\_qstatic}: a wider $18$\,cm foot and added
+ankle-roll actuators) and a hand-tuned quasi-static controller---a stiff
+hip-roll CoM regulator for the coarse weight transfer plus a
+centre-of-pressure--limited ankle-roll torque for the fine support-mode
+stabilization. This is a deliberate minimal stand-in for the Level-1 balance
+layer, \emph{not} the centroidal MPC of Section~\ref{sec:impedancempc}.
+MuJoCo contact auditing shows that the lifted foot can retain intermittent
+toe/edge contact with the floor, so Scenario~F should be read as a
+support-mode/contact-model switch test for the interaction layer, not as a full
+dynamic walking or physically clean single-support result.
+
+\begin{table}[!t]
+\caption{Scenario F --- Quasi-Static Single$\leftrightarrow$Double Support
+         Transition, Sustained 8\,N pHRI (torso-relative arm error)}
+\label{tab:scenarioF}
+\renewcommand{\arraystretch}{1.2}
+\centering
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Controller} & \textbf{RMS err [mm]} & \textbf{Peak at switch [mm]} \\
+\midrule
+D5 no Kalman               & 30.08 & 37.57 \\
+D6 Kalman, no infl. ($\alpha=1$) & 15.95 & 24.04 \\
+D7 Kalman + infl. ($\alpha=4$)   & \textbf{15.81} & \textbf{23.96} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The biped stays upright across the whole cycle (minimum torso
+height $0.86$\,m; scheduled single-support-mode interval ${\approx}2.1$\,s), and
+the interaction layer keeps the torso-relative arm error to ${\approx}1.6$\,cm.
+On this model the arm task inertia barely changes across the foot-support
+switch---$\Larm$ diagonal $[1.10,1.04,2.42]$\,kg in double support versus
+$[1.09,1.04,2.42]$\,kg in right-foot support ($<1\%$)---because the right arm
+couples only weakly to the left-leg contact. The scenario therefore exercises
+the contact-mode indexing and $B_d^{(m)}$ switching across a genuine \emph{leg}
+support-mode change, but does not, on this platform, produce a large inertia
+change to exploit.
+
+The Kalman augmentation roughly halves the error, visible both in RMS
+(D5 $30.08\to$ D7 $15.81$\,mm) and in the peak at the switch
+(D5 $37.57\to$ D7 $23.96$\,mm). Covariance inflation is essentially neutral
+(D6 $15.95$ vs D7 $15.81$\,mm): the error at a support transition is
+dominated by the whole-body balancing motion---the torso adjusting under the
+newly single foot---rather than by staleness of the disturbance estimate, so
+faster Kalman re-convergence has limited room to help. The honest reading
+across Scenarios~E and~F is that the contact-mode-indexed Kalman model is the
+main source of improvement, while covariance inflation is a tunable,
+scenario-dependent robustness mechanism---beneficial at the planted-foot
+bracing switch (Scenario~E) but neutral here, where balancing motion dominates.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\columnwidth]{scenario_f_results.png}
+  \caption{Scenario F --- torso-relative arm error across a quasi-static
+           scheduled single$\leftrightarrow$double support-mode transition
+           (shaded: right-foot-support model). All controllers stay stable
+           across the contact-model switch; the Kalman gives a modest offset
+           improvement and covariance inflation is neutral
+           (Table~\ref{tab:scenarioF}).}
+  \label{fig:scenarioF}
+\end{figure}
+
+% ----------------------------------------------------------
+\section{Conclusion}\label{sec:conclusion}
+
+This paper proposed contact-consistent interaction dynamics normalization for
+floating-base pHRI.
+The central result is that, after balance and contact tasks are removed
+through the whole-body hierarchy, the residual end-effector interaction
+channel reduces to a linear double integrator with a constant discrete state
+matrix within each contact mode.
+Whole-body control, null-space projection, disturbance observation, and
+contact-mode scheduling are the realization mechanisms; the underlying object
+being regulated is the normalized interaction dynamics.
+
+This viewpoint explains the empirical results.
+The contact-mode-indexed disturbance observer is the primary driver of accuracy---it
+delivers offset-free rejection of the sustained interaction force (steady-state
+error ${\sim}0.1$\,mm vs ${\sim}13$\,mm without it)---while the
+contact-consistent inertia sharpens static precision and keeps the predictor
+well-conditioned across support-mode changes, because $\Larm$ captures the
+contact-coupled apparent inertia
+seen at the hand.
+The Impedance Equivalence Theorem further shows that classical
+operational-space impedance is recovered as the infinite-horizon limit of the
+same predictive interaction law, so impedance becomes a design interpretation
+rather than the starting point of the method.
+The simulations also demonstrate operation across scheduled
+support-mode/contact-model changes, although a fully dynamic single-support
+walking transition with a complete centroidal-MPC balance layer remains future
+work.
+More broadly, the normalization perspective suggests a common foundation for
+pHRI, loco-manipulation, dexterous manipulation, surgical robotics, and other
+contact-rich systems: first represent the task as interaction dynamics, then
+normalize those dynamics into a configuration-invariant predictive control
+problem.
+
+The proposed framework occupies a structural niche not addressed by prior
+locomotion-centric frameworks~\cite{dicarlo2018dynamic,kim2019highly,bellicoso2016perception,koolen2016design}:
+it deliberately halts the WBC stack after balance constraints are satisfied
+and injects normalized predictive interaction regulation into the residual
+null space.
+
+Future work includes hardware validation on a Unitree R1 or G1~EDU platform
+(the low-level SDK torque interface is directly compatible with the proposed
+architecture), extension to variable contact modes during dynamic walking,
+and integration of force-torque sensor feedback for improved Kalman
+convergence at contact transitions.
+
+% ----------------------------------------------------------
+\bibliographystyle{IEEEtran}
+\bibliography{references}

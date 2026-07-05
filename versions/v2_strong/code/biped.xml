@@ -1,0 +1,146 @@
+<mujoco model="wbc_biped">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.0005" gravity="0 0 -9.81" iterations="50" tolerance="1e-10"/>
+
+  <default>
+    <joint damping="1.5" armature="0.01" frictionloss="0.1"/>
+    <geom contype="1" conaffinity="1" friction="0.9 0.005 0.0001" condim="3"/>
+    <motor ctrllimited="true"/>
+  </default>
+
+  <asset>
+    <texture name="checker" type="2d" builtin="checker" width="512" height="512"
+             rgb1="0.15 0.2 0.25" rgb2="0.25 0.3 0.35"/>
+    <material name="floor_mat" texture="checker" texrepeat="6 6" texuniform="true" reflectance="0.2"/>
+    <material name="torso_mat" rgba="0.65 0.45 0.30 1"/>
+    <material name="leg_mat"   rgba="0.35 0.55 0.25 1"/>
+    <material name="arm_mat"   rgba="0.25 0.40 0.70 1"/>
+    <material name="foot_mat"  rgba="0.20 0.20 0.20 1"/>
+    <material name="hand_mat"  rgba="0.30 0.55 0.80 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 4" dir="0 0 -1" diffuse="0.9 0.9 0.9" specular="0.2 0.2 0.2"/>
+    <light pos="2 -2 3" dir="-1 1 -1" diffuse="0.4 0.4 0.4"/>
+    <geom name="floor" type="plane" size="8 8 0.1" material="floor_mat" rgba="1 1 1 1"/>
+
+    <!-- ===== TORSO (floating base) ===== -->
+    <body name="torso" pos="0 0 0.88">
+      <freejoint name="root"/>
+      <geom name="torso_geom" type="capsule" fromto="0 0 -0.12 0 0 0.15"
+            size="0.08" material="torso_mat" mass="28"/>
+      <site name="torso_imu" pos="0 0 0" size="0.01"/>
+      <site name="com_site"  pos="0 0 0" size="0.01"/>
+
+      <!-- ===== LEFT LEG ===== -->
+      <body name="left_thigh" pos="0 0.10 -0.12">
+        <joint name="left_hip_x" type="hinge" axis="1 0 0"
+               range="-0.5 0.5" damping="3.0"/>
+        <joint name="left_hip_y" type="hinge" axis="0 1 0"
+               range="-1.0 0.6" damping="3.0"/>
+        <geom name="left_thigh_geom" type="capsule" fromto="0 0 0 0 0 -0.36"
+              size="0.045" material="leg_mat" mass="4.0"/>
+        <body name="left_shank" pos="0 0 -0.36">
+          <joint name="left_knee_y" type="hinge" axis="0 1 0"
+                 range="0.0 2.0" damping="3.0"/>
+          <geom name="left_shank_geom" type="capsule" fromto="0 0 0 0 0 -0.34"
+                size="0.038" material="leg_mat" mass="3.0"/>
+          <body name="left_foot" pos="0 0 -0.34">
+            <joint name="left_ankle_y" type="hinge" axis="0 1 0"
+                   range="-0.6 0.6" damping="1.5"/>
+            <geom name="left_foot_geom" type="box"
+                  size="0.11 0.055 0.025" pos="0.02 0 -0.025"
+                  material="foot_mat" mass="0.5"/>
+            <site name="left_foot_contact" pos="0.02 0 -0.05"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- ===== RIGHT LEG ===== -->
+      <body name="right_thigh" pos="0 -0.10 -0.12">
+        <joint name="right_hip_x" type="hinge" axis="1 0 0"
+               range="-0.5 0.5" damping="3.0"/>
+        <joint name="right_hip_y" type="hinge" axis="0 1 0"
+               range="-1.0 0.6" damping="3.0"/>
+        <geom name="right_thigh_geom" type="capsule" fromto="0 0 0 0 0 -0.36"
+              size="0.045" material="leg_mat" mass="4.0"/>
+        <body name="right_shank" pos="0 0 -0.36">
+          <joint name="right_knee_y" type="hinge" axis="0 1 0"
+                 range="0.0 2.0" damping="3.0"/>
+          <geom name="right_shank_geom" type="capsule" fromto="0 0 0 0 0 -0.34"
+                size="0.038" material="leg_mat" mass="3.0"/>
+          <body name="right_foot" pos="0 0 -0.34">
+            <joint name="right_ankle_y" type="hinge" axis="0 1 0"
+                   range="-0.6 0.6" damping="1.5"/>
+            <geom name="right_foot_geom" type="box"
+                  size="0.11 0.055 0.025" pos="0.02 0 -0.025"
+                  material="foot_mat" mass="0.5"/>
+            <site name="right_foot_contact" pos="0.02 0 -0.05"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- ===== RIGHT ARM ===== -->
+      <body name="right_upper_arm" pos="0 -0.18 0.12">
+        <joint name="right_shoulder_x" type="hinge" axis="1 0 0"
+               range="-1.6 1.6" damping="1.5"/>
+        <joint name="right_shoulder_y" type="hinge" axis="0 1 0"
+               range="-2.0 2.0" damping="1.5"/>
+        <geom name="right_upper_arm_geom" type="capsule" fromto="0 0 0 0 0 -0.28"
+              size="0.032" material="arm_mat" mass="1.8"/>
+        <body name="right_forearm" pos="0 0 -0.28">
+          <joint name="right_elbow_y" type="hinge" axis="0 1 0"
+                 range="-2.4 0.0" damping="1.0"/>
+          <geom name="right_forearm_geom" type="capsule" fromto="0 0 0 0 0 -0.25"
+                size="0.026" material="arm_mat" mass="1.0"/>
+          <body name="right_hand" pos="0 0 -0.25">
+            <geom name="right_hand_geom" type="sphere" size="0.038"
+                  material="hand_mat" mass="0.3"/>
+            <site name="right_hand_site" pos="0 0 0" size="0.015"
+                  rgba="1 0.3 0.3 1"/>
+          </body>
+        </body>
+      </body>
+
+    </body><!-- torso -->
+  </worldbody>
+
+  <!-- ===== ACTUATORS (gear=1 → ctrl in Nm directly) ===== -->
+  <actuator>
+    <motor name="left_hip_x"       joint="left_hip_x"       gear="1" ctrlrange="-120 120"/>
+    <motor name="left_hip_y"       joint="left_hip_y"       gear="1" ctrlrange="-200 200"/>
+    <motor name="left_knee_y"      joint="left_knee_y"      gear="1" ctrlrange="-200 200"/>
+    <motor name="left_ankle_y"     joint="left_ankle_y"     gear="1" ctrlrange="-100 100"/>
+    <motor name="right_hip_x"      joint="right_hip_x"      gear="1" ctrlrange="-120 120"/>
+    <motor name="right_hip_y"      joint="right_hip_y"      gear="1" ctrlrange="-200 200"/>
+    <motor name="right_knee_y"     joint="right_knee_y"     gear="1" ctrlrange="-200 200"/>
+    <motor name="right_ankle_y"    joint="right_ankle_y"    gear="1" ctrlrange="-100 100"/>
+    <motor name="right_shoulder_x" joint="right_shoulder_x" gear="1" ctrlrange="-80 80"/>
+    <motor name="right_shoulder_y" joint="right_shoulder_y" gear="1" ctrlrange="-80 80"/>
+    <motor name="right_elbow_y"    joint="right_elbow_y"    gear="1" ctrlrange="-60 60"/>
+  </actuator>
+
+  <!-- ===== SENSORS ===== -->
+  <sensor>
+    <framepos  name="hand_pos"       objtype="site" objname="right_hand_site"/>
+    <framepos  name="left_foot_pos"  objtype="site" objname="left_foot_contact"/>
+    <framepos  name="right_foot_pos" objtype="site" objname="right_foot_contact"/>
+    <subtreecom name="robot_com"     body="torso"/>
+    <framequat name="torso_quat"     objtype="body" objname="torso"/>
+    <gyro      name="torso_gyro"     site="torso_imu"/>
+  </sensor>
+
+  <!-- ===== DEFAULT STANDING KEYFRAME ===== -->
+  <keyframe>
+    <key name="stand"
+         qpos="0 0 0.88  1 0 0 0
+               0 -0.05  0.10 -0.05
+               0 -0.05  0.10 -0.05
+               0  0.5  -1.0"
+         qvel="0 0 0 0 0 0
+               0 0 0 0
+               0 0 0 0
+               0 0 0"/>
+  </keyframe>
+
+</mujoco>

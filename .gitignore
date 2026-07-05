@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Matplotlib / font / OS caches
+.cache/
+.mplconfig/
+.DS_Store
+
+# Large binaries
+*.pdf
+*.mp4
+
+# Vendored third-party assets (mujoco_menagerie model zoo, >1 GB of meshes)
+external_deps/
