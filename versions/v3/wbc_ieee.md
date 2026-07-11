@@ -539,44 +539,6 @@ This paper formulates floating-base balance and task interaction as an *interact
 
 ---
 
-## Appendix A: Locomotion-Compatibility Probes
-
-The claims of this paper are made in fixed support. This appendix collects two studies that lie *outside* the interaction-dynamics claim but probe whether the same body-port predictor and whole-body realizer remain well posed once the contact set changes. Neither is offered as dynamic-walking validation; both are compatibility checks that also delimit the standing realizer's authority.
-
-**A.1 Root-assisted walking visualization.** A dual-MPC visualization on the position-actuated G1 model drives the floating base kinematically while the body reference is produced by the normalized centroidal MPC and the right hand by a normalized task MPC. For a trapezoidal command ramping to $1.2$ m/s (0–1 s), cruising (1–9 s), and decelerating (9–10 s), the robot renders visible one-foot swing phases across 15 support switches (Table A1, Fig. A1). Because the base is kinematically assisted, the forward distance matches the command by construction; the informative quantities are the foot-lift, CoM-height, and torso-attitude ranges under the active MPC command layers. This artifact verifies the model, rendering pipeline, MPC command-layer integration, and gait-command interface — not torque-level walking.
-
-| Commanded distance | 10.8 m |
-|---|---:|
-| Forward distance (by construction) | 10.800 m |
-| Support switches | 15 |
-| Left / right foot lift | 8.3 / 8.3 cm |
-| Min. CoM height | 0.752 m |
-| Max. \|roll\|,\|pitch\| | 0.030 rad |
-
-**Table A1.** Deterministic dual-MPC root-assisted walking visualization on the position-actuated G1 MuJoCo model.
-
-![Fig. A1. Ten-second dual-MPC root-assisted G1 walking visualization.](code/results/g1_walk_10s_1p2ms.png)
-
-**Fig. A1.** Root-assisted G1 walking visualization: CoM forward motion vs. the 10.8 m trapezoidal-speed reference (top), left/right foot height (second), torso roll/pitch (third), and the scheduled support sequence (bottom).
-
-**A.2 Torque-level stepping across contact-mode switches.** The faithful centroidal-wrench recovery that makes H2 hold in fixed support was then carried into a stepping gait to test whether it survives contact-mode switches. The body port is unchanged; only the reference becomes walk-feasible. A divergent-component-of-motion (DCM) layer generates a dynamically feasible CoM trajectory from a footstep plan and backward DCM recursion (LIPM $\ddot c=\omega^2(c-p_{\rm zmp})$, ZMP inside the stance foot), which the same normalized centroidal MPC tracks. This carries the recovery through **seven contact-mode switches** while the body observer keeps the CoM on the DCM reference (Fig. A2).
-
-Closing the loop with the standard center-of-pressure/DCM stabilizer (Englsberger law)
-$$p_{\rm cmd}=p_{\rm ref}+\left(1+\tfrac{k_{\rm dcm}}{\omega}\right)(\xi-\xi_{\rm ref}),\qquad \xi=c+\dot c/\omega, \tag{A1}$$
-with $p_{\rm cmd}$ clamped to the support polygon and $\ddot c=\omega^2(c-p_{\rm cmd})$ realized by the same recovery, did not yield sustained walking, and it isolates the binding limit as single-support **actuation authority** rather than estimation or reference bandwidth: with an upright torso the CoM accelerates only through the ankle CoP, whose $\pm6$ cm range caps $\ddot c$ at $\omega^2\times0.06\approx0.9$ m/s$^2$, below what the G1's $\pm14$ cm wide stance demands, so the CoP saturates and the DCM diverges after about five switches. Adding the two components standard in locomotion but orthogonal to the interaction contribution — a hip/angular-momentum strategy (a separate relaxable torso-attitude weight) and capture-point step adaptation ($u_{\rm next}=\xi_{\rm eos}-b_{\rm nom}$, clamped to kinematic limits) — carries the recovery through the switches but still completes only about two adapted steps before the wide-stance lateral balance and the co-tuning of initiation, step timing, placement limits, and hip relaxation exceed what was reachable here.
-
-| Torque stepping gate (DCM ref) | Switches before fall |
-|---|---:|
-| Contact-switch command | 5 (fall 2.041 s) |
-| Walking command | 8 (fall 1.889 s) |
-| DCM-tracked reference (no explicit stabilizer) | 7 |
-
-**Table A2.** Torque-level stepping across contact-mode switches on the faithful recovery. The recovery survives several switches; sustained continuous walking on the G1's wide default stance is a dedicated locomotion effort, separable from the interaction-dynamics representation and left as future work.
-
-![Fig. A2. DCM stepping on the faithful centroidal recovery.](code/results/gait_dcm.png)
-
-**Fig. A2.** DCM walking layer on the faithful recovery: measured CoM vs. the DCM-planned reference (top: lateral, showing the $\pm14$ cm sway and the residual single-support tracking lag; middle: forward), and left/right foot lift (bottom) over the contact-mode switches.
-
 ---
 
 ## References
@@ -614,3 +576,43 @@ with $p_{\rm cmd}$ clamped to the support polygon and $\ddot c=\omega^2(c-p_{\rm
 [16] Y.-Y. Cao, Z. Lin, and D. G. Ward, "Anti-windup design of output tracking systems subject to actuator saturation and constant disturbances," *Automatica*, vol. 40, no. 7, pp. 1221–1228, Jul. 2004.
 
 [17] D. E. Orin and A. Goswami, "Centroidal momentum matrix of a humanoid robot: Structure and properties," in *Proc. IEEE/RSJ IROS*, pp. 653–659, 2008.
+
+---
+
+## Appendix A: Locomotion-Compatibility Probes
+
+The claims of this paper are made in fixed support. This appendix collects two studies that lie *outside* the interaction-dynamics claim but probe whether the same body-port predictor and whole-body realizer remain well posed once the contact set changes. Neither is offered as dynamic-walking validation; both are compatibility checks that also delimit the standing realizer's authority.
+
+**A.1 Root-assisted walking visualization.** A dual-MPC visualization on the position-actuated G1 model drives the floating base kinematically while the body reference is produced by the normalized centroidal MPC and the right hand by a normalized task MPC. For a trapezoidal command ramping to $1.2$ m/s (0–1 s), cruising (1–9 s), and decelerating (9–10 s), the robot renders visible one-foot swing phases across 15 support switches (Table A1, Fig. A1). Because the base is kinematically assisted, the forward distance matches the command by construction; the informative quantities are the foot-lift, CoM-height, and torso-attitude ranges under the active MPC command layers. This artifact verifies the model, rendering pipeline, MPC command-layer integration, and gait-command interface — not torque-level walking.
+
+| Commanded distance | 10.8 m |
+|---|---:|
+| Forward distance (by construction) | 10.800 m |
+| Support switches | 15 |
+| Left / right foot lift | 8.3 / 8.3 cm |
+| Min. CoM height | 0.752 m |
+| Max. \|roll\|,\|pitch\| | 0.030 rad |
+
+**Table A1.** Deterministic dual-MPC root-assisted walking visualization on the position-actuated G1 MuJoCo model.
+
+![Fig. A1. Ten-second dual-MPC root-assisted G1 walking visualization.](code/results/g1_walk_10s_1p2ms.png)
+
+**Fig. A1.** Root-assisted G1 walking visualization: CoM forward motion vs. the 10.8 m trapezoidal-speed reference (top), left/right foot height (second), torso roll/pitch (third), and the scheduled support sequence (bottom).
+
+**A.2 Torque-level stepping across contact-mode switches.** The faithful centroidal-wrench recovery that makes H2 hold in fixed support was then carried into a stepping gait to test whether it survives contact-mode switches. The body port is unchanged; only the reference becomes walk-feasible. A divergent-component-of-motion (DCM) layer generates a dynamically feasible CoM trajectory from a footstep plan and backward DCM recursion (LIPM $\ddot c=\omega^2(c-p_{\rm zmp})$, ZMP inside the stance foot), which the same normalized centroidal MPC tracks. This carries the recovery through **seven contact-mode switches** while the body observer keeps the CoM on the DCM reference (Fig. A2).
+
+Closing the loop with the standard center-of-pressure/DCM stabilizer (Englsberger law)
+$$p_{\rm cmd}=p_{\rm ref}+\left(1+\tfrac{k_{\rm dcm}}{\omega}\right)(\xi-\xi_{\rm ref}),\qquad \xi=c+\dot c/\omega, \tag{A1}$$
+with $p_{\rm cmd}$ clamped to the support polygon and $\ddot c=\omega^2(c-p_{\rm cmd})$ realized by the same recovery, did not yield sustained walking, and it isolates the binding limit as single-support **actuation authority** rather than estimation or reference bandwidth: with an upright torso the CoM accelerates only through the ankle CoP, whose $\pm6$ cm range caps $\ddot c$ at $\omega^2\times0.06\approx0.9$ m/s$^2$, below what the G1's $\pm14$ cm wide stance demands, so the CoP saturates and the DCM diverges after about five switches. Adding the two components standard in locomotion but orthogonal to the interaction contribution — a hip/angular-momentum strategy (a separate relaxable torso-attitude weight) and capture-point step adaptation ($u_{\rm next}=\xi_{\rm eos}-b_{\rm nom}$, clamped to kinematic limits) — carries the recovery through the switches but still completes only about two adapted steps before the wide-stance lateral balance and the co-tuning of initiation, step timing, placement limits, and hip relaxation exceed what was reachable here.
+
+| Torque stepping gate (DCM ref) | Switches before fall |
+|---|---:|
+| Contact-switch command | 5 (fall 2.041 s) |
+| Walking command | 8 (fall 1.889 s) |
+| DCM-tracked reference (no explicit stabilizer) | 7 |
+
+**Table A2.** Torque-level stepping across contact-mode switches on the faithful recovery. The recovery survives several switches; sustained continuous walking on the G1's wide default stance is a dedicated locomotion effort, separable from the interaction-dynamics representation and left as future work.
+
+![Fig. A2. DCM stepping on the faithful centroidal recovery.](code/results/gait_dcm.png)
+
+**Fig. A2.** DCM walking layer on the faithful recovery: measured CoM vs. the DCM-planned reference (top: lateral, showing the $\pm14$ cm sway and the residual single-support tracking lag; middle: forward), and left/right foot lift (bottom) over the contact-mode switches.
