@@ -1,0 +1,74 @@
+{
+  "claim": "One task-port predictor across three humanoids; recovery inertia varies, (A,B) does not.",
+  "sample_time_s": 0.002,
+  "predictor_shared": {
+    "note": "Task-port exact-ZOH pair (A_t,B_t) is identical for every robot -- it depends only on the sample time. Residual against the closed form is 0 for all three.",
+    "max_A_residual_over_robots": 0.0,
+    "max_B_residual_over_robots": 0.0
+  },
+  "recovery_varies": {
+    "mass_kg": {
+      "min": 34.0,
+      "max": 94.0,
+      "factor": 2.76
+    },
+    "lambda_t_diag_kg": {
+      "min": 1.19,
+      "max": 184.31,
+      "factor": 155.1
+    }
+  },
+  "per_robot": [
+    {
+      "robot": "Unitree G1",
+      "mass_kg": 34.0,
+      "nv": 35,
+      "lambda_t_diag_kg": [
+        1.19,
+        2.02,
+        12.61
+      ],
+      "centroidal_inertia_eig": [
+        2.5,
+        6.94,
+        8.48
+      ],
+      "predictor_A_residual": 0.0,
+      "predictor_B_residual": 0.0
+    },
+    {
+      "robot": "Unitree H1",
+      "mass_kg": 51.4,
+      "nv": 25,
+      "lambda_t_diag_kg": [
+        2.34,
+        2.83,
+        184.31
+      ],
+      "centroidal_inertia_eig": [
+        1.1,
+        5.53,
+        6.37
+      ],
+      "predictor_A_residual": 0.0,
+      "predictor_B_residual": 0.0
+    },
+    {
+      "robot": "PAL Talos",
+      "mass_kg": 94.0,
+      "nv": 50,
+      "lambda_t_diag_kg": [
+        1.92,
+        2.99,
+        6.43
+      ],
+      "centroidal_inertia_eig": [
+        4.74,
+        14.77,
+        18.0
+      ],
+      "predictor_A_residual": 0.0,
+      "predictor_B_residual": 0.0
+    }
+  ]
+}

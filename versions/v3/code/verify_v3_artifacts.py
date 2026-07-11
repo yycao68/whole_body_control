@@ -181,6 +181,16 @@ def verify_h1_h2_results():
     for figure in ("h1_equivalence.png", "h2_offset_free.png"):
         require_file(RESULTS / figure)
 
+    # H1 multi-robot: same predictor across G1/H1/Talos while recovery varies.
+    mr = load_json(RESULTS / "h1_multirobot.json")
+    require_file(RESULTS / "h1_multirobot.png")
+    require(len(mr["per_robot"]) >= 3, "H1 multi-robot uses fewer than three robots")
+    require(mr["recovery_varies"]["lambda_t_diag_kg"]["factor"] > 10.0,
+            "H1 multi-robot task inertia no longer varies substantially across robots")
+    require(abs(mr["predictor_shared"]["max_A_residual_over_robots"]) < 1e-12
+            and abs(mr["predictor_shared"]["max_B_residual_over_robots"]) < 1e-12,
+            "H1 multi-robot predictor is no longer identical across robots")
+
     return {
         "h1_equivalence_max_diff": eq["max_command_diff_normalized_vs_forceinput"],
         "lambda_variation_pct": inv["lambda_t_diag_variation_pct"],

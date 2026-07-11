@@ -146,6 +146,13 @@ load — and the external-style preview does not help (indeed 15.19 mm, since it
 perturbs a CoM command the QP is already satisfying). The takeaway: preview
 belongs to what the realizer does not model (external contact loads).
 
+H1 (multi-robot) instantiates the *same* task port on three humanoids of very
+different scale via `robot_descriptions` (`run_h1_multirobot.py`): Unitree G1
+(34 kg), Unitree H1 (51 kg), PAL Talos (94 kg). The exact-ZOH predictor (A_t,B_t)
+is bit-identical across all three (it depends only on the sample time), while the
+contact-consistent task inertia Lambda_t at the hand spans 1.2-184 kg (155x) and
+mass 2.8x. All platform dependence is confined to recovery, per Theorem 1.
+
 H4 applies three scripted brace-contact intervals, giving six onset/offset
 events. The detector uses only the body observer's normalized innovation and a
 quiet-window threshold; the scripted schedule is used only as the scoring
@@ -171,6 +178,7 @@ essentially identically (35.61 vs 35.43 mm). Double support throughout; no fall.
 
 Generated files:
 
+- `results/h1_multirobot.json`, `results/h1_multirobot.png`
 - `results/h3_coupling_summary.json`, `results/h3_coupling.png`
 - `results/h4_detection_summary.json`, `results/h4_detection.png`
 - `results/h5_constraints_summary.json`, `results/h5_constraints_stats.json`, `results/h5_constraints.png`
