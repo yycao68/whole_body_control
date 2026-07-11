@@ -69,8 +69,9 @@ MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/
 
 This checks the exact-ZOH normalized MPC matrices, input-centered disturbance
 cancellation, G1 model loading, H1/H2 result files, summary/log consistency,
-dual-MPC flags, visible foot lift, MP4 metadata, fixed-support torque smoke
-gates, and the intentionally retained contact-switch/walking failure status.
+dual-MPC flags, visible foot lift, MP4 metadata, H3/H4 result files,
+fixed-support torque smoke gates, and the intentionally retained
+contact-switch/walking failure status.
 
 Important limitation: this uses the two MPC command layers, but it is still a
 root-assisted visualization, not the final paper-grade dynamic walking
@@ -123,6 +124,45 @@ friction margins and many QP fallback samples as single-support balance
 authority runs out. The next missing components are a production gait/contact
 realizer with hip/angular-momentum balance, capture-point step timing/placement
 adaptation, and stable support-mode control.
+
+## H3/H4/H6 Hypothesis Checks
+
+H3, H4, and H6 are implemented as torque-actuated G1 checks:
+
+```bash
+MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_h3_coupling.py
+MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_h4_detection.py
+MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_h6_onbase.py
+```
+
+H3 contrasts the two preview forms of Section VII at equal reaction magnitude
+(~45 N). For the **external** load (Eq. 23), unmodeled by the whole-body QP, the
+coupled preview cuts peak CoM excursion from 37.66 mm to 22.08 mm (1.71x) and RMS
+from 20.85 mm to 11.89 mm. For the **internal** arm-momentum reaction (Eq. 23b),
+the unified QP already compensates it natively via the shared CoM Jacobian, so the
+uncompensated (split) transient is only 9.18 mm — 4x smaller than the external
+load — and the external-style preview does not help (indeed 15.19 mm, since it
+perturbs a CoM command the QP is already satisfying). The takeaway: preview
+belongs to what the realizer does not model (external contact loads).
+
+H4 applies three scripted brace-contact intervals, giving six onset/offset
+events. The detector uses only the body observer's normalized innovation and a
+quiet-window threshold; the scripted schedule is used only as the scoring
+oracle and for plotting. Current result: 6/6 detected, 0 missed, 0 false
+positives, mean latency 56.0 ms, max latency 58.0 ms.
+
+H6 demonstrates the interaction layer on a *moving* base: the base commands its
+own +/-50 mm forward weight-shift (0.25 Hz) while a planned 45 N, 1.6 Hz lateral
+trunk load disturbs the CoM. With the layer on, previewing the load cuts the
+lateral base-tracking error from 24.38 to 10.32 mm RMS (2.36x) and 45.51 to
+21.77 mm peak (2.09x), while the base's forward weight-shift is tracked
+essentially identically (35.61 vs 35.43 mm). Double support throughout; no fall.
+
+Generated files:
+
+- `results/h3_coupling_summary.json`, `results/h3_coupling.png`
+- `results/h4_detection_summary.json`, `results/h4_detection.png`
+- `results/h6_onbase_summary.json`, `results/h6_onbase.png`
 
 ## Planned Modules
 

@@ -1,0 +1,19 @@
+{
+  "setup": "double-support base fwd/back weight-shift 50 mm at 0.25 Hz; planned lateral trunk load 45 N at 1.6 Hz over 1.5-5.5 s",
+  "max_load_N": 45.0,
+  "layer_off": {
+    "rms_lat_mm": 24.38,
+    "peak_lat_mm": 45.51,
+    "rms_fwd_mm": 35.61,
+    "fell": false
+  },
+  "layer_on": {
+    "rms_lat_mm": 10.32,
+    "peak_lat_mm": 21.77,
+    "rms_fwd_mm": 35.43,
+    "fell": false
+  },
+  "lat_rms_reduction_x": 2.36,
+  "lat_peak_reduction_x": 2.09,
+  "note": "Interaction layer riding a moving (weight-shifting) base. The base tracks its own forward weight-shift equally well with or without the layer (fwd error nearly identical); previewing the planned lateral load keeps the CoM on the base's lateral reference, whereas without the layer the load bleeds into a lateral tracking error. Double support throughout; neither run falls."
+}

@@ -29,6 +29,23 @@
     "predictor_A_B_constant": true,
     "note": "task apparent inertia Lambda_t computed over a 36-point right-arm kinematic sweep; it varies substantially while (A_t,B_t) stay exactly constant: all configuration dependence is confined to recovery."
   },
+  "H1_angular_channel": {
+    "A_theta_matches_exact_zoh": 0.0,
+    "B_theta_matches_exact_zoh": 0.0,
+    "centroidal_inertia_eig_min": [
+      2.410522423469665,
+      6.92716473355189,
+      8.468851286807306
+    ],
+    "centroidal_inertia_eig_max": [
+      2.673732684938397,
+      7.091605711030295,
+      8.67084878279093
+    ],
+    "centroidal_inertia_variation_pct": 10.919220618154283,
+    "predictor_A_theta_B_theta_constant": true,
+    "note": "body-port angular-momentum channel e_dot_h = u_theta + d_theta is a first-order integrator; its discrete (A_theta,B_theta)=(I, T*I) equals the exact-ZOH first-order integrator exactly and is configuration-independent, while the centroidal rotational inertia I_G that the moment recovery must invert varies over the same 36-point arm sweep -- the momentum-channel analogue of the Lambda_t result."
+  },
   "H2_representation": {
     "body_no_observer_ss_mm": 124.985387438807,
     "body_observer_ss_mm": 1.3941697080988642,

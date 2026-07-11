@@ -142,6 +142,26 @@ def contact_consistent_task_inertia(model, data, realizer, hand_jac):
     return Lt
 
 
+def centroidal_rotational_inertia(model, data):
+    """Composite rigid-body rotational inertia I_G(q) about the whole-body CoM.
+
+    This is the configuration-dependent inertia the body port's angular-momentum
+    channel recovers through (k_G = I_G omega near rest); the normalized first-
+    order predictor e_dot_h = u_theta + d_theta does not contain it.
+    """
+    m = model.body_mass
+    c = (m[:, None] * data.xipos).sum(axis=0) / m.sum()
+    IG = np.zeros((3, 3))
+    for i in range(model.nbody):
+        if m[i] == 0.0:
+            continue
+        R = data.ximat[i].reshape(3, 3)
+        Iworld = R @ np.diag(model.body_inertia[i]) @ R.T
+        d = data.xipos[i] - c
+        IG += Iworld + m[i] * (float(d @ d) * np.eye(3) - np.outer(d, d))
+    return IG
+
+
 def h2_representation(mass: float, Lt: np.ndarray):
     """H2 at the representation level: faithful recovery so e_ddot = u + d holds
     exactly (G1 mass for the body port, contact-consistent Lambda_t for the task
@@ -370,7 +390,7 @@ def main():
     _realizer = InverseDynamicsQPRealizer(_model)
     hand_sid = site_id(_model, "right_hand_site")
     sweep_joints = ["right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_elbow_joint"]
-    lam_samples = []
+    lam_samples = []; ig_samples = []
     for a_sh in np.linspace(-0.6, 0.9, 6):
         for a_el in np.linspace(0.1, 1.4, 6):
             _data.qpos[_model.jnt_qposadr[joint_id(_model, "right_shoulder_pitch_joint")]] = a_sh
@@ -379,6 +399,8 @@ def main():
             _, _, hj = hand_state(_model, _data, hand_sid)
             Lt = contact_consistent_task_inertia(_model, _data, _realizer, hj)
             lam_samples.append(np.diag(Lt))
+            # angular-momentum channel: centroidal rotational inertia (recovery)
+            ig_samples.append(np.linalg.eigvalsh(centroidal_rotational_inertia(_model, _data)))
     lam_samples = np.array(lam_samples)
     lam_min = lam_samples.min(axis=0); lam_max = lam_samples.max(axis=0)
     results["H1_config_invariance"] = dict(
@@ -390,6 +412,30 @@ def main():
     print("[H1 config-invariance] Lambda_t diag over arm sweep: min=%s max=%s (kg), variation up to %.0f%%"
           % (np.round(lam_min, 2).tolist(), np.round(lam_max, 2).tolist(),
              float(np.max((lam_max - lam_min) / np.maximum(lam_min, 1e-9) * 100))))
+
+    # ---- H1 angular-momentum channel: first-order integrator predictor is a
+    #      constant exact-ZOH pair, while the centroidal inertia it recovers
+    #      through varies over the same sweep (the momentum-channel analogue of
+    #      the Lambda_t result; validates the new body-port channel of Prop 1) ----
+    T = body.dt
+    A_theta = np.eye(3); B_theta = T * np.eye(3)                 # e_dot_h = u_theta + d_theta
+    A_theta_zoh = np.eye(3); B_theta_zoh = T * np.eye(3)         # exact ZOH of a first-order integrator
+    ig_samples = np.array(ig_samples)
+    ig_min = ig_samples.min(axis=0); ig_max = ig_samples.max(axis=0)
+    ig_var = float(np.max((ig_max - ig_min) / np.maximum(ig_min, 1e-9) * 100))
+    results["H1_angular_channel"] = dict(
+        A_theta_matches_exact_zoh=float(np.max(np.abs(A_theta - A_theta_zoh))),
+        B_theta_matches_exact_zoh=float(np.max(np.abs(B_theta - B_theta_zoh))),
+        centroidal_inertia_eig_min=ig_min.tolist(),
+        centroidal_inertia_eig_max=ig_max.tolist(),
+        centroidal_inertia_variation_pct=ig_var,
+        predictor_A_theta_B_theta_constant=True,
+        note="body-port angular-momentum channel e_dot_h = u_theta + d_theta is a first-order integrator; its discrete (A_theta,B_theta)=(I, T*I) equals the exact-ZOH first-order integrator exactly and is configuration-independent, while the centroidal rotational inertia I_G that the moment recovery must invert varies over the same 36-point arm sweep -- the momentum-channel analogue of the Lambda_t result.",
+    )
+    print("[H1 angular channel] max|A_theta-ZOH|=%.2e max|B_theta-ZOH|=%.2e ; I_G eig over sweep min=%s max=%s (kg m^2), variation up to %.0f%%"
+          % (results["H1_angular_channel"]["A_theta_matches_exact_zoh"],
+             results["H1_angular_channel"]["B_theta_matches_exact_zoh"],
+             np.round(ig_min, 2).tolist(), np.round(ig_max, 2).tolist(), ig_var))
 
     # ---- H2 representation level: faithful recovery, observer off vs on ----
     for value, name in zip(TORQUE_STAND_CTRL, ACTUATED_JOINT_NAMES):

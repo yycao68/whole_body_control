@@ -1,16 +1,46 @@
 {
-  "reach": "oscillating arm reaction 45 N at 1.6 Hz, 1.0-3.0 s",
-  "max_arm_reaction_N": 45.0,
+  "external": {
+    "load": "planned external load 45 N at 1.6 Hz on the body (Eq. 23)",
+    "max_reaction_N": 45.0,
+    "split": {
+      "peak_com_mm": 37.66,
+      "rms_com_mm": 20.85,
+      "peak_rp_rad": 0.199
+    },
+    "coupled": {
+      "peak_com_mm": 22.08,
+      "rms_com_mm": 11.89,
+      "peak_rp_rad": 0.2321
+    },
+    "peak_com_reduction_x": 1.71,
+    "rms_com_reduction_x": 1.75
+  },
+  "internal": {
+    "load": "planned right-arm swing (shoulder pitch/roll + elbow) at 1.2 Hz, no external force (Eq. 23b)",
+    "max_reaction_N": 41.4,
+    "split": {
+      "peak_com_mm": 9.18,
+      "rms_com_mm": 7.13,
+      "peak_rp_rad": 0.078
+    },
+    "coupled": {
+      "peak_com_mm": 15.19,
+      "rms_com_mm": 9.45,
+      "peak_rp_rad": 0.0937
+    },
+    "peak_com_reduction_x": 0.6,
+    "rms_com_reduction_x": 0.75
+  },
+  "note": "External load needs the preview (large reduction); internal arm momentum is compensated natively by the unified whole-body QP, so its uncompensated transient is already small and preview does not help. Preview belongs to what the realizer does not model: external contact loads.",
   "split": {
-    "peak_com_mm": 65.47,
-    "rms_com_mm": 28.7,
-    "peak_rp_rad": 0.2135
+    "peak_com_mm": 37.66,
+    "rms_com_mm": 20.85,
+    "peak_rp_rad": 0.199
   },
   "coupled": {
-    "peak_com_mm": 22.35,
-    "rms_com_mm": 12.34,
-    "peak_rp_rad": 0.2189
+    "peak_com_mm": 22.08,
+    "rms_com_mm": 11.89,
+    "peak_rp_rad": 0.2321
   },
-  "peak_com_reduction_x": 2.93,
-  "peak_rp_reduction_x": 0.98
+  "peak_com_reduction_x": 1.71
 }

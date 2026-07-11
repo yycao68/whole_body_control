@@ -307,7 +307,25 @@ def verify_h3_h4_results():
             "H5 constrained recovery now violates the constraints")
     require(unc["max_friction_violation_N"] > 100.0 and unc["max_torque_violation_Nm"] > 100.0,
             "H5 unconstrained recovery no longer produces large violations")
-    return {"h3": h3, "h4": h4, "h5": h5}
+
+    # H3 also contrasts the internal-momentum form: the unified whole-body QP
+    # compensates an equal-magnitude internal arm swing natively, so its
+    # uncompensated transient is much smaller than the external load's.
+    require("internal" in h3 and "external" in h3, "H3 no longer reports both preview forms")
+    require(h3["internal"]["split"]["peak_com_mm"] < h3["external"]["split"]["peak_com_mm"],
+            "H3 internal arm-momentum transient is no longer smaller than the external-load transient")
+
+    # H6: interaction layer on a moving base. Previewing the planned lateral load
+    # keeps the CoM on the base's lateral reference (large reduction), while the
+    # base's own forward weight-shift is tracked equally with or without the layer.
+    h6 = load_json(RESULTS / "h6_onbase_summary.json")
+    require_file(RESULTS / "h6_onbase.png")
+    require(h6["layer_off"]["fell"] is False and h6["layer_on"]["fell"] is False,
+            "H6 fell; the moving-base demo must stay in double support")
+    require(h6["lat_rms_reduction_x"] >= 1.5, "H6 lateral load-rejection benefit regressed below 1.5x")
+    require(abs(h6["layer_on"]["rms_fwd_mm"] - h6["layer_off"]["rms_fwd_mm"]) < 3.0,
+            "H6 layer now disturbs the base's own forward motion")
+    return {"h3": h3, "h4": h4, "h5": h5, "h6": h6}
 
 
 def verify_results():
