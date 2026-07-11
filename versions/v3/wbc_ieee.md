@@ -6,13 +6,13 @@
 
 ## Abstract
 
-Floating-base loco-manipulation is usually organized as a stack of different control objects: centroidal force planning for balance, whole-body inverse dynamics for torque realization, and impedance or operational-space control for manipulation. This paper takes a different view. It shows that the body-environment interface and the hand-task interface can both be represented as interaction-dynamics ports of the same form previously established for fixed-base physical human-robot interaction [1]. Only these interaction dynamics are predicted over a horizon; the full robot dynamics are used instantaneously to realize the requested interactions. In both ports, model feedforward removes known dynamics and the remaining regulated error satisfies
+Floating-base loco-manipulation is commonly controlled through separate models for centroidal balance, whole-body inverse dynamics, and end-effector interaction. This paper takes a prediction–realization view: body- and task-level interaction *requests* are predicted in canonical residual-acceleration coordinates, while the full contact-constrained robot dynamics are used only to *realize* those requests at the current sample. For each port, model feedforward yields a normalized requested dynamics
 
 $$
 \ddot e = u+d,
 $$
 
-where $u$ is residual acceleration and $d$ is an estimated interaction disturbance. The normalization, exact zero-order-hold predictor, offset-free result, and impedance interpretation are inherited from [1]; the contribution here is to establish the floating-base realization. The body port recovers residual acceleration as a centroidal wrench through mass, centroidal inertia, and contact geometry, while the task port recovers residual acceleration as an end-effector wrench through contact-consistent task inertia. Thus the prediction model is shared across both ports — the same exact-ZOH double-integrator structure, differing only in dimension and sampling period — whereas contact mode, friction, center-of-pressure, actuator limits, and inverse dynamics are localized to recovery and instantaneous whole-body feasibility. The middle layer is therefore not an MPC: it is a whole-body interaction realizer, or projection onto the robot-feasible set, at the current sample. A coupled realization previews the centroidal reaction of planned arm actions so that balance compensation can be generated before the disturbance is observed. The paper specifies a Unitree G1 MuJoCo evaluation for dual-port offset rejection, cross-port coupling, support transitions, active constraints, and Kalman-based contact/event detection. Five hypotheses are evaluated on the standing torque-actuated G1: (H1) the normalized predictor is port-independent and configuration-invariant — the body and task ports share the identical constant exact-ZOH pair while the task apparent inertia varies by more than an order of magnitude across a kinematic sweep; (H2) disturbance estimation gives offset-free dual-port regulation both at the representation level ($\sim$90–210$\times$ steady-state error reduction) and on the full realizer, once the body port is recovered as a centroidal wrench rather than a posture tilt (CoM error 44.9$\to$2.7 mm, hand error 151$\to$31 mm under sustained loads, no falls); (H3) previewing the planned arm-reaction wrench (coupled realization) cuts the peak cross-port CoM transient by $2.9\times$ versus reactive rejection; (H4) contact events are detected from the observer innovation with no misses or false positives at $\sim$56 ms latency; and (H5) the physical constraints live entirely in the recovery — dropping the friction and torque limits makes the recovered wrench violate the friction cone by $\sim$900 N and the actuator limits by $\sim$945 N·m and the robot falls, whereas keeping them holds the recovered forces feasible and rejects the push. The remaining torque-level work is dynamic-gait recovery: a 10 s root-assisted visualization runs with both MPC command layers active and fixed-support torque trials pass no-push and randomized-push gates, while torque-level support switching and sustained walking still require the production gait/contact-wrench realizer.
+where $u$ is a residual acceleration and $d$ an estimated interaction disturbance (the body port additionally carries a first-order centroidal angular-momentum channel, so no rigid-body attitude approximation is required). A whole-body inverse-dynamics QP then projects the body-wrench and task-acceleration requests onto the feasible set defined by rigid contacts, friction, center-of-pressure, joint, and actuator constraints, and the mismatch between requested and realized port dynamics is retained explicitly as a *realization residual* rather than hidden in the prediction model. The task port recovers through the full floating-base contact-consistent apparent inertia; the body port recovers translation through centroidal force balance and rotation through centroidal angular-momentum balance, with attitude supplied by an outer reference. A disturbance-augmented predictor yields conditional offset-free regulation when the cancelling interaction request is physically feasible. On a torque-actuated Unitree G1 model, the formulation demonstrates that robot dependence is confined to the recovery — the canonical predictor is unchanged while the task apparent inertia varies by more than an order of magnitude across a kinematic sweep — together with offset-free dual-port disturbance rejection under faithful recovery, anticipatory compensation of planned external hand loads, oracle-free contact-event detection, and explicit, bounded degradation when physical constraints are active. The contribution is not a replacement locomotion controller but a representation-and-realization interface for adding predictable, constraint-aware physical interaction on top of an existing whole-body locomotion stack.
 
 **Index Terms** - interaction dynamics, centroidal MPC, whole-body control, floating-base robots, loco-manipulation, physical human-robot interaction, model predictive control.
 
@@ -34,7 +34,7 @@ $$
 
 The resulting error model is the interaction-dynamics backbone established in [1]. The floating-base case is nontrivial because contact geometry, support changes, friction, center-of-pressure limits, actuator saturation, and arm-body reactions all affect whether a normalized acceleration can be realized. The central claim of this paper is therefore a prediction-realization separation principle: only interaction dynamics are predicted over a horizon, while robot dynamics are used at the current sample to project interaction requests onto the feasible whole-body dynamics. In this view, the full robot dynamics do not become a second prediction model; they define the instantaneous feasible set onto which normalized interaction commands are realized.
 
-This leads naturally, but secondarily, to a dual predictive controller. The balance port and task port use the same exact-ZOH double-integrator predictor; the body port recovers residual acceleration as a centroidal wrench, and the task port recovers residual acceleration as a contact-consistent task wrench. A whole-body interaction realizer then enforces the rigid-body dynamics and instantaneous feasibility constraints. Thus the architecture follows from the representation rather than serving as the paper's main premise.
+This leads naturally, but secondarily, to a dual predictive controller. The balance and task ports use the same canonical exact-ZOH predictor structure — the task port a double integrator, the body port a double integrator on the CoM error together with a first-order integrator on the centroidal angular momentum — and the body port recovers residual acceleration as a centroidal wrench while the task port recovers it as a contact-consistent task wrench. A whole-body interaction realizer then enforces the rigid-body dynamics and instantaneous feasibility constraints. Thus the architecture follows from the representation rather than serving as the paper's main premise.
 
 The contributions are organized around this separation. First, the paper formulates floating-base balance and manipulation as two interaction ports that instantiate the normalized model of [1]. Second, it derives the centroidal and contact-consistent task recoveries showing that mass, centroidal inertia, contact mode, and task inertia do not alter the prediction matrices. Third, it localizes contact geometry, friction, center-of-pressure, actuator limits, and whole-body dynamics to recovery and instantaneous feasibility, clarifying exactly where floating-base constraints enter. Fourth, it realizes the representation as a split or coupled dual-MPC controller and specifies a Unitree G1 evaluation for offset rejection, arm-body coupling, support switching, active constraints, and Kalman-based event detection.
 
@@ -112,61 +112,66 @@ $$
 \tag{6}
 $$
 
-The rotational channel is treated in the same residual-acceleration coordinates. Let $k_G=I_G(q)\omega_G$ be centroidal angular momentum expressed through the centroidal composite rigid-body inertia. Then
+The rotational channel is expressed directly in centroidal **angular-momentum** coordinates, which avoids identifying the locked-inertia angular velocity with a rigid-body attitude rate. Let $k_G=A_G(q)\dot q$ be the centroidal angular momentum, with $A_G$ the angular block of the centroidal momentum matrix, and let $M_c$ be the net contact moment about the CoM. Then
 
 $$
-I_G\dot\omega_G
-=M_c-\dot I_G\omega_G+w_\theta,
+\dot k_G=M_c+w_\theta,
 \tag{7}
 $$
 
-where $M_c$ is the net contact moment about the CoM. Define
+where $w_\theta$ lumps unmodeled moments. For the angular-momentum error $e_h=k_G-k_{G,d}$, define the desired net moment
 
 $$
-M_c^{\rm des}
-=\dot I_G\omega_G+I_G(\dot\omega_{G,d}+u_\theta).
+M_c^{\rm des}=\dot k_{G,d}+u_\theta.
 \tag{8}
 $$
 
-For the local orientation error $e_\theta=\log(RR_d^\top)^\vee$, the approximation $\ddot e_\theta\simeq\dot\omega_G-\dot\omega_{G,d}$ gives
+When the recovered contacts realize $M_c=M_c^{\rm des}$,
 
 $$
-\ddot e_\theta=u_\theta+d_\theta,\qquad
-d_\theta=I_G^{-1}w_\theta.
+\dot e_h=u_\theta+d_\theta,\qquad d_\theta=w_\theta,
 \tag{9}
 $$
 
-Two approximations are used here and should be stated explicitly. First, $\omega_G$ defined by $k_G=I_G(q)\omega_G$ is the locked-inertia (CCRBI-averaged) angular velocity of the whole body; it is generally *not* the time derivative of any single orientation, so identifying $R$ with the centroidal frame and setting $\dot e_\theta\simeq\omega_G-\omega_{G,d}$ is an approximation, with the resulting kinematic mismatch absorbed into $d_\theta$. Second, the error map is linearized through the logarithm, so the channel is valid locally, away from the singularity of the logarithm map. Large-angle locomotion therefore requires a nonlinear attitude predictor or repeated local relinearization.
+a **first-order** integrator. Unlike an attitude parametrization, (9) is exact under exact moment recovery: no locked-inertia-to-attitude approximation is introduced. When a desired attitude is required, it is supplied through the reference $k_{G,d}$ by an outer regulator (for example $k_{G,d}=-K_\theta\,\log(RR_d^\top)^\vee$); the local validity of that attitude map is then a property of the outer loop, not of the port dynamics. The two body channels therefore differ in order — a second-order integrator on the CoM error and a first-order integrator on the angular-momentum error — rather than being forced into a common attitude double integrator.
 
-Stacking translation and rotation gives
-
-$$
-e_b=[e_c^\top,e_\theta^\top]^\top,\quad
-x_b=[e_b^\top,\dot e_b^\top]^\top,\quad
-u_b=[u_c^\top,u_\theta^\top]^\top.
-$$
-
-Applying the exact-ZOH construction of [1] at sampling period $T_b$ gives
+Crucially, neither the requested translational relation (6) nor the requested rotational relation (9) is the true plant: the recovered resultant force and net moment are realized by the whole-body layer only up to a **realization residual** (Section VI), which is retained explicitly rather than folded silently into $d$. Writing that residual as $r_b=[r_c^\top,r_h^\top]^\top$, the physically realized body port obeys
 
 $$
-x_{b,k+1}=A_bx_{b,k}+B_b(u_{b,k}+d_{b,k}),
+\ddot e_c=u_c+d_c+r_c,\qquad
+\dot e_h=u_\theta+d_\theta+r_h,
+\tag{6$'$}
+$$
+
+with $r_b=0$ exactly when the requested centroidal wrench and moment are feasibly recovered. Stacking the second-order CoM channel and the first-order angular-momentum channel,
+
+$$
+x_b=[e_c^\top,\dot e_c^\top,e_h^\top]^\top,\quad
+u_b=[u_c^\top,u_\theta^\top]^\top,\quad
+d_b=[d_c^\top,d_\theta^\top]^\top,
+$$
+
+and applying the exact-ZOH construction of [1] to the requested model at period $T_b$ gives
+
+$$
+x_{b,k+1}=A_bx_{b,k}+B_b(u_{b,k}+d_{b,k}+r_{b,k}),
 \tag{10}
 $$
 
 $$
 A_b=
-\begin{bmatrix}I_6&T_bI_6\\0&I_6\end{bmatrix},
+\begin{bmatrix}I_3&T_bI_3&0\\0&I_3&0\\0&0&I_3\end{bmatrix},
 \qquad
 B_b=
-\begin{bmatrix}\frac12T_b^2I_6\\T_bI_6\end{bmatrix}.
+\begin{bmatrix}\tfrac12T_b^2I_3\\T_bI_3\\T_bI_3\end{bmatrix}.
 \tag{11}
 $$
 
-Both matrices are constant. Mass, centroidal inertia, contact locations, and contact mode appear only in wrench recovery and constraints.
+The pair $(A_b,B_b)$ is constant; mass, centroidal inertia, contact locations, and contact mode appear only in wrench recovery and constraints.
 
-**Lemma 1 (floating-base body port).** Assume the centroidal orientation error remains inside the local logarithmic chart and that the desired centroidal wrench can be recovered, possibly with logged slack, from the active contacts. Then the floating-base body port satisfies the normalized interaction-dynamics model (10) with the constant exact-ZOH pair (11). The active contact mode, contact locations, mass, centroidal inertia, friction limits, and center-of-pressure constraints affect only the recovery equations and the feasible input set; they do not change $(A_b,B_b)$.
+**Proposition 1 (canonical body-port representation).** For a fixed active contact mode, the *requested* body-port dynamics are the canonical model (10) with the constant exact-ZOH pair (11): a double integrator on the CoM error and a first-order integrator on the centroidal angular-momentum error. The translational channel follows exactly from centroidal force balance (4)–(6); the rotational channel follows exactly from centroidal angular-momentum balance (7)–(9), with no attitude approximation. Mass, centroidal inertia, contact locations, friction, and center-of-pressure limits enter only the recovery map and the feasible input set, not $(A_b,B_b)$. The realized body port equals the requested model up to the realization residual $r_b$ of Section VI, and coincides with it when $r_b=0$.
 
-**Proof.** The translational channel follows by substituting the recovered resultant force (5) into the centroidal balance equation (4), which gives (6). The rotational channel follows similarly from (7) and (8), giving the local residual-acceleration relation (9). Stacking the translational and rotational residual accelerations gives the continuous-time double integrator. Applying the exact-ZOH construction from [1] yields (10)-(11). The quantities $m,I_G,p_i,\rho$ are used to convert $u_b$ into a centroidal wrench and contact forces through (12)-(15), but the normalized state transition is expressed directly in residual-acceleration coordinates. $\square$
+**Proof.** Substituting the recovered resultant (5) into (4) gives (6); substituting the recovered moment (8) into (7) gives (9). Stacking yields a block-diagonal continuous-time generator (double integrator $\oplus$ first-order integrator) whose exact zero-order hold is (11) — the first-order block $\dot e_h=u_\theta+d_\theta$ discretizes exactly as $e_{h,k+1}=e_{h,k}+T_b(u_{\theta,k}+d_{\theta,k})$. The quantities $m$, $A_G$, $p_i$, $\rho$ convert $u_b$ into a centroidal wrench and contact forces through the recovery (12)–(15); the gap between requested and recovered wrench/moment is the residual $r_b$ defined in Section VI. $\square$
 
 ### B. Contact-Wrench Recovery and MPC
 
@@ -187,7 +192,7 @@ $$
 W_b^{\rm des}(u_b)=
 \begin{bmatrix}
 m(\ddot c_d-g)+mu_c\\
-\dot I_G\omega_G+I_G(\dot\omega_{G,d}+u_\theta)
+\dot k_{G,d}+u_\theta
 \end{bmatrix}.
 \tag{13}
 $$
@@ -199,7 +204,7 @@ $$
 \tag{14}
 $$
 
-where $s_W$ is a penalized wrench slack used only when exact realization is infeasible. When $s_W\neq0$ the recovered resultant no longer equals $F_c^{\rm des}$, so the normalized relation (6) holds only up to a realization residual $m^{-1}s_W^{\rm (force)}$ (and the rotational analogue); this residual is collected into $d_b$ exactly as $d_{\rm rec}$ is collected into the task disturbance $d_t$ in (19), and is estimated by the observer. Equations (6) and (10) are therefore exact when recovery is exact and hold with an estimated residual otherwise. Each active contact additionally satisfies unilateral-force, friction-pyramid/cone, and center-of-pressure constraints. In a scheduled gait, future $\mathcal G_{\rho_j}$ and contact bounds are indexed by the planned mode sequence while $(A_b,B_b)$ remain unchanged.
+where $s_W$ is a penalized wrench slack used only when exact realization is infeasible. This slack *is* the body-port realization residual of (6$'$): its force part maps to $r_c=m^{-1}s_W^{\rm (force)}$ and its moment part to $r_h=s_W^{\rm (moment)}$. We keep $r_b$ explicit rather than folding it into the disturbance $d_b$: $d_b$ is the external/model disturbance the observer is meant to cancel, whereas $r_b$ is a physical-infeasibility residual that no residual-acceleration input can remove. Equations (6), (9), and (10) are exact when recovery is exact ($r_b=0$) and hold with a logged residual otherwise. Each active contact additionally satisfies unilateral-force, friction-pyramid/cone, and center-of-pressure constraints. In a scheduled gait, future $\mathcal G_{\rho_j}$ and contact bounds are indexed by the planned mode sequence while $(A_b,B_b)$ remain unchanged.
 
 Joint-torque feasibility cannot be inferred exactly from the reduced centroidal model alone. The body-port recovery therefore uses either a conservative frozen affine surrogate
 
@@ -331,23 +336,35 @@ With a friction-pyramid approximation, $\mathcal F_\rho$ is polyhedral and (22) 
 
 ---
 
-## VII. Split and Coupled Prediction Realizations
+## VII. External-Wrench and Internal-Momentum Preview
 
-The split controller solves (15) and the task MPC independently. The reaction of the task wrench on the base appears in $d_b$ and is rejected after being observed. This design is modular and provides the baseline dual-MPC realization.
+The split controller solves the body MPC (15) and the task MPC independently; whatever the arm does reaches the body port only after it is observed, and is rejected reactively through $d_b$. The coupled controller instead previews the *planned* effect of the arm on the centroidal dynamics. Two physically distinct effects must be kept separate, because conflating them double-counts forces.
 
-The coupled controller uses the fact that the planned task wrench produces a known centroidal reaction,
+**External task wrench.** When the hand exchanges a real contact force with the environment — pushing, carrying, leaning on a rail — the environment reaction $F_h^{\rm plan}$ (and moment $M_h^{\rm plan}$) enters the *whole-robot* centroidal-momentum balance as a genuine external wrench, with known centroidal contribution
 
 $$
-W_{b\leftarrow t}
-=-\begin{bmatrix}
-F_t\\(x_t-c)\times F_t+M_t
+W_{G,h}^{\rm ext}=
+\begin{bmatrix}
+F_h^{\rm plan}\\
+(x_h-c)\times F_h^{\rm plan}+M_h^{\rm plan}
 \end{bmatrix}.
 \tag{23}
 $$
 
-This reaction is included in the body wrench recovery over the horizon. Because $F_t$ is affine in $u_t$, the coupling changes the lifted input map or linear constraint rows but not the double-integrator state matrix. This design is intended to reduce CoM and attitude transients during fast arm motion or contact, because the body controller compensates a predictable disturbance before observer feedback is required.
+The body port previews it by adding $-W_{G,h}^{\rm ext}$ to the desired centroidal wrench (13) over the horizon, so the contacts are pre-loaded before $d_b$ has to build up.
 
-A single stacked QP is possible when both horizons share a grid. A computationally simpler alternative retains two QPs and passes the planned arm wrench sequence to the body port. The evaluation therefore compares the split controller, the coupled controller with arm-reaction preview, and, if timing permits, a monolithic stacked QP. No equivalence between weighted and strict lexicographic priority is assumed. Hard balance constraints, explicit task slacks, and logged recovery residuals define the actual priority.
+**Internal arm motion.** A fast *free-space* reach exerts no external force on the robot. The operational-space control wrench $F_t^{\rm ctrl}=F_{t,\rm ff}+\Lambda_t u_t$ acts through joint torques and is *internal*; it must **not** be inserted into the centroidal balance as an external $-F_t^{\rm ctrl}$, because internal actuation cannot change the total centroidal momentum and doing so double-counts. The genuine base reaction is the rate of change of centroidal momentum carried by the arm. Partitioning the centroidal momentum matrix into base, leg, and arm columns in $h_G=A_G(q)\dot q$, the planned arm motion contributes
+
+$$
+\dot h_{G,\rm arm}^{\rm plan}
+=A_{G,\rm arm}(q)\,\ddot q_{\rm arm}^{\rm plan}
++\dot A_{G,\rm arm}(q,\dot q)\,\dot q_{\rm arm}^{\rm plan},
+\tag{23b}
+$$
+
+which the body port previews by $W_{b,\rm preview}=-\dot h_{G,\rm arm}^{\rm plan}$ from (23b). In both cases the preview is affine in the arm plan, so it changes only the lifted input map or linear constraint rows of the body MPC, not the state matrix $(A_b,B_b)$; the intent is identical — compensate a predictable centroidal disturbance before observer feedback is required — but the source (external contact force vs. internal momentum redistribution) is made explicit. The evaluation (Section X, H3) exercises the external-wrench case (23): a planned oscillating interaction load whose reaction the coupled controller previews.
+
+A single stacked QP is possible when both horizons share a grid; a simpler alternative retains two QPs and passes the planned arm wrench/momentum sequence to the body port. No equivalence between weighted and strict lexicographic priority is assumed; hard balance constraints, explicit task slacks, and logged realization residuals define the actual priority.
 
 ---
 
@@ -386,7 +403,7 @@ A mode change is declared only after $\eta_k$ exceeds a calibrated threshold for
 
 The normalized predictor, nominal offset-free regulation, stability conditions, and impedance interpretation are taken directly from [1]. They are not restated as propositions or re-proved here. The centroidal and task equations in Sections IV-V establish only that the two ports satisfy the assumptions and coordinate form required to invoke those results.
 
-Several conditions are specific to this floating-base realization and must be checked independently. The centroidal orientation error is assumed to remain inside the local logarithmic coordinate chart, and $I_G$ and $\Lambda_t$ are assumed finite and positive definite on the operating set. The cancelling residual accelerations must be realizable by contact wrenches and joint torques within the physical constraints. Any recovery residual from the whole-body interaction realizer is treated as part of the disturbance model, and estimator convergence is considered only for contact modes that are correctly modeled or correctly detected. Thus citation of [1] does not by itself prove recursive feasibility of the contact-constrained G1 controller.
+Several conditions are specific to this floating-base realization and must be checked independently. The centroidal momentum matrix $A_G$ and the task apparent inertia $\Lambda_t$ are assumed finite and well-conditioned on the operating set; the body rotational channel is regulated in angular-momentum coordinates, so no attitude chart enters the port dynamics — a local orientation chart is used only when an outer loop converts a desired attitude into the angular-momentum reference $k_{G,d}$. The cancelling residual accelerations and moments must be realizable by contact wrenches and joint torques within the physical constraints. Any recovery residual from the whole-body interaction realizer is treated as part of the disturbance model, and estimator convergence is considered only for contact modes that are correctly modeled or correctly detected. Thus citation of [1] does not by itself prove recursive feasibility of the contact-constrained G1 controller.
 
 Constant $(A,B)$ removes model switching from the normalized state dynamics, but the feasible input set still switches with contact mode. Stability under arbitrary switching does not follow automatically. A certified switching claim would require either recursive feasibility for the scheduled mode sequence with a terminal set and terminal cost, or a common Lyapunov certificate for the actual constrained feedback regions. Until such a certificate is completed, the paper reports bounded empirical switching performance rather than certified arbitrary-switching stability.
 
@@ -557,7 +574,7 @@ H5 tests that friction cones, unilateral contact, and joint-torque limits are en
 
 ## XI. Limitations
 
-The centroidal rotational channel is locally linear and depends on $I_G,\dot I_G$. Contact-force recovery remains mode and geometry dependent. The contact-consistent task inertia can become ill-conditioned near singular task configurations or weak support modes, and simple Cartesian force boxes may underrepresent the corresponding joint-torque amplification. The task and body recovery maps are refreshed at each sample and frozen only over the short solve; the paper does not claim an ISS bound for arbitrary horizon-wide variation of $\Lambda_t$, $I_G$, or the contact geometry. Such variation is logged through observer innovation and realization residuals and remains a target for a future robust certificate.
+The body rotational channel is regulated in centroidal angular-momentum coordinates through $A_G,\dot A_G$; recovering a desired *attitude* from it requires an outer loop and a local orientation chart. Contact-force recovery remains mode and geometry dependent. The contact-consistent task inertia can become ill-conditioned near singular task configurations or weak support modes, and simple Cartesian force boxes may underrepresent the corresponding joint-torque amplification. The task and body recovery maps are refreshed at each sample and frozen only over the short solve; the paper does not claim an ISS bound for arbitrary horizon-wide variation of $\Lambda_t$, $A_G$, or the contact geometry. Such variation is logged through observer innovation and realization residuals and remains a target for a future robust certificate.
 
 The contact detector observes model inconsistency and requires kinematic gating; it is not guaranteed to uniquely identify arbitrary external contact. The whole-body interaction realizer can make a requested interaction acceleration infeasible. Hardware deployment also requires filtered velocity estimates and actuator-aware torque smoothing, since raw encoder differentiation would inject high-frequency noise into feedforward and inverse dynamics. The reported 10 s walking video uses the two MPC command layers but remains root assisted, so it should be read as a visualization artifact rather than as dynamic walking validation. The torque realizer delivers offset-free regulation in fixed double support and carries the faithful centroidal-wrench recovery through seven contact-mode switches under a DCM walking reference, but it does not yet sustain continuous walking. A standard CoP/DCM stabilizer was implemented and isolates the binding limit as single-support actuation authority: with an upright torso the ankle center-of-pressure caps the horizontal CoM acceleration near $0.9$ m/s$^2$, below what the wide-stance lateral sway demands, so the CoP saturates and the DCM diverges after a few switches. Sustained walking therefore requires a hip/angular-momentum strategy and capture-point step-timing/placement adaptation layered on the recovery — standard locomotion components orthogonal to the normalized predictor — which remain the pieces for the S4 benchmark. Finally, MuJoCo validation does not replace torque-controlled G1 hardware experiments.
 
