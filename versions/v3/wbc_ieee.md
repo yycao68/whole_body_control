@@ -12,7 +12,7 @@ $$
 \ddot e = u+d,
 $$
 
-where $u$ is residual acceleration and $d$ is an estimated interaction disturbance. The normalization, exact zero-order-hold predictor, offset-free result, and impedance interpretation are inherited from [1]; the contribution here is to establish the floating-base realization. The body port recovers residual acceleration as a centroidal wrench through mass, centroidal inertia, and contact geometry, while the task port recovers residual acceleration as an end-effector wrench through contact-consistent task inertia. Thus the prediction model is shared across both ports — the same exact-ZOH double-integrator structure, differing only in dimension and sampling period — whereas contact mode, friction, center-of-pressure, actuator limits, and inverse dynamics are localized to recovery and instantaneous whole-body feasibility. The middle layer is therefore not an MPC: it is a whole-body interaction realizer, or projection onto the robot-feasible set, at the current sample. A coupled realization previews the centroidal reaction of planned arm actions so that balance compensation can be generated before the disturbance is observed. The paper specifies a Unitree G1 MuJoCo evaluation for dual-port offset rejection, cross-port coupling, support transitions, active constraints, and Kalman-based contact/event detection. Two representation-level hypotheses are evaluated on the G1: the normalized predictor is shown to be port-independent and configuration-invariant — the body and task ports share the identical constant exact-ZOH pair while the task apparent inertia varies by more than an order of magnitude across a kinematic sweep — and disturbance estimation gives offset-free dual-port regulation both at the representation level (steady-state error reduced $\sim$90–210$\times$) and on the full torque-actuated standing G1 realizer, once the body port is recovered as a centroidal wrench rather than a posture tilt (CoM error 44.9$\to$2.7 mm, hand error 151$\to$31 mm under sustained loads, no falls). The remaining torque-level work is dynamic-gait recovery: a 10 s root-assisted visualization runs with both MPC command layers active and fixed-support torque trials pass no-push and randomized-push gates, while torque-level support switching and walking still require the production gait/contact-wrench realizer.
+where $u$ is residual acceleration and $d$ is an estimated interaction disturbance. The normalization, exact zero-order-hold predictor, offset-free result, and impedance interpretation are inherited from [1]; the contribution here is to establish the floating-base realization. The body port recovers residual acceleration as a centroidal wrench through mass, centroidal inertia, and contact geometry, while the task port recovers residual acceleration as an end-effector wrench through contact-consistent task inertia. Thus the prediction model is shared across both ports — the same exact-ZOH double-integrator structure, differing only in dimension and sampling period — whereas contact mode, friction, center-of-pressure, actuator limits, and inverse dynamics are localized to recovery and instantaneous whole-body feasibility. The middle layer is therefore not an MPC: it is a whole-body interaction realizer, or projection onto the robot-feasible set, at the current sample. A coupled realization previews the centroidal reaction of planned arm actions so that balance compensation can be generated before the disturbance is observed. The paper specifies a Unitree G1 MuJoCo evaluation for dual-port offset rejection, cross-port coupling, support transitions, active constraints, and Kalman-based contact/event detection. Four hypotheses are evaluated on the standing torque-actuated G1: (H1) the normalized predictor is port-independent and configuration-invariant — the body and task ports share the identical constant exact-ZOH pair while the task apparent inertia varies by more than an order of magnitude across a kinematic sweep; (H2) disturbance estimation gives offset-free dual-port regulation both at the representation level ($\sim$90–210$\times$ steady-state error reduction) and on the full realizer, once the body port is recovered as a centroidal wrench rather than a posture tilt (CoM error 44.9$\to$2.7 mm, hand error 151$\to$31 mm under sustained loads, no falls); (H3) previewing the planned arm-reaction wrench (coupled realization) cuts the peak cross-port CoM transient by $2.9\times$ versus reactive rejection; and (H4) contact events are detected from the observer innovation with no misses or false positives at $\sim$56 ms latency. The remaining torque-level work is dynamic-gait recovery: a 10 s root-assisted visualization runs with both MPC command layers active and fixed-support torque trials pass no-push and randomized-push gates, while torque-level support switching and sustained walking still require the production gait/contact-wrench realizer.
 
 **Index Terms** - interaction dynamics, centroidal MPC, whole-body control, floating-base robots, loco-manipulation, physical human-robot interaction, model predictive control.
 
@@ -394,14 +394,14 @@ Constant $(A,B)$ removes model switching from the normalized state dynamics, but
 
 ## X. Unitree G1 Evaluation
 
-The evaluation uses a Menagerie-derived Unitree G1 model as the common plant. The comparisons are organized around hypotheses rather than around the software layers themselves. This is important because the paper's claim is representation-level: both interaction ports should share the same predictor, while the floating-base mechanics appear in recovery. H1 and H2 are reported below and both hold — H2 offset-free regulation is demonstrated on the full torque-actuated standing G1 realizer, not only at the representation level; H3–H5 depend on the dynamic-gait realizer and remain planned.
+The evaluation uses a Menagerie-derived Unitree G1 model as the common plant. The comparisons are organized around hypotheses rather than around the software layers themselves. This is important because the paper's claim is representation-level: both interaction ports should share the same predictor, while the floating-base mechanics appear in recovery. H1–H4 are reported below and all hold on the standing torque-actuated G1 (H2 offset-free regulation is demonstrated on the full realizer, not only at the representation level); only H5 and the sustained-walking form of the benchmark depend on the dynamic-gait realizer and remain planned.
 
 | Hypothesis | Comparison | Primary Evidence | Status |
 |---|---|---|---|
 | H1: normalized prediction is port-independent | conventional centroidal MPC vs. centroidal interaction MPC | same $(A,B)$, command equivalence, $\Lambda_t$ variation | evaluated (Table II) |
 | H2: disturbance estimation gives offset-free dual-port regulation | no observer vs. body/task Kalman observers | steady-state hand and CoM error under persistent force | evaluated (Table III): offset-free at the representation level and on the standing G1 realizer |
-| H3: arm-reaction preview reduces cross-port transients | split vs. coupled prediction | CoM and attitude peaks during fast reaching | planned |
-| H4: contact events can be detected without an oracle | detected mode vs. MuJoCo oracle mode | latency, missed events, false positives, recovery residual | planned |
+| H3: arm-reaction preview reduces cross-port transients | split vs. coupled prediction | CoM and attitude peaks during fast reaching | evaluated (Table V) |
+| H4: contact events can be detected without an oracle | detected event vs. scripted-oracle event | latency, missed events, false positives | evaluated (Table VI) |
 | H5: constraints belong to recovery | constrained vs. unconstrained recovery | friction, CoP, torque violations and slack use | planned |
 
 The controller set is C0 joint-PD/operational-space PD, C1 conventional force-input centroidal MPC, C2 dual interaction MPC without observers, C3 split dual interaction MPC with body/task observers, C4 coupled dual interaction MPC with arm-reaction preview, and C5 the oracle-contact upper bound. Randomized studies use fixed seeds and paired disturbances; failed and fallen trials remain in the success denominator. A claim of dynamic walking interaction is reserved for the torque-actuated inverse-dynamics benchmark with randomized pushes and Kalman/event detection active.
@@ -505,6 +505,38 @@ To close the loop we then implemented the standard **center-of-pressure/DCM stab
 ![Fig. 4. DCM stepping on the faithful centroidal recovery.](code/results/gait_dcm.png)
 
 **Fig. 4.** DCM walking layer on the faithful recovery: measured CoM vs. the DCM-planned reference (top: lateral, showing the $\pm$14 cm sway and the residual single-support tracking lag; middle: forward), and left/right foot lift (bottom) over the contact-mode switches.
+
+### Results for H3 (Arm-Reaction Preview Reduces Cross-Port Transients)
+
+Returning to the fixed-support hypotheses, H3 tests the coupled realization of Section VII. On the standing torque-actuated G1, a fast oscillating arm-reaction wrench (45 N at 1.6 Hz) is applied at the body port. Because this reaction is *planned* — the task wrench $F_t$ is known — the coupled controller previews its center-of-mass effect $-F_t/m$ and feeds it forward into the body-port acceleration command, whereas the split controller rejects the identical reaction reactively through the body disturbance observer, which lags a fast-changing input. The preview cuts the peak lateral CoM excursion by $2.9\times$:
+
+| Cross-port controller | Peak CoM excursion | RMS CoM excursion |
+|---|---:|---:|
+| Split (reactive rejection) | 65.5 mm | 28.7 mm |
+| Coupled (arm-reaction preview) | 22.4 mm | 12.3 mm |
+| Reduction | $2.9\times$ | $2.3\times$ |
+
+**Table V.** H3: peak and RMS lateral CoM excursion during the fast arm reaction, split vs. coupled prediction (Fig. 5a). Because $F_t$ is affine in $u_t$, the preview changes only the body-port input, not the predictor.
+
+### Results for H4 (Contact Events Detected Without an Oracle)
+
+H4 tests the innovation-based detector of Section VIII. A sequence of lateral brace-contact onsets and offsets (six events) is applied to the standing G1; each creates an unmodeled wrench, so the body CoM disturbance observer's normalized innovation $\eta_k=\nu_k^\top S_k^{-1}\nu_k$ spikes. A change detector declares an event when $\eta_k$ exceeds a calibrated threshold (mean $+6\sigma$ of a quiet window) for three consecutive samples, with a refractory interval; the detector never reads the event schedule, which serves only as the oracle for scoring:
+
+| Metric | Value |
+|---|---:|
+| True contact events | 6 |
+| Detected | 6 |
+| Missed | 0 |
+| False positives | 0 |
+| Mean / max detection latency | 56 / 58 ms |
+
+**Table VI.** H4: contact-event detection from the body observer innovation, scored against the scripted-event oracle. All six onsets/offsets are detected with no misses or false positives at $\sim$56 ms latency (Fig. 5b). The latency is the time for the CoM disturbance to register in the innovation; a task-port observer or direct force sensing would reduce it further.
+
+![Fig. 5a. H3 arm-reaction preview.](code/results/h3_coupling.png)
+
+![Fig. 5b. H4 contact-event detection.](code/results/h4_detection.png)
+
+**Fig. 5.** (a) H3: lateral CoM excursion (left) and torso roll/pitch (right) during the fast arm reaction, split vs. coupled preview. (b) H4: the normalized innovation (NIS) over the trial with the calibrated threshold; green dotted lines are oracle contact events, orange lines are detections.
 
 ---
 

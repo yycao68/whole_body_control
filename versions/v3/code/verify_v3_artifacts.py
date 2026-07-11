@@ -278,6 +278,25 @@ def verify_gait_extension_results():
     return {"faithful": faithful, "dcm": dcm, "dcm_stab": stab, "walk": walk}
 
 
+def verify_h3_h4_results():
+    # H3: coupled arm-reaction preview reduces the peak CoM excursion vs split.
+    h3 = load_json(RESULTS / "h3_coupling_summary.json")
+    require_file(RESULTS / "h3_coupling.png")
+    require(h3["coupled"]["peak_com_mm"] < h3["split"]["peak_com_mm"],
+            "H3 coupled preview no longer reduces the CoM transient")
+    require(h3["peak_com_reduction_x"] >= 1.5, "H3 CoM-transient reduction regressed below 1.5x")
+
+    # H4: all scripted contact events detected, no misses or false positives.
+    h4 = load_json(RESULTS / "h4_detection_summary.json")
+    require_file(RESULTS / "h4_detection.png")
+    require(h4["missed"] == 0, "H4 missed a contact event")
+    require(h4["false_positives"] == 0, "H4 produced a false positive")
+    require(h4["detected"] == h4["true_events"], "H4 detection count != oracle event count")
+    require(h4["mean_latency_ms"] is not None and h4["mean_latency_ms"] < 150.0,
+            "H4 detection latency regressed")
+    return {"h3": h3, "h4": h4}
+
+
 def verify_results():
     paper_alias = RESULTS / "g1_walk_10s_1p2ms.png"
     require_file(paper_alias)
@@ -291,6 +310,7 @@ def verify_results():
         "no_push": verify_result_prefix("g1_walk_10s", expected_push=False),
         "short_push": verify_result_prefix("g1_walk_10s_push", expected_push=True),
         "h1_h2": verify_h1_h2_results(),
+        "h3_h4": verify_h3_h4_results(),
         "torque_smoke": verify_torque_smoke_results(),
         "gait_extension": verify_gait_extension_results(),
     }
