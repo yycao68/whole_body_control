@@ -308,6 +308,18 @@ def verify_h3_h4_results():
     require(unc["max_friction_violation_N"] > 100.0 and unc["max_torque_violation_Nm"] > 100.0,
             "H5 unconstrained recovery no longer produces large violations")
 
+    # H5 statistics: over 50 randomized pushes, constrained recovery stays
+    # feasible and stands every time; unconstrained recovery falls every time.
+    h5s = load_json(RESULTS / "h5_constraints_stats.json")
+    require(h5s["n_seeds"] >= 50, "H5 statistics ran fewer than 50 seeds")
+    require(h5s["constrained"]["success_rate"] >= 0.98,
+            "H5 constrained recovery no longer stands across randomized pushes")
+    require(h5s["unconstrained"]["fall_rate"] >= 0.98,
+            "H5 unconstrained recovery no longer falls across randomized pushes")
+    require(h5s["constrained"]["friction_violation_N"]["max"] < 5.0
+            and h5s["constrained"]["torque_violation_Nm"]["max"] < 5.0,
+            "H5 constrained recovery now violates constraints across randomized pushes")
+
     # H3 also contrasts the internal-momentum form: the unified whole-body QP
     # compensates an equal-magnitude internal arm swing natively, so its
     # uncompensated transient is much smaller than the external load's.

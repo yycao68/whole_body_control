@@ -127,11 +127,12 @@ adaptation, and stable support-mode control.
 
 ## H3/H4/H6 Hypothesis Checks
 
-H3, H4, and H6 are implemented as torque-actuated G1 checks:
+H3, H4, H5, and H6 are implemented as torque-actuated G1 checks:
 
 ```bash
 MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_h3_coupling.py
 MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_h4_detection.py
+MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_h5_constraints.py
 MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_h6_onbase.py
 ```
 
@@ -151,6 +152,16 @@ quiet-window threshold; the scripted schedule is used only as the scoring
 oracle and for plotting. Current result: 6/6 detected, 0 missed, 0 false
 positives, mean latency 56.0 ms, max latency 58.0 ms.
 
+H5 enforces friction cones and torque limits in the recovery QP, not the
+predictor. An illustrative 45 N push shows constrained recovery holding the
+recovered wrench/torque at the solver tolerance (0.3 N, 0.06 N.m) and standing,
+while unconstrained recovery commands ~900 N / ~945 N.m of infeasible force/torque
+and falls. `run_batch(50)` then repeats over 50 randomized pushes (magnitude
+U(30,50) N, randomized lateral-dominant direction and onset): constrained stands
+50/50 with max friction/torque violation 0.31 N / 0.32 N.m and CoM error
+6.1 +/- 1.3 mm; unconstrained falls 50/50. (The unconstrained violation saturates
+to a common ceiling once the robot tips, so only its magnitude is meaningful.)
+
 H6 demonstrates the interaction layer on a *moving* base: the base commands its
 own +/-50 mm forward weight-shift (0.25 Hz) while a planned 45 N, 1.6 Hz lateral
 trunk load disturbs the CoM. With the layer on, previewing the load cuts the
@@ -162,6 +173,7 @@ Generated files:
 
 - `results/h3_coupling_summary.json`, `results/h3_coupling.png`
 - `results/h4_detection_summary.json`, `results/h4_detection.png`
+- `results/h5_constraints_summary.json`, `results/h5_constraints_stats.json`, `results/h5_constraints.png`
 - `results/h6_onbase_summary.json`, `results/h6_onbase.png`
 
 ## Planned Modules

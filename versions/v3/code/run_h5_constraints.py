@@ -45,7 +45,10 @@ PUSH_PEAK = 45.0      # sustained lateral pelvis force [N]
 MU = 0.5              # friction coefficient used by the recovery QP
 
 
-def run(constraints_on: bool):
+def run(constraints_on: bool, push_vec=None, push_on: float = PUSH_ON, push_off: float = PUSH_OFF):
+    if push_vec is None:
+        push_vec = np.array([0.0, PUSH_PEAK, 0.0])
+    push_vec = np.asarray(push_vec, dtype=float)
     model = mujoco.MjModel.from_xml_path(str(generate_torque_model()))
     model.opt.timestep = SIM_DT
     data = mujoco.MjData(model)
@@ -87,8 +90,8 @@ def run(constraints_on: bool):
             com_acc_des = np.array([u_body[0], u_body[1], 0.0])
 
         push = np.zeros(3)
-        if PUSH_ON <= t < PUSH_OFF:
-            push[1] = PUSH_PEAK
+        if push_on <= t < push_off:
+            push = push_vec
         data.xfrc_applied[:] = 0.0
         data.xfrc_applied[pelvis, :3] = push
 
@@ -105,7 +108,7 @@ def run(constraints_on: bool):
             mz = MU * max(fz, 0.0)
             fv = max(fv, float(abs(fx) - mz), float(abs(fy) - mz))     # >0 = outside pyramid (the QP's constraint)
         fric_viol[k] = fv
-        tau_viol[k] = float(np.max(np.abs(tau_unsat) - tau_max))         # >0 = over limit
+        tau_viol[k] = max(0.0, float(np.max(np.abs(tau_unsat) - tau_max)))  # true nonnegative violation
         tau_sat[k] = float(np.linalg.norm(saturation))
         t_log[k] = t; com_err[k] = (robot_com(model, data) - com0)[:2]
         if data.qpos[2] < 0.45 or np.max(np.abs(rpy[:2])) > 0.7:
@@ -115,7 +118,7 @@ def run(constraints_on: bool):
             com_err[k + 1:] = com_err[k]; t_log[k + 1:] = t
             break
 
-    m = (t_log >= PUSH_ON) & (t_log <= PUSH_OFF)
+    m = (t_log >= push_on) & (t_log <= push_off)
     if not np.any(m):                      # fell before/at push onset
         m = np.arange(N) <= max(1, k)
     return dict(
@@ -125,6 +128,42 @@ def run(constraints_on: bool):
         max_torque_saturation_Nm=round(float(np.max(tau_sat[m])), 2),
         ss_com_error_mm=round(float(1000 * np.mean(np.linalg.norm(com_err[m], axis=1))), 1),
         t=t_log, fric_viol=fric_viol, tau_viol=tau_viol, com_err=com_err,
+    )
+
+
+def run_batch(n_seeds: int = 50):
+    """Randomized-push statistics: over n_seeds pushes (magnitude, direction, and
+    onset randomized), compare constrained vs unconstrained recovery. Reports
+    success rate and the distribution of recovered-wrench/torque violations."""
+    rng = np.random.default_rng(20260705)
+    con_fell = np.zeros(n_seeds, bool); unc_fell = np.zeros(n_seeds, bool)
+    con_fric = np.zeros(n_seeds); con_tau = np.zeros(n_seeds); con_com = np.zeros(n_seeds)
+    unc_fric = np.zeros(n_seeds); unc_tau = np.zeros(n_seeds)
+    mags = np.zeros(n_seeds)
+    for s in range(n_seeds):
+        mag = float(rng.uniform(30.0, 50.0))                       # push magnitude [N]
+        side = 1.0 if rng.random() < 0.5 else -1.0                 # lateral sign
+        dx = float(rng.uniform(-0.4, 0.4))                         # small sagittal component
+        d = np.array([dx, side * 1.0, 0.0]); d /= np.linalg.norm(d[:2])
+        push = mag * d
+        t_on = float(rng.uniform(0.8, 1.2)); t_off = t_on + 1.5
+        mags[s] = mag
+        c = run(True, push, t_on, t_off); u = run(False, push, t_on, t_off)
+        con_fell[s] = c["fell"]; con_fric[s] = c["max_friction_violation_N"]
+        con_tau[s] = c["max_torque_violation_Nm"]; con_com[s] = c["ss_com_error_mm"]
+        unc_fell[s] = u["fell"]; unc_fric[s] = u["max_friction_violation_N"]
+        unc_tau[s] = u["max_torque_violation_Nm"]
+    def stat(a):
+        return dict(mean=round(float(np.mean(a)), 2), max=round(float(np.max(a)), 2), std=round(float(np.std(a)), 2))
+    return dict(
+        n_seeds=n_seeds,
+        push="pelvis push, magnitude U(30,50) N, randomized lateral-dominant direction, onset U(0.8,1.2) s for 1.5 s; friction mu=%.2f" % MU,
+        push_magnitude_N=stat(mags),
+        constrained=dict(success_rate=round(float(np.mean(~con_fell)), 3), n_stood=int(np.sum(~con_fell)),
+                         friction_violation_N=stat(con_fric), torque_violation_Nm=stat(con_tau),
+                         ss_com_error_mm=stat(con_com)),
+        unconstrained=dict(fall_rate=round(float(np.mean(unc_fell)), 3), n_fell=int(np.sum(unc_fell)),
+                           friction_violation_N=stat(unc_fric), torque_violation_Nm=stat(unc_tau)),
     )
 
 
@@ -157,6 +196,12 @@ def main():
     ax[1].set_title("H5: recovered torque-limit violation [Nm]"); ax[1].set_xlabel("t [s]"); ax[1].legend(); ax[1].grid(alpha=.3)
     fig.tight_layout(); fig.savefig(RESULTS / "h5_constraints.png", dpi=160)
     print("saved: results/h5_constraints.png, results/h5_constraints_summary.json")
+
+    stats = run_batch(50)
+    print(json.dumps(stats, indent=2))
+    with (RESULTS / "h5_constraints_stats.json").open("w") as f:
+        json.dump(stats, f, indent=2)
+    print("saved: results/h5_constraints_stats.json")
 
 
 if __name__ == "__main__":

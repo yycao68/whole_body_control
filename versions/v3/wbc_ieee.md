@@ -163,7 +163,11 @@ A_b=
 \begin{bmatrix}I_3&T_bI_3&0\\0&I_3&0\\0&0&I_3\end{bmatrix},
 \qquad
 B_b=
-\begin{bmatrix}\tfrac12T_b^2I_3\\T_bI_3\\T_bI_3\end{bmatrix}.
+\begin{bmatrix}
+\tfrac12T_b^2I_3&0\\
+T_bI_3&0\\
+0&T_bI_3
+\end{bmatrix}.
 \tag{11}
 $$
 
@@ -297,7 +301,16 @@ x_{t,k+1}=A_tx_{t,k}+B_t(u_{t,k}+d_{h,t,k}+r_{t,k}),
 \tag{20}
 $$
 
-with $(A_t,B_t)$ the canonical exact-ZOH double integrator of (11), dimension three.
+with
+
+$$
+A_t=\begin{bmatrix}I_3&T_tI_3\\0&I_3\end{bmatrix},
+\qquad
+B_t=\begin{bmatrix}\tfrac12T_t^2I_3\\T_tI_3\end{bmatrix},
+\tag{20b}
+$$
+
+the canonical three-dimensional exact-ZOH double-integrator pair.
 
 **Proposition 2 (contact-consistent task port).** For a fixed active contact mode with $J_{c,\rho}M^{-1}J_{c,\rho}^\top$ and $J_t\bar M_\rho^{-1}J_t^\top$ nonsingular on the operating set, the *requested* end-effector port is the canonical model (20) with a constant exact-ZOH pair; configuration and contact mode enter through $\Lambda_t$, the feedforward $\mu_{t,\rho}$, and the feasible set, not through $(A_t,B_t)$. The realized port equals the requested model up to $r_t$, and coincides with it when $r_t=0$.
 
@@ -306,11 +319,11 @@ with $(A_t,B_t)$ the canonical exact-ZOH double integrator of (11), dimension th
 Like the body port, the task MPC is normalized-only — it minimizes $\sum_j\!\big(\|x_{t,j}\|_{Q_t}^2+\|u_{t,j}+\hat d_{t,k}\|_{R_t}^2\big)+\|x_{t,N_t}\|_{P_t}^2$ subject to $x_{t,j+1}=A_tx_{t,j}+B_t(u_{t,j}+\hat d_{t,k})$ and $u_{t,j}\in\widehat{\mathcal U}_{t,k}$. The feasible set
 
 $$
-\widehat{\mathcal U}_{t,k}=\{\,u:\ \|F_{t,\rm ff,k}+\Lambda_{t,k}u\|_\infty\le F_{\max},\ \|\tau_{{\rm base},k}+J_t^\top(F_{t,\rm ff,k}+\Lambda_{t,k}u)\|_\infty\le\tau_{\max}\,\}
+\widehat{\mathcal U}_{t,k}=\{\,u:\ \|F_{t,\rm ff,k}+\Lambda_{t,k}u\|_\infty\le F_{\max},\ \|\tau_{{\rm base},k}+S J_t^\top(F_{t,\rm ff,k}+\Lambda_{t,k}u)\|_\infty\le\tau_{\max}\,\}
 \tag{21}
 $$
 
-is a conservative box on the recovered *total* task wrench and the affine-in-$u$ arm-torque surrogate ($\tau_{{\rm base},k}$ the frozen gravity/Coriolis-plus-balance bias), evaluated at the current state/mode and frozen over the short horizon; it bounds the total commanded wrench, not the corrective increment. Exact torque and contact feasibility is still enforced instantaneously by the realizer (22). The only object reused across samples is the canonical predictor $(A_t,B_t)$; $\Lambda_t$, $\mu_{t,\rho}$, and $\widehat{\mathcal U}_{t,k}$ are recomputed each sample. Fast configuration changes, near-singular task Jacobians, and box approximations create recovery mismatch, which appears as $d_{h,t}$ and $r_t$ rather than as a certified robust-stability guarantee.
+is a conservative box on the recovered *total* task wrench and the affine-in-$u$ actuated-torque surrogate ($S J_t^\top$ denotes the actuated-joint block of the generalized task wrench, and $\tau_{{\rm base},k}$ is the frozen gravity/Coriolis-plus-balance bias), evaluated at the current state/mode and frozen over the short horizon; it bounds the total commanded wrench, not the corrective increment. Exact torque and contact feasibility is still enforced instantaneously by the realizer (22). The only object reused across samples is the canonical predictor $(A_t,B_t)$; $\Lambda_t$, $\mu_{t,\rho}$, and $\widehat{\mathcal U}_{t,k}$ are recomputed each sample. Fast configuration changes, near-singular task Jacobians, and box approximations create recovery mismatch, which appears as $d_{h,t}$ and $r_t$ rather than as a certified robust-stability guarantee.
 
 ---
 
@@ -511,14 +524,16 @@ H4 tests the innovation-based detector of Section VIII. A sequence of lateral br
 
 ### Results for H5 (Constraints Belong to Recovery)
 
-H5 tests that friction cones, unilateral contact, and joint-torque limits are enforced in the recovery realizer (22), not in the normalized predictor. Under a sustained 45 N lateral push on the standing G1, we compare **constrained** recovery (friction pyramid and torque limits active in the QP, $\mu=0.5$) with **unconstrained** recovery (both dropped), measuring the constraint violations of the *recovered* — QP-commanded — contact forces and joint torques:
+H5 tests that friction cones, unilateral contact, and joint-torque limits are enforced in the recovery realizer (22), not in the normalized predictor. We compare **constrained** recovery (friction pyramid and torque limits active in the QP, $\mu=0.5$) with **unconstrained** recovery (both dropped), measuring the constraint violations of the *recovered* — QP-commanded — contact forces and joint torques. The illustrative single push (45 N lateral, Fig. 4) makes the mechanism visible: constrained recovery holds the recovered force inside the friction pyramid and the torque inside the actuator limits (violations at the solver tolerance, $0.3$ N and $0.06$ N·m) and rejects the push with a $6.8$ mm CoM error — the tracking *slack* a hard constraint trades for feasibility — whereas unconstrained recovery commands $\sim$900 N of tangential force outside the friction cone and $\sim$945 N·m over the actuator limit, which are not physically realizable, and the robot collapses within half a second.
 
-| Recovery | Friction-pyramid violation | Torque-limit violation | CoM error | Fall |
-|---|---:|---:|---:|:--:|
-| Constrained | 0.3 N | 0.06 N·m | 6.8 mm | no |
-| Unconstrained | 900 N | 945 N·m | — | yes (0.51 s) |
+To show this is systematic rather than a single lucky push, we repeat the comparison over **50 randomized pushes** (magnitude $\mathcal U(30,50)$ N, randomized lateral-dominant direction and onset):
 
-**Table VI.** H5: constraint violations of the recovered wrench/torque, constrained vs. unconstrained recovery (Fig. 4). With the constraints in recovery the recovered forces stay inside the friction pyramid and the torques inside the actuator limits (violations at the solver tolerance) and the robot rejects the push with a small bounded CoM error — the tracking *slack* that a hard constraint trades for feasibility. Without them the recovery commands contact forces $\sim$900 N outside the friction cone and torques $\sim$945 N·m over the actuator limit, which are not physically realizable, and the robot collapses in half a second. The constraints therefore do real work, and they live entirely in the instantaneous recovery — the predictor $(A,B)$ is identical in both runs.
+| Recovery | Stands | Max friction viol. | Max torque viol. | CoM error (mean±std) |
+|---|:--:|---:|---:|---:|
+| Constrained | 50/50 | 0.31 N | 0.32 N·m | 6.1 ± 1.3 mm |
+| Unconstrained | 0/50 | $\sim$900 N | $\sim$945 N·m | — (falls) |
+
+**Table VI.** H5 over 50 randomized pushes: constrained recovery keeps the recovered wrench and torque at the solver tolerance and stands in *every* trial, at the cost of a small bounded CoM slack; unconstrained recovery commands physically unrealizable forces/torques and falls in *every* trial. (The unconstrained violation saturates to a common ceiling once the robot tips, so only its magnitude, not its spread, is meaningful.) The constraints do real work, and they live entirely in the instantaneous recovery — the predictor $(A,B)$ is identical in both runs.
 
 ![Fig. 4. H5 constrained vs. unconstrained recovery.](code/results/h5_constraints.png)
 
@@ -616,7 +631,7 @@ The claims of this paper are made in fixed support. This appendix collects two s
 
 **Fig. A1.** Root-assisted G1 walking visualization: CoM forward motion vs. the 10.8 m trapezoidal-speed reference (top), left/right foot height (second), torso roll/pitch (third), and the scheduled support sequence (bottom).
 
-**A.2 Torque-level stepping across contact-mode switches.** The faithful centroidal-wrench recovery that makes H2 hold in fixed support was carried into a stepping gait, with the body port unchanged and only the reference made walk-feasible by a divergent-component-of-motion (DCM) layer (a dynamically feasible CoM trajectory with the ZMP inside the stance foot). The same normalized centroidal MPC tracks it through **seven contact-mode switches** while the body observer keeps the CoM on the reference (Table A2, Fig. A2). Adding the standard locomotion stack on top — a CoP/DCM stabilizer, a hip/angular-momentum strategy, and capture-point step adaptation — did *not* yield sustained walking: the binding limit is single-support actuation authority, since with an upright torso the ankle center-of-pressure caps the horizontal CoM acceleration near $0.9$ m/s$^2$, below what the G1's wide default stance demands, so the CoP saturates after a few switches. That is a locomotion-engineering problem, separable from the interaction-dynamics representation and left to a specialized gait scheduler. The point retained here is narrow: the interface — predictor plus faithful realizer — stays well posed across the switches.
+**A.2 Torque-level stepping across contact-mode switches.** The faithful centroidal-wrench recovery that makes H2 hold in fixed support was carried into a stepping gait, with the body port unchanged and only the reference made walk-feasible by a divergent-component-of-motion (DCM) layer (a dynamically feasible CoM trajectory with the ZMP inside the stance foot). The same normalized centroidal MPC remains numerically well posed through **seven contact-mode switches** before the single-support authority limit is reached (Table A2, Fig. A2); it is not a sustained-walking result. Adding the standard locomotion stack on top — a CoP/DCM stabilizer, a hip/angular-momentum strategy, and capture-point step adaptation — did *not* yield sustained walking: the binding limit is single-support actuation authority, since with an upright torso the ankle center-of-pressure caps the horizontal CoM acceleration near $0.9$ m/s$^2$, below what the G1's wide default stance demands, so the CoP saturates after a few switches. That is a locomotion-engineering problem, separable from the interaction-dynamics representation and left to a specialized gait scheduler. The point retained here is narrow: the interface — predictor plus faithful realizer — can be evaluated across contact switches and exposes the feasibility loss through residuals and fall time.
 
 | Torque stepping gate (DCM ref) | Switches before fall |
 |---|---:|

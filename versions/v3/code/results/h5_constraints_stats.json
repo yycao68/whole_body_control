@@ -1,0 +1,42 @@
+{
+  "n_seeds": 50,
+  "push": "pelvis push, magnitude U(30,50) N, randomized lateral-dominant direction, onset U(0.8,1.2) s for 1.5 s; friction mu=0.50",
+  "push_magnitude_N": {
+    "mean": 40.17,
+    "max": 49.58,
+    "std": 5.92
+  },
+  "constrained": {
+    "success_rate": 1.0,
+    "n_stood": 50,
+    "friction_violation_N": {
+      "mean": 0.1,
+      "max": 0.31,
+      "std": 0.1
+    },
+    "torque_violation_Nm": {
+      "mean": 0.11,
+      "max": 0.32,
+      "std": 0.12
+    },
+    "ss_com_error_mm": {
+      "mean": 6.14,
+      "max": 9.2,
+      "std": 1.26
+    }
+  },
+  "unconstrained": {
+    "fall_rate": 1.0,
+    "n_fell": 50,
+    "friction_violation_N": {
+      "mean": 900.3,
+      "max": 900.3,
+      "std": 0.0
+    },
+    "torque_violation_Nm": {
+      "mean": 944.78,
+      "max": 944.78,
+      "std": 0.0
+    }
+  }
+}
