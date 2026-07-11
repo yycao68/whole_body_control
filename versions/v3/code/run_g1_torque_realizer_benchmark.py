@@ -306,6 +306,9 @@ class InverseDynamicsQPRealizer:
         self.fz_max = 900.0
         self.task_weight = 6.0        # hand-task objective weight (benchmark default)
         self.task_acc_clip = 18.0     # hand acceleration clip [m/s^2]
+        # When False, the friction-pyramid and joint-torque limits are dropped
+        # from the recovery QP (unconstrained recovery, for the H5 ablation).
+        self.constraints_on = True
         self.last_status = "not_solved"
         self.last_eq_residual = np.inf
         self.last_contact_force = np.zeros(0)
@@ -372,7 +375,7 @@ class InverseDynamicsQPRealizer:
             lows.append(beq_extra)
             ups.append(beq_extra)
 
-        if nlam:
+        if nlam and self.constraints_on:
             A_fric = []
             for i in range(nlam // 3):
                 base = self.nv + self.nu + 3 * i
@@ -390,8 +393,9 @@ class InverseDynamicsQPRealizer:
         ub = np.full(n, np.inf)
         lb[:self.nv] = -120.0
         ub[:self.nv] = 120.0
-        lb[self.nv:self.nv + self.nu] = self.torque_min
-        ub[self.nv:self.nv + self.nu] = self.torque_max
+        if self.constraints_on:
+            lb[self.nv:self.nv + self.nu] = self.torque_min
+            ub[self.nv:self.nv + self.nu] = self.torque_max
         for i in range(nlam // 3):
             base = self.nv + self.nu + 3 * i
             lb[base:base + 2] = -self.fz_max

@@ -134,7 +134,9 @@ def run():
         mean_latency_ms=round(float(np.mean(lat)), 1) if lat else None,
         max_latency_ms=round(float(np.max(lat)), 1) if lat else None,
         per_event_latency_ms=[round(x, 1) for x in lat],
-        nis_threshold=round(thr, 2), calib_mean=round(mu, 3), calib_std=round(sd, 4),
+        nis_threshold=float(thr),
+        calib_mean=float(mu),
+        calib_std=float(sd),
         brace_force_N=BRACE_FORCE.tolist(),
     )
     return summary, dict(t=t_log, nis=nis_log, brace=brace_log, thr=thr,

@@ -1,0 +1,17 @@
+{
+  "disturbance": "45 N lateral pelvis push, 1.0-2.5 s; friction mu=0.50",
+  "constrained": {
+    "max_friction_violation_N": 0.3,
+    "max_torque_violation_Nm": 0.06,
+    "max_torque_saturation_Nm": 0.06,
+    "ss_com_error_mm": 6.8,
+    "fell": false
+  },
+  "unconstrained": {
+    "max_friction_violation_N": 900.3,
+    "max_torque_violation_Nm": 944.78,
+    "max_torque_saturation_Nm": 1224.37,
+    "ss_com_error_mm": 6.8,
+    "fell": true
+  }
+}

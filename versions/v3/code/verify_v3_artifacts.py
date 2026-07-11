@@ -294,7 +294,20 @@ def verify_h3_h4_results():
     require(h4["detected"] == h4["true_events"], "H4 detection count != oracle event count")
     require(h4["mean_latency_ms"] is not None and h4["mean_latency_ms"] < 150.0,
             "H4 detection latency regressed")
-    return {"h3": h3, "h4": h4}
+
+    # H5: constraints live in recovery. Constrained recovery keeps the recovered
+    # wrench/torque feasible and stands; unconstrained recovery violates both and
+    # falls.
+    h5 = load_json(RESULTS / "h5_constraints_summary.json")
+    require_file(RESULTS / "h5_constraints.png")
+    con, unc = h5["constrained"], h5["unconstrained"]
+    require(con["fell"] is False, "H5 constrained recovery now falls; update paper text")
+    require(unc["fell"] is True, "H5 unconstrained recovery no longer falls; update paper text")
+    require(con["max_friction_violation_N"] < 5.0 and con["max_torque_violation_Nm"] < 5.0,
+            "H5 constrained recovery now violates the constraints")
+    require(unc["max_friction_violation_N"] > 100.0 and unc["max_torque_violation_Nm"] > 100.0,
+            "H5 unconstrained recovery no longer produces large violations")
+    return {"h3": h3, "h4": h4, "h5": h5}
 
 
 def verify_results():

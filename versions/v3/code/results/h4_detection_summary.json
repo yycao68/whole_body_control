@@ -14,9 +14,9 @@
     56.0,
     54.0
   ],
-  "nis_threshold": 0.0,
-  "calib_mean": 0.0,
-  "calib_std": 0.0001,
+  "nis_threshold": 0.0008527460852317367,
+  "calib_mean": 6.032966132574028e-05,
+  "calib_std": 0.00013206940398433273,
   "brace_force_N": [
     0.0,
     18.0,
