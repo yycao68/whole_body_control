@@ -1,0 +1,59 @@
+{
+  "H1_structural": {
+    "body_A_matches_exact_zoh": 0.0,
+    "body_B_matches_exact_zoh": 0.0,
+    "task_A_matches_exact_zoh": 0.0,
+    "task_B_matches_exact_zoh": 0.0,
+    "note": "both ports are the same constant exact-ZOH double integrator; only the dimension differs (2 vs 3)."
+  },
+  "H1_equivalence": {
+    "max_command_diff_normalized_vs_forceinput": 7.46631365799999e-06,
+    "note": "open-loop residual-acceleration command over 2000 random states/disturbances: the normalized (decision=residual accel) and conventional force-input (decision=CoM force, matched weights R_f=R/m^2) centroidal MPCs are the same map. Closed-loop trajectory diffs are chaos-confounded near the balance limit and are not used."
+  },
+  "H1_config_invariance": {
+    "lambda_t_diag_min": [
+      0.3258520001419443,
+      0.3327251429833588,
+      0.33275527508213326
+    ],
+    "lambda_t_diag_max": [
+      4.671024514575225,
+      1.057441162473239,
+      13.109210725665504
+    ],
+    "lambda_t_diag_variation_pct": [
+      1333.4803875810126,
+      217.81221971737997,
+      3839.5951641727647
+    ],
+    "predictor_A_B_constant": true,
+    "note": "task apparent inertia Lambda_t computed over a 36-point right-arm kinematic sweep; it varies substantially while (A_t,B_t) stay exactly constant: all configuration dependence is confined to recovery."
+  },
+  "H2_representation": {
+    "body_no_observer_ss_mm": 124.985387438807,
+    "body_observer_ss_mm": 1.3941697080988642,
+    "task_no_observer_ss_mm": 18748.440396105103,
+    "task_observer_ss_mm": 89.0431138374959,
+    "body_offset_reduction_x": 89.64861789261022,
+    "task_offset_reduction_x": 210.55463570513825,
+    "note": "faithful recovery (e_ddot=u+d) with G1 mass / contact-consistent Lambda_t; sustained [12.0, 0.0, 0.0] N pelvis and [0.0, 8.0, 0.0] N hand force; SS over (3.0, 4.0) s."
+  },
+  "H2_full_realizer": {
+    "status": "Offset-free on the standing G1: the realizer drives CoM linear acceleration to c_ddot_d+u_c (centroidal-wrench recovery) and the hand acceleration to x_ddot_d+u_t, so e_ddot=u+d is faithfully realized and the observer removes the steady-state offset for both ports without falling. Dynamic-gait (contact-switching) recovery is future work.",
+    "body_port": {
+      "no_observer_ss_com_mm": 44.88409316413559,
+      "observer_ss_com_mm": 2.6546657843265224,
+      "fell_no_observer": false,
+      "fell_observer": false,
+      "com_offset_reduction_x": 16.907624842696535
+    },
+    "task_port": {
+      "no_observer_ss_hand_mm": 151.34676873150008,
+      "observer_ss_hand_mm": 30.87014562900389,
+      "fell_no_observer": false,
+      "fell_observer": false,
+      "hand_offset_reduction_x": 4.902690468337246
+    },
+    "note": "decoupled: body port under [12.0, 0.0, 0.0] N pelvis force; task port under [0.0, 8.0, 0.0] N hand force; from t=1.0s, SS over (3.0, 4.0) s."
+  }
+}

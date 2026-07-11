@@ -1,0 +1,42 @@
+{
+  "seed": 51,
+  "scenario": "walk",
+  "model": "models/g1_wbc_torque.xml",
+  "duration_requested_s": 3.0,
+  "duration_completed_s": 1.8889999999999028,
+  "distance_commanded_m": 0.6,
+  "distance_actual_m": -0.04505197071338235,
+  "push_enabled": false,
+  "push_start_s": null,
+  "push_duration_s": 0.0,
+  "push_force_n": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "detected_push": false,
+  "contact_switches_detected": 8,
+  "contact_event_times_s": [
+    0.005,
+    0.9010000000000007,
+    1.18699999999998,
+    1.3389999999999633,
+    1.4199999999999544,
+    1.5189999999999435,
+    1.6299999999999313,
+    1.7219999999999211
+  ],
+  "max_abs_roll_pitch_rad": 0.6826864411081393,
+  "min_pelvis_height_m": 0.449862491716689,
+  "max_tau_abs_nm": 139.0,
+  "max_tau_saturation_norm": 0.7157022083715243,
+  "max_tau_limit_utilization": 1.0,
+  "max_realizer_residual": 0.7164200106480745,
+  "num_realizer_fallbacks": 1282,
+  "max_contact_force_norm_n": 1096.4413535106676,
+  "min_friction_margin": -54.957523722827375,
+  "hand_rms_error_mm": 266.35783621176137,
+  "fell": true,
+  "passes_torque_realizer_smoke": false,
+  "claim_scope": "Torque-actuated G1 smoke benchmark with normalized body/task MPCs, RandomWalkDisturbanceObserver detection, and a present-sample inverse-dynamics/contact QP realizer. This is a replacement for root assist only after it passes; failures are intentionally retained in the metrics."
+}

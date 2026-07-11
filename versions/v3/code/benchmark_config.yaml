@@ -1,0 +1,31 @@
+platform:
+  model: unitree_g1
+  physics_dt: 0.0005
+  task_control_dt: 0.001
+  centroidal_control_dt: 0.005
+  current_model_actuation: position
+  benchmark_target_actuation: torque
+
+horizons:
+  centroidal_steps: 30
+  task_steps: 20
+
+disturbance:
+  hand_force_n: 8.0
+  payload_equivalent_kg: 2.0
+
+contact_detection:
+  normalized_innovation_threshold: 16.8
+  debounce_samples: 3
+  minimum_clearance_m: 0.03
+  minimum_contact_free_fraction: 0.95
+
+trials:
+  nominal: 20
+  walking_pushes: 30
+  seed: 20260709
+
+reporting:
+  bootstrap_samples: 10000
+  confidence_level: 0.95
+  plot_controllers: [C0, C1, C3, C4]

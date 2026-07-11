@@ -13,3 +13,8 @@ __pycache__/
 
 # Vendored third-party assets (mujoco_menagerie model zoo, >1 GB of meshes)
 external_deps/
+
+# Vendored mesh assets and regenerable simulation logs
+*.stl
+*.STL
+*.npz

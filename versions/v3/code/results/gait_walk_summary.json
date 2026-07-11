@@ -1,0 +1,20 @@
+{
+  "step_len": 0.0,
+  "n_steps": 16,
+  "t_ss": 0.4,
+  "attitude_weight": 4.0,
+  "push": false,
+  "fell": true,
+  "completed_s": 2.36899999999985,
+  "planned_s": 9.1,
+  "completed_full_plan": false,
+  "steps_taken": 2,
+  "contact_switches": 5,
+  "forward_travel_m": -0.10732389921113825,
+  "left_max_lift_mm": 88.83552688632922,
+  "right_max_lift_mm": 63.64925924449573,
+  "max_roll_pitch_rad": 0.703079123847719,
+  "min_pelvis_height_m": 0.6090121030646212,
+  "z_c": 0.6836184019175722,
+  "omega": 3.788154045754912
+}
