@@ -62,6 +62,8 @@ Operational-space impedance, admittance, and task-space MPC [6], [11], [12] regu
 
 Closest in spirit is unified whole-body MPC for combined locomotion and manipulation [10], which optimizes a single predictive whole-body model. The present work differs in the prediction-realization split: only the two normalized interaction dynamics are predicted, while the full contact-constrained rigid-body dynamics act at the current sample as a feasibility projection rather than as a second predictive model. The normalized model, offset-free regulation, stability conditions, and impedance-limit interpretation belong to [1]; the standard centroidal model [8], [17], whole-body inverse dynamics [9], and covariance inflation are prior tools. This paper contributes their floating-base integration, anticipatory coupling, constraint realization, and empirical evaluation on a Unitree G1 in MuJoCo [15].
 
+**Positioning.** We do not propose a locomotion controller and do not compete with the production gait stack that ships on platforms such as the Unitree G1. The contribution is an *interaction-dynamics layer* that sits on top of a mature balance/locomotion base: it predicts the two normalized interaction ports, anticipates cross-port and external-contact effects, and emits a centroidal-wrench and CoM-residual correction that the underlying base — or, when the base is idle, the standing whole-body realizer of Section VI — turns into feasible joint commands. All hypotheses in Section X are therefore evaluated in fixed support, where the interaction claims are cleanest; the locomotion-compatibility probes of Appendix A show only that the same realizer remains well-posed across contact-mode switches, not that this paper solves dynamic walking.
+
 ---
 
 ## III. Floating-Base Interaction Dynamics
@@ -433,15 +435,15 @@ The evaluation uses a Menagerie-derived Unitree G1 model as the common plant. Th
 |---|---|---|---|
 | H1: normalized prediction is port-independent | conventional centroidal MPC vs. centroidal interaction MPC | same $(A,B)$, command equivalence, $\Lambda_t$ variation | evaluated (Table II) |
 | H2: disturbance estimation gives offset-free dual-port regulation | no observer vs. body/task Kalman observers | steady-state hand and CoM error under persistent force | evaluated (Table III): offset-free at the representation level and on the standing G1 realizer |
-| H3: arm-reaction preview reduces cross-port transients | split vs. coupled prediction | CoM and attitude peaks during fast reaching | evaluated (Table V) |
-| H4: contact events can be detected without an oracle | detected event vs. scripted-oracle event | latency, missed events, false positives | evaluated (Table VI) |
-| H5: constraints belong to recovery | constrained vs. unconstrained recovery | friction, torque violations and tracking slack | evaluated (Table VII) |
+| H3: arm-reaction preview reduces cross-port transients | split vs. coupled prediction | CoM and attitude peaks during fast reaching | evaluated (Table IV) |
+| H4: contact events can be detected without an oracle | detected event vs. scripted-oracle event | latency, missed events, false positives | evaluated (Table V) |
+| H5: constraints belong to recovery | constrained vs. unconstrained recovery | friction, torque violations and tracking slack | evaluated (Table VI) |
 
 The controller set is C0 joint-PD/operational-space PD, C1 conventional force-input centroidal MPC, C2 dual interaction MPC without observers, C3 split dual interaction MPC with body/task observers, C4 coupled dual interaction MPC with arm-reaction preview, and C5 the oracle-contact upper bound. Randomized studies use fixed seeds and paired disturbances; failed and fallen trials remain in the success denominator. A claim of dynamic walking interaction is reserved for the torque-actuated inverse-dynamics benchmark with randomized pushes and Kalman/event detection active.
 
 ### Results for H1 (Port-Independent Prediction)
 
-H1 is a representation-level claim and is validated directly. First, the body port (dimension two: CoM and planar attitude) and the task port (dimension three) instantiate the *same* constant exact-ZOH double integrator: measured against the closed-form pair (11), $\max\|A-A_\text{ZOH}\|=\max\|B-B_\text{ZOH}\|=0$ for both ports; only the dimension differs. Second, the normalized centroidal MPC (decision = residual acceleration) and a conventional force-input centroidal MPC (decision = CoM force, matched weights $R_f=R/m^2$) are the same feedback map: over 2000 random states and disturbances the maximum command difference is $7.5\times10^{-6}$, i.e., the reparametrization is lossless. Third, over a 36-point right-arm kinematic sweep the contact-consistent task inertia $\Lambda_t$ (17) varies from $0.33$ to $13.1$ kg on its diagonal — up to $3840\%$ — while the predictor $(A_t,B_t)$ stays exactly constant. All configuration and contact dependence therefore lives in recovery, not in prediction, which is the H1 claim (Fig. 2, left).
+H1 is a representation-level claim and is validated directly. First, the experiment instantiates the *translational* channels of both ports — the planar CoM double integrator of the body port (the CoM block of Proposition 1) and the hand double integrator of the task port; the body port's angular-momentum first-order channel is regulated by the realizer's attitude objective and is not separately exercised here. For these channels the predictor is the *same* constant exact-ZOH double integrator: measured against the closed-form pair (11), $\max\|A-A_\text{ZOH}\|=\max\|B-B_\text{ZOH}\|=0$ for both ports; only the dimension differs. Second, the normalized centroidal MPC (decision = residual acceleration) and a conventional force-input centroidal MPC (decision = CoM force, matched weights $R_f=R/m^2$) are the same feedback map: over 2000 random states and disturbances the maximum command difference is $7.5\times10^{-6}$, i.e., the reparametrization is lossless. Third, over a 36-point right-arm kinematic sweep the contact-consistent task inertia $\Lambda_t$ (17) varies from $0.33$ to $13.1$ kg on its diagonal — up to $3840\%$ — while the predictor $(A_t,B_t)$ stays exactly constant. All configuration and contact dependence therefore lives in recovery, not in prediction, which is the H1 claim (Fig. 2, left).
 
 | H1 evidence | Quantity | Result |
 |---|---|---|
@@ -472,76 +474,11 @@ An earlier realizer that mapped the body residual acceleration to an approximate
 
 **Fig. 2.** (a) H1: the task apparent inertia $\mathrm{diag}(\Lambda_t)$ over the arm sweep (left) with the constant $(A,B)$ and the command-equivalence residual annotated (right). (b) H2 on the full torque-actuated G1 realizer: CoM error (left) and hand error (right) under a sustained force with the observer disabled vs enabled — the observer removes the steady-state offset and neither port falls.
 
-### Initial 10 s G1 Walking Visualization
-
-The current implementation includes a dual-MPC root-assisted walking visualization on the local position-actuated Unitree G1 model. This artifact follows the `g1_ab_simulation` scaffold for visual stability, but the body reference is generated by the normalized centroidal interaction MPC and the right-hand motion is regulated by a normalized task interaction MPC. The floating base is still kinematically assisted, the G1 executes alternating one-foot swing commands, and the stance foot is lightly pinned. This is not the final torque-actuated whole-body interaction realizer and should not be interpreted as torque-level dynamic walking validation. Its purpose is to verify the G1 model, rendering pipeline, MPC command-layer integration, gait-command interface, and visible foot-lift behavior before the full S4 benchmark is run.
-
-For a trapezoidal walking command that ramps from rest to $1.2\,{\rm m/s}$ during $0$--$1$ s, cruises at $1.2\,{\rm m/s}$ during $1$--$9$ s, and decelerates to rest during $9$--$10$ s, the robot traveled 10.800 m in 10 s with visible one-foot swing phases. Because the base is kinematically assisted, the 10.800 m forward distance matches the commanded 10.8 m by construction and is a consistency check on the gait-command interface rather than an achieved tracking result; the meaningful quantities in Table IV are the foot-lift, CoM-height, and torso-attitude ranges under active MPC command layers. The left and right feet lift by 8.3 cm and 8.3 cm, respectively. The CoM height remained above 0.752 m, and the largest absolute roll/pitch angle was 0.030 rad. Table IV summarizes the deterministic run, and Fig. 3 shows the CoM tracking, foot lift, torso attitude, and scheduled support sequence.
-
-| Metric | Value |
-|---|---:|
-| Duration | 10.0 s |
-| Speed profile | 0--1 s ramp, 1--9 s at 1.2 m/s, 9--10 s stop |
-| Commanded distance | 10.8 m |
-| External push | none |
-| Body/task MPC enabled | true / true |
-| Root assist | true |
-| Forward distance | 10.800 m |
-| Left/right foot lift | 0.083 / 0.083 m |
-| Minimum CoM height | 0.752 m |
-| Maximum roll/pitch magnitude | 0.030 rad |
-| Hand RMS error | 95.5 mm |
-| Support switches | 15 |
-| Fall | false |
-
-**Table IV.** Deterministic dual-MPC root-assisted walking visualization on the position-actuated Unitree G1 MuJoCo model. The artifact verifies the G1 model, video pipeline, MPC command-layer integration, gait-command interface, and visible foot-lift behavior. The full S4 claim still requires the torque-actuated whole-body interaction realizer and randomized push trials.
-
-![Fig. 3. Ten-second dual-MPC root-assisted G1 walking visualization.](code/results/g1_walk_10s_1p2ms.png)
-
-**Fig. 3.** Initial dual-MPC root-assisted G1 walking visualization. The top plot compares CoM forward motion with the 10.8 m trapezoidal-speed reference, the second plot reports left/right foot height, the third plot reports torso roll and pitch, and the bottom plot shows the scheduled left/right support sequence.
-
-### Initial Torque-Level Realizer Smoke Test
-
-A torque-actuated smoke benchmark has been added to test whether the root-assisted visualization can be replaced by a physical whole-body realizer. The script generates a local torque-motor variant of the G1 MJCF, runs the normalized body and task MPCs with the random-walk disturbance observers, and applies a present-sample inverse-dynamics/contact QP of the form
-
-$$
-\begin{aligned}
-\min_{\ddot q,\tau,\lambda}\quad&
-\|J_t\ddot q-\ddot x_{t,{\rm des}}\|^2+
-\|J_c\ddot q-\ddot x_{c,{\rm des}}\|^2+
-\|\ddot q-\ddot q_{\rm post}\|^2\\
-{\rm s.t.}\quad&
-M(q)\ddot q+h(q,\dot q)=S^\top\tau+J_c^\top\lambda,\\
-&\tau_{\min}\le\tau\le\tau_{\max},\qquad
-\lambda\in\mathcal F_{\rm pyr},
-\end{aligned}
-\tag{26}
-$$
-
-and logs torque-limit utilization, post-QP clipping residual, friction margin, contact events, push detection, QP residuals, fall status, and realization failures. The current smoke-test realizer drives the whole-body CoM acceleration for body-port recovery, uses four virtual contact points per stance foot, and uses a rubber-sole MuJoCo contact setting in the torque-actuated model. The stepping gates use the DCM (capture-point) lateral-sway reference and a swing-foot task (the same layer analyzed below), so they are no longer a centered-CoM scaffold; what they still lack for the final production implementation in (22) is a center-of-pressure/DCM stabilizer for sustained single support.
-
-The fixed-support portion of the smoke test now passes. The no-push torque-standing trial completes 3.0 s without falling, and three randomized-push standing trials also complete 3.0 s while detecting all injected pushes with the random-walk disturbance observer. The median maximum roll/pitch angle in the push trials is 0.112 rad, and the median hand RMS error is 23.2 mm. All fixed-support trials reach the torque limits, but the post-QP clipping residual remains small (0.13--0.30 Nm), so the constraints are active rather than bypassed by a separate saturation block. The stepping gates, now driven by the DCM lateral-sway reference, no longer tip immediately: the contact-switch gate carries the faithful recovery through five contact-mode switches before falling at 2.041 s (tipping via roll/pitch, pelvis staying at 0.66 m), and the walking gate through eight switches before falling at 1.889 s (pelvis crossing the 0.45 m threshold). Both still fail — the limiter is the single-support balance bandwidth characterized below, not a centered-CoM reference — and are retained in the denominator: the code supports fixed-support torque-level push rejection and DCM-referenced stepping across several contact-mode switches, but has not yet replaced the root-assisted walking artifact as evidence of sustained torque-level dynamic walking.
-
-| Torque smoke gate | Trials | Passed | Falls | Median completed time |
-|---|---:|---:|---:|---:|
-| No-push standing | 1 | 1 | 0 | 2.999 s |
-| Randomized push standing | 3 | 3 | 0 | 2.999 s |
-| Contact-switch command (DCM ref) | 1 | 0 | 1 | 2.041 s (5 switches) |
-| Walking command (DCM ref) | 1 | 0 | 1 | 1.889 s (8 switches) |
-
-### Extending Faithful Recovery Through Contact-Mode Switches
-
-The faithful centroidal-wrench recovery that makes H2 hold in fixed support (§X, Table III) was then carried into a stepping gait, to test whether the recovery survives contact-mode switches. Two controllers were built on top of the recovery. The first is a quasi-static stepping controller that regulates the CoM to a support-consistent reference (CoM over the current stance foot); it completes **four contact-mode switches (two steps)** with $\sim$4 cm swing-foot lifts, a genuine improvement over the earlier position-scaffold walking gate that fell at 1.1 s, but single support is only *marginally* stable (a slow tip over $\sim$3–4 s) because the reference asks the robot to statically balance on one small foot. The second is a **divergent-component-of-motion (DCM) walking layer**: a footstep plan and backward DCM recursion generate a *dynamically feasible* CoM trajectory (LIPM $\ddot c=\omega^2(c-p_{\rm zmp})$, ZMP inside the stance foot), which the same normalized centroidal MPC tracks — the interaction-dynamics body port is unchanged; only the reference becomes walk-feasible. This carries the recovery through **seven contact-mode switches** while the body observer keeps the CoM tracking the DCM reference.
-
-To close the loop we then implemented the standard **center-of-pressure/DCM stabilizer** (Englsberger law): the divergent component $\xi=c+\dot c/\omega$ is measured from the momentum-based CoM velocity, the commanded ZMP $p_{\rm cmd}=p_{\rm ref}+(1+k_{\rm dcm}/\omega)(\xi-\xi_{\rm ref})$ is clamped to the support polygon (the CoP limit), and the resulting $\ddot c=\omega^2(c-p_{\rm cmd})$ is realized by the same faithful recovery. This did **not** yield sustained walking either, and it isolates the true limit: it is not estimation or reference bandwidth but single-support **actuation authority**. With an upright torso the CoM can only be accelerated through the ankle CoP, whose $\pm$6 cm foot range caps the horizontal CoM acceleration at $\omega^2\times0.06\approx0.9$ m/s$^2$; correcting the DCM excursions of the $\pm$14 cm wide stance requires more, so the CoP saturates and the DCM diverges after about five switches. On this platform the explicit stabilizer does not even outperform the MPC-tracked reference (five vs. seven switches). We then added the two components standard in the locomotion literature but orthogonal to the interaction-dynamics contribution: (i) a **hip / angular-momentum strategy** — the torso-attitude objective in the realizer is given a separate, relaxable weight so the QP can use centroidal angular momentum for balance beyond the ankle CoP; and (ii) **capture-point step adaptation** — the next footstep is placed at the predicted end-of-step DCM minus the nominal offset, $u_{\rm next}=\xi_{\rm eos}-b_{\rm nom}$ (clamped to kinematic limits), so the robot steps *under* its falling CoM rather than arresting it with the CoP, together with a DCM-tracked walking-initiation shift onto the first stance foot. This full stack does carry the recovery through the contact switches, but it still does not achieve *sustained* walking on this platform: the robot completes only about two adapted steps before the wide-stance lateral balance and the co-tuning of initiation, step timing, foot-placement limits, and hip-relaxation exceed what was reachable here — and it does not surpass the simpler MPC-tracked DCM reference (seven switches). We conclude, honestly, that the faithful centroidal-wrench recovery makes the normalized interaction dynamics hold across contact-mode switches (the paper's claim, demonstrated to seven switches, Fig. 4), and that all the standard walking-stabilizer components (DCM tracking, CoP clamping, hip strategy, step adaptation) have been implemented on top of it, but that turning them into robust continuous locomotion — especially given the G1's wide default stance — is a dedicated locomotion-engineering effort left as future work, separable from the interaction-dynamics representation this paper establishes. Fig. 4 shows the seven-switch DCM run.
-
-![Fig. 4. DCM stepping on the faithful centroidal recovery.](code/results/gait_dcm.png)
-
-**Fig. 4.** DCM walking layer on the faithful recovery: measured CoM vs. the DCM-planned reference (top: lateral, showing the $\pm$14 cm sway and the residual single-support tracking lag; middle: forward), and left/right foot lift (bottom) over the contact-mode switches.
+The three fixed-support hypotheses H3–H5 follow directly. All are realized by the torque-actuated whole-body QP (22). Its fixed-support push-rejection behavior, together with *locomotion-compatibility* probes that lie outside the interaction-dynamics claim of this paper — a root-assisted walking visualization and torque-level stepping across contact-mode switches — is collected in Appendix A.
 
 ### Results for H3 (Arm-Reaction Preview Reduces Cross-Port Transients)
 
-Returning to the fixed-support hypotheses, H3 tests the coupled realization of Section VII. On the standing torque-actuated G1, a fast oscillating arm-reaction wrench (45 N at 1.6 Hz) is applied at the body port. Because this reaction is *planned* — the task wrench $F_t$ is known — the coupled controller previews its center-of-mass effect $-F_t/m$ and feeds it forward into the body-port acceleration command, whereas the split controller rejects the identical reaction reactively through the body disturbance observer, which lags a fast-changing input. The preview cuts the peak lateral CoM excursion by $2.9\times$:
+H3 tests the coupled realization of Section VII in its external-wrench form (23). On the standing torque-actuated G1, a fast oscillating external interaction load $F_h^{\rm plan}$ (45 N at 1.6 Hz) acts at the hand/body. Because this load is *planned*, the coupled controller previews its centroidal contribution $W_{G,h}^{\rm ext}$ — for the CoM channel, $-F_h^{\rm plan}/m$ — and feeds it forward into the body-port acceleration command, whereas the split controller rejects the identical load reactively through the body disturbance observer, which lags a fast-changing input. The preview cuts the peak lateral CoM excursion by $2.9\times$:
 
 | Cross-port controller | Peak CoM excursion | RMS CoM excursion |
 |---|---:|---:|
@@ -549,7 +486,7 @@ Returning to the fixed-support hypotheses, H3 tests the coupled realization of S
 | Coupled (arm-reaction preview) | 22.4 mm | 12.3 mm |
 | Reduction | $2.9\times$ | $2.3\times$ |
 
-**Table V.** H3: peak and RMS lateral CoM excursion during the fast arm reaction, split vs. coupled prediction (Fig. 5a). Because $F_t$ is affine in $u_t$, the preview changes only the body-port input, not the predictor.
+**Table IV.** H3: peak and RMS lateral CoM excursion during the fast external interaction load, split vs. coupled prediction (Fig. 3a). Because the planned load is affine in the task plan, the preview changes only the body-port input, not the predictor.
 
 ### Results for H4 (Contact Events Detected Without an Oracle)
 
@@ -563,13 +500,13 @@ H4 tests the innovation-based detector of Section VIII. A sequence of lateral br
 | False positives | 0 |
 | Mean / max detection latency | 56 / 58 ms |
 
-**Table VI.** H4: contact-event detection from the body observer innovation, scored against the scripted-event oracle. All six onsets/offsets are detected with no misses or false positives at $\sim$56 ms latency (Fig. 5b). The latency is the time for the CoM disturbance to register in the innovation; a task-port observer or direct force sensing would reduce it further.
+**Table V.** H4: contact-event detection from the body observer innovation, scored against the scripted-event oracle. All six onsets/offsets are detected with no misses or false positives at $\sim$56 ms latency (Fig. 3b). The latency is the time for the CoM disturbance to register in the innovation; a task-port observer or direct force sensing would reduce it further.
 
-![Fig. 5a. H3 arm-reaction preview.](code/results/h3_coupling.png)
+![Fig. 3a. H3 arm-reaction preview.](code/results/h3_coupling.png)
 
-![Fig. 5b. H4 contact-event detection.](code/results/h4_detection.png)
+![Fig. 3b. H4 contact-event detection.](code/results/h4_detection.png)
 
-**Fig. 5.** (a) H3: lateral CoM excursion (left) and torso roll/pitch (right) during the fast arm reaction, split vs. coupled preview. (b) H4: the normalized innovation (NIS) over the trial with the calibrated threshold; green dotted lines are oracle contact events, orange lines are detections.
+**Fig. 3.** (a) H3: lateral CoM excursion (left) and torso roll/pitch (right) during the fast external interaction load, split vs. coupled preview. (b) H4: the normalized innovation (NIS) over the trial with the calibrated threshold; green dotted lines are oracle contact events, orange lines are detections.
 
 ### Results for H5 (Constraints Belong to Recovery)
 
@@ -580,11 +517,11 @@ H5 tests that friction cones, unilateral contact, and joint-torque limits are en
 | Constrained | 0.3 N | 0.06 N·m | 6.8 mm | no |
 | Unconstrained | 900 N | 945 N·m | — | yes (0.51 s) |
 
-**Table VII.** H5: constraint violations of the recovered wrench/torque, constrained vs. unconstrained recovery (Fig. 6). With the constraints in recovery the recovered forces stay inside the friction pyramid and the torques inside the actuator limits (violations at the solver tolerance) and the robot rejects the push with a small bounded CoM error — the tracking *slack* that a hard constraint trades for feasibility. Without them the recovery commands contact forces $\sim$900 N outside the friction cone and torques $\sim$945 N·m over the actuator limit, which are not physically realizable, and the robot collapses in half a second. The constraints therefore do real work, and they live entirely in the instantaneous recovery — the predictor $(A,B)$ is identical in both runs.
+**Table VI.** H5: constraint violations of the recovered wrench/torque, constrained vs. unconstrained recovery (Fig. 4). With the constraints in recovery the recovered forces stay inside the friction pyramid and the torques inside the actuator limits (violations at the solver tolerance) and the robot rejects the push with a small bounded CoM error — the tracking *slack* that a hard constraint trades for feasibility. Without them the recovery commands contact forces $\sim$900 N outside the friction cone and torques $\sim$945 N·m over the actuator limit, which are not physically realizable, and the robot collapses in half a second. The constraints therefore do real work, and they live entirely in the instantaneous recovery — the predictor $(A,B)$ is identical in both runs.
 
-![Fig. 6. H5 constrained vs. unconstrained recovery.](code/results/h5_constraints.png)
+![Fig. 4. H5 constrained vs. unconstrained recovery.](code/results/h5_constraints.png)
 
-**Fig. 6.** H5: friction-pyramid violation (left) and torque-limit violation (right) of the recovered forces/torques over the push, constrained vs. unconstrained recovery. Constrained recovery stays at zero (feasible); unconstrained recovery diverges to hundreds of newtons / newton-metres of violation.
+**Fig. 4.** H5: friction-pyramid violation (left) and torque-limit violation (right) of the recovered forces/torques over the push, constrained vs. unconstrained recovery. Constrained recovery stays at zero (feasible); unconstrained recovery diverges to hundreds of newtons / newton-metres of violation.
 
 ---
 
@@ -592,13 +529,53 @@ H5 tests that friction cones, unilateral contact, and joint-torque limits are en
 
 The body rotational channel is regulated in centroidal angular-momentum coordinates through $A_G,\dot A_G$; recovering a desired *attitude* from it requires an outer loop and a local orientation chart. Contact-force recovery remains mode and geometry dependent. The contact-consistent task inertia can become ill-conditioned near singular task configurations or weak support modes, and simple Cartesian force boxes may underrepresent the corresponding joint-torque amplification. The task and body recovery maps are refreshed at each sample and frozen only over the short solve; the paper does not claim an ISS bound for arbitrary horizon-wide variation of $\Lambda_t$, $A_G$, or the contact geometry. Such variation is logged through observer innovation and realization residuals and remains a target for a future robust certificate.
 
-The contact detector observes model inconsistency and requires kinematic gating; it is not guaranteed to uniquely identify arbitrary external contact. The whole-body interaction realizer can make a requested interaction acceleration infeasible. Hardware deployment also requires filtered velocity estimates and actuator-aware torque smoothing, since raw encoder differentiation would inject high-frequency noise into feedforward and inverse dynamics. The reported 10 s walking video uses the two MPC command layers but remains root assisted, so it should be read as a visualization artifact rather than as dynamic walking validation. The torque realizer delivers offset-free regulation in fixed double support and carries the faithful centroidal-wrench recovery through seven contact-mode switches under a DCM walking reference, but it does not yet sustain continuous walking. A standard CoP/DCM stabilizer was implemented and isolates the binding limit as single-support actuation authority: with an upright torso the ankle center-of-pressure caps the horizontal CoM acceleration near $0.9$ m/s$^2$, below what the wide-stance lateral sway demands, so the CoP saturates and the DCM diverges after a few switches. Sustained walking therefore requires a hip/angular-momentum strategy and capture-point step-timing/placement adaptation layered on the recovery — standard locomotion components orthogonal to the normalized predictor — which remain the pieces for the S4 benchmark. Finally, MuJoCo validation does not replace torque-controlled G1 hardware experiments.
+The contact detector observes model inconsistency and requires kinematic gating; it is not guaranteed to uniquely identify arbitrary external contact. The whole-body interaction realizer can make a requested interaction acceleration infeasible. Hardware deployment also requires filtered velocity estimates and actuator-aware torque smoothing, since raw encoder differentiation would inject high-frequency noise into feedforward and inverse dynamics. This paper does not contribute a locomotion controller: all quantitative claims are made in fixed support, and the walking-adjacent studies of Appendix A are compatibility probes, not dynamic-walking validation. They do isolate, however, the boundary of the standing realizer: with an upright torso the ankle center-of-pressure caps the horizontal CoM acceleration near $0.9$ m/s$^2$, so in single support on a wide stance the CoP saturates and a DCM reference diverges after a few switches unless a hip/angular-momentum strategy and capture-point step-timing/placement adaptation are supplied by the locomotion base beneath the interaction layer. Finally, MuJoCo validation does not replace torque-controlled G1 hardware experiments.
 
 ---
 
 ## XII. Conclusion
 
-This paper formulates floating-base balance and task interaction as two instances of one predictive object. A centroidal interaction MPC and a task-space interaction MPC share the exact double-integrator ZOH structure, while mass, centroidal inertia, contact-consistent task inertia, friction, and actuator limits are localized to physical realization. The key principle is that interaction dynamics should be predicted, while full robot dynamics should be realized instantaneously as a constrained projection onto the feasible whole-body set. Two representation-level hypotheses are confirmed on the G1: the predictor is port-independent and configuration-invariant (H1 — identical constant $(A,B)$ across ports, lossless equivalence to a conventional force-input MPC, and $\Lambda_t$ varying up to $3840\%$ across an arm sweep while $(A,B)$ stay constant), and offset-free dual-port regulation holds both at the representation level and on the full torque-actuated standing G1 realizer (H2 — CoM error 44.9$\to$2.7 mm and hand error 151$\to$31 mm with the observers, no falls), once the body port is recovered as a centroidal wrench rather than a posture tilt. This confirms that offset-free regulation is a property of the normalized representation that transfers to the robot exactly when recovery is faithful. The initial G1 artifact also shows a 10 s, 10.8 m root-assisted walking visualization, and a torque-actuated smoke benchmark passes fixed-support no-push and randomized-push trials while support switching and walking still fail. The remaining work is therefore concrete: extend the faithful-recovery realizer of (22) to dynamic gait — where the contact set switches during walking — then rerun active-constraint and detected contact-mode-transition trials until failures are eliminated or explicitly characterized.
+This paper formulates floating-base balance and task interaction as an *interaction-dynamics layer* built on a mature locomotion base. Two normalized interaction ports — a centroidal body port and a task port — are predicted, while mass, centroidal inertia, contact-consistent task inertia, friction, and actuator limits are localized to a whole-body realization that acts at the current sample as a feasibility projection. The body port carries a CoM double integrator together with a first-order centroidal angular-momentum channel; the task port carries a configuration-invariant double integrator. The organizing principle is that interaction dynamics should be *predicted* while full robot dynamics should be *realized* instantaneously, keeping the realization residual explicit. Five hypotheses are examined on the torque-actuated G1. The predictor is port-independent and configuration-invariant (H1 — constant exact-ZOH $(A,B)$ on the translational channels of both ports, lossless equivalence to a conventional force-input MPC, and $\Lambda_t$ varying up to $3840\%$ across an arm sweep while $(A,B)$ stay constant); offset-free dual-port regulation transfers from the representation to the full standing realizer once the body port is recovered as a faithful centroidal wrench rather than a posture tilt (H2 — CoM error 44.9$\to$2.7 mm, hand error 151$\to$31 mm, no falls); planned external interaction loads are anticipated across ports (H3 — $2.9\times$ smaller lateral CoM transient with preview); contact events are detected without an oracle (H4); and physical constraints are enforced by recovery, not by the predictor (H5). The remaining work is deployment on a locomotion base and on torque-controlled G1 hardware, where the interaction layer would emit its centroidal-wrench and CoM-residual correction to a production gait stack rather than to the standing realizer used here; Appendix A reports the fixed-support and contact-switch probes that motivate that path.
+
+---
+
+## Appendix A: Locomotion-Compatibility Probes
+
+The claims of this paper are made in fixed support. This appendix collects two studies that lie *outside* the interaction-dynamics claim but probe whether the same body-port predictor and whole-body realizer remain well posed once the contact set changes. Neither is offered as dynamic-walking validation; both are compatibility checks that also delimit the standing realizer's authority.
+
+**A.1 Root-assisted walking visualization.** A dual-MPC visualization on the position-actuated G1 model drives the floating base kinematically while the body reference is produced by the normalized centroidal MPC and the right hand by a normalized task MPC. For a trapezoidal command ramping to $1.2$ m/s (0–1 s), cruising (1–9 s), and decelerating (9–10 s), the robot renders visible one-foot swing phases across 15 support switches (Table A1, Fig. A1). Because the base is kinematically assisted, the forward distance matches the command by construction; the informative quantities are the foot-lift, CoM-height, and torso-attitude ranges under the active MPC command layers. This artifact verifies the model, rendering pipeline, MPC command-layer integration, and gait-command interface — not torque-level walking.
+
+| Commanded distance | 10.8 m |
+|---|---:|
+| Forward distance (by construction) | 10.800 m |
+| Support switches | 15 |
+| Left / right foot lift | 8.3 / 8.3 cm |
+| Min. CoM height | 0.752 m |
+| Max. \|roll\|,\|pitch\| | 0.030 rad |
+
+**Table A1.** Deterministic dual-MPC root-assisted walking visualization on the position-actuated G1 MuJoCo model.
+
+![Fig. A1. Ten-second dual-MPC root-assisted G1 walking visualization.](code/results/g1_walk_10s_1p2ms.png)
+
+**Fig. A1.** Root-assisted G1 walking visualization: CoM forward motion vs. the 10.8 m trapezoidal-speed reference (top), left/right foot height (second), torso roll/pitch (third), and the scheduled support sequence (bottom).
+
+**A.2 Torque-level stepping across contact-mode switches.** The faithful centroidal-wrench recovery that makes H2 hold in fixed support was then carried into a stepping gait to test whether it survives contact-mode switches. The body port is unchanged; only the reference becomes walk-feasible. A divergent-component-of-motion (DCM) layer generates a dynamically feasible CoM trajectory from a footstep plan and backward DCM recursion (LIPM $\ddot c=\omega^2(c-p_{\rm zmp})$, ZMP inside the stance foot), which the same normalized centroidal MPC tracks. This carries the recovery through **seven contact-mode switches** while the body observer keeps the CoM on the DCM reference (Fig. A2).
+
+Closing the loop with the standard center-of-pressure/DCM stabilizer (Englsberger law)
+$$p_{\rm cmd}=p_{\rm ref}+\left(1+\tfrac{k_{\rm dcm}}{\omega}\right)(\xi-\xi_{\rm ref}),\qquad \xi=c+\dot c/\omega, \tag{A1}$$
+with $p_{\rm cmd}$ clamped to the support polygon and $\ddot c=\omega^2(c-p_{\rm cmd})$ realized by the same recovery, did not yield sustained walking, and it isolates the binding limit as single-support **actuation authority** rather than estimation or reference bandwidth: with an upright torso the CoM accelerates only through the ankle CoP, whose $\pm6$ cm range caps $\ddot c$ at $\omega^2\times0.06\approx0.9$ m/s$^2$, below what the G1's $\pm14$ cm wide stance demands, so the CoP saturates and the DCM diverges after about five switches. Adding the two components standard in locomotion but orthogonal to the interaction contribution — a hip/angular-momentum strategy (a separate relaxable torso-attitude weight) and capture-point step adaptation ($u_{\rm next}=\xi_{\rm eos}-b_{\rm nom}$, clamped to kinematic limits) — carries the recovery through the switches but still completes only about two adapted steps before the wide-stance lateral balance and the co-tuning of initiation, step timing, placement limits, and hip relaxation exceed what was reachable here.
+
+| Torque stepping gate (DCM ref) | Switches before fall |
+|---|---:|
+| Contact-switch command | 5 (fall 2.041 s) |
+| Walking command | 8 (fall 1.889 s) |
+| DCM-tracked reference (no explicit stabilizer) | 7 |
+
+**Table A2.** Torque-level stepping across contact-mode switches on the faithful recovery. The recovery survives several switches; sustained continuous walking on the G1's wide default stance is a dedicated locomotion effort, separable from the interaction-dynamics representation and left as future work.
+
+![Fig. A2. DCM stepping on the faithful centroidal recovery.](code/results/gait_dcm.png)
+
+**Fig. A2.** DCM walking layer on the faithful recovery: measured CoM vs. the DCM-planned reference (top: lateral, showing the $\pm14$ cm sway and the residual single-support tracking lag; middle: forward), and left/right foot lift (bottom) over the contact-mode switches.
 
 ---
 
