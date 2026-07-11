@@ -204,40 +204,38 @@ $$
 \tag{14}
 $$
 
-where $s_W$ is a penalized wrench slack used only when exact realization is infeasible. This slack *is* the body-port realization residual of (6$'$): its force part maps to $r_c=m^{-1}s_W^{\rm (force)}$ and its moment part to $r_h=s_W^{\rm (moment)}$. We keep $r_b$ explicit rather than folding it into the disturbance $d_b$: $d_b$ is the external/model disturbance the observer is meant to cancel, whereas $r_b$ is a physical-infeasibility residual that no residual-acceleration input can remove. Equations (6), (9), and (10) are exact when recovery is exact ($r_b=0$) and hold with a logged residual otherwise. Each active contact additionally satisfies unilateral-force, friction-pyramid/cone, and center-of-pressure constraints. In a scheduled gait, future $\mathcal G_{\rho_j}$ and contact bounds are indexed by the planned mode sequence while $(A_b,B_b)$ remain unchanged.
+where $s_W$ is a penalized wrench slack used only when exact realization is infeasible. This slack *is* the body-port realization residual of (6$'$): its force part maps to $r_c=m^{-1}s_W^{\rm (force)}$ and its moment part to $r_h=s_W^{\rm (moment)}$. We keep $r_b$ explicit rather than folding it into the disturbance $d_b$: $d_b$ is the external/model disturbance the observer is meant to cancel, whereas $r_b$ is a physical-infeasibility residual that no residual-acceleration input can remove. Equations (6), (9), and (10) are exact when recovery is exact ($r_b=0$) and hold with a logged residual otherwise. Each active contact additionally satisfies unilateral-force, friction-pyramid/cone, and center-of-pressure constraints; these, together with the joint-torque limits, are imposed by the realizer at the current sample (Section VI), not predicted over the body horizon. Under a scheduled contact sequence the recovery map $\mathcal G_{\rho_j}$ is re-formed per mode while $(A_b,B_b)$ remain unchanged.
 
-Joint-torque feasibility cannot be inferred exactly from the reduced centroidal model alone. The body-port recovery therefore uses either a conservative frozen affine surrogate
+Under the prediction–realization separation, the body MPC predicts only the normalized interaction dynamics; the contact forces $f$, the friction/CoP/unilateral sets $\mathcal F_\rho$, and the joint-torque limits are **not** carried in its horizon. They are imposed at the current sample by the whole-body realizer (Section VI). The recovery map (12)–(14) therefore acts once, at the present state and mode, to convert the first optimized residual acceleration $u_{b,0}$ into a centroidal wrench and contact forces; it does not appear inside the rollout.
+
+What the horizon *does* respect is a conservative inner approximation of the residual accelerations the realizer can produce. At the current sample the realizer returns a polytope
 
 $$
-\tau_j^{\rm pred}=\tau_{\rm ff,k}+\mathcal T_{\rho_j,k}f_j
+\widehat{\mathcal U}_{b,k}=\{\,u:\;H_{b,k}\,u\le h_{b,k}\,\},
 \tag{14b}
 $$
 
-or delegates the torque-limit check to the whole-body interaction realizer. The benchmark reports which option is active and logs disagreement between predicted and realized torque.
-
-The body-port optimization uses this recovery map inside the horizon:
+obtained by mapping the active friction, center-of-pressure, and torque limits into residual-acceleration coordinates — a box on $\|\Lambda_b u\|$ is the simplest conservative choice — and held fixed over the short horizon. The body MPC is then the purely normalized problem
 
 $$
 \begin{aligned}
-\min_{U_b,F,S_W}\quad&
+\min_{U_b}\quad&
 \sum_{j=0}^{N_b-1}
 \left(
 \|x_{b,j}\|_{Q_b}^2+
-\|u_{b,j}+\hat d_{b,k}\|_{R_b}^2+
-\|s_{W,j}\|_{R_W}^2
+\|u_{b,j}+\hat d_{b,k}\|_{R_b}^2
 \right)
 +\|x_{b,N_b}\|_{P_b}^2\\
 \text{s.t.}\quad&
 x_{b,j+1}=A_bx_{b,j}+B_b(u_{b,j}+\hat d_{b,k}),\\
-&\mathcal G_{\rho_j}f_j=W_b^{\rm des}(u_{b,j})+s_{W,j},\\
-&f_j\in\mathcal F_{\rho_j},\\
-&\tau_{\min}\le\tau_j^{\rm pred}\le\tau_{\max}
-\quad\text{when (14b) is enabled}.
+&u_{b,j}\in\widehat{\mathcal U}_{b,k}.
 \end{aligned}
 \tag{15}
 $$
 
-The input-centered penalty is essential: for a constant estimated disturbance, the cancelling equilibrium is $u_b=-\hat d_b$. Penalizing raw $u_b$ would generally reintroduce a steady-state offset.
+No robot-specific dynamics enter the state transition or the cost; the only footprint of the physics in the predictor is the frozen feasible set $\widehat{\mathcal U}_{b,k}$. Exact contact-force, friction, CoP, and torque feasibility — and the realization residual $r_b$ — are produced instantaneously by the realizer (22). This is the clean form of the separation: normalized prediction over a horizon, physical projection at the current sample. The task port (Section V) is organized identically, with its own feasible set $\widehat{\mathcal U}_{t,k}$.
+
+The input-centered penalty is essential: for a constant estimated disturbance the cancelling equilibrium is $u_b=-\hat d_b$, so penalizing $\|u_b+\hat d_b\|$ rather than $\|u_b\|$ avoids reintroducing a steady-state offset.
 
 ---
 
@@ -262,51 +260,63 @@ $$
 
 Thus $\Lambda_t$ already contains the floating-base, stance-contact, and arm-body inertial coupling induced by the full constrained system. The construction does not claim that the arm is dynamically isolated from the base; it only expresses the realized task acceleration in residual-acceleration coordinates after the current contact constraints have been imposed. Base reactions that are predictable from the planned task wrench are handled by the coupled body-port preview in Section VII, while unmodeled coupling and recovery error are collected in $d_t$ and in the realization residuals reported by (22).
 
-For $e_t=x_t-x_{t,d}$, choose
+Projecting the constrained rigid-body dynamics into the task coordinates gives the contact-consistent task-space dynamics
 
 $$
-F_t=F_{t,\rm ff}+\Lambda_tu_t,\qquad
-F_{t,\rm ff}=\Lambda_t\ddot x_{t,d}+\mu_t.
+\Lambda_t\,\ddot x_t+\mu_{t,\rho}=F_t^{\rm act}+F_h+r_{t,\rm dyn},
+\tag{17b}
+$$
+
+where $\mu_{t,\rho}=\bar J_t^\top h-\Lambda_t\dot J_t\dot q$ collects Coriolis, centrifugal, and gravity terms, $F_t^{\rm act}$ is the task-space wrench *actually* produced by the joint torques, $F_h$ is the external task wrench, and $r_{t,\rm dyn}$ lumps contact-consistency and higher-priority null-space couplings. For $e_t=x_t-x_{t,d}$, the controller **requests** the wrench
+
+$$
+F_t^{\rm cmd}=F_{t,\rm ff}+\Lambda_tu_t,\qquad
+F_{t,\rm ff}=\Lambda_t\ddot x_{t,d}+\mu_{t,\rho},
 \tag{18}
 $$
 
-The normalized task error is
+equivalently the acceleration request $\ddot x_t^{\rm req}=\ddot x_{t,d}+u_t$. Let $\ddot x_t^{\rm real}$ be the acceleration the whole-body realizer actually imposes, and define the **realization residual**
 
 $$
-\ddot e_t=u_t+d_t,\qquad
-d_t=\Lambda_t^{-1}F_h+d_{\rm model}+d_{\rm rec}.
+r_t=\ddot x_t^{\rm real}-\ddot x_t^{\rm req}.
+\tag{18b}
+$$
+
+Substituting (18) into (17b): when the requested wrench is realized exactly ($F_t^{\rm act}=F_t^{\rm cmd}$, $r_t=0$) the nominal acceleration cancels and $\ddot e_t=u_t+\Lambda_t^{-1}F_h+d_{\rm model}$. In general the realized task port is
+
+$$
+\ddot e_t=u_t+d_{h,t}+r_t,\qquad
+d_{h,t}=\Lambda_t^{-1}F_h+d_{\rm model},
 \tag{19}
 $$
 
-Applying the same construction [1] at period $T_t$ gives
+with $d_{h,t}$ the external/model disturbance the observer is meant to cancel and $r_t$ the physical-infeasibility residual — kept distinct rather than both dumped into a single lumped term. The requested model $\ddot e_t^{\rm req}=u_t+d_{h,t}$ discretizes by exact ZOH as
 
 $$
-x_{t,k+1}=A_tx_{t,k}+B_t(u_{t,k}+d_{t,k}),
+x_{t,k+1}=A_tx_{t,k}+B_t(u_{t,k}+d_{h,t,k}+r_{t,k}),
 \tag{20}
 $$
 
-with the same matrix form as (11), now using dimension three.
+with $(A_t,B_t)$ the canonical exact-ZOH double integrator of (11), dimension three.
 
-**Lemma 2 (contact-consistent task port).** For a fixed active contact mode with $J_{c,\rho}M^{-1}J_{c,\rho}^\top$ nonsingular and $J_t\bar M_\rho^{-1}J_t^\top$ nonsingular on the operating set, the end-effector port satisfies the normalized model (20) with a constant exact-ZOH pair. Configuration and contact mode enter through the full-system apparent inertia $\Lambda_t$, feedforward compensation, wrench bounds, and torque recovery, but not through the prediction matrices.
+**Proposition 2 (contact-consistent task port).** For a fixed active contact mode with $J_{c,\rho}M^{-1}J_{c,\rho}^\top$ and $J_t\bar M_\rho^{-1}J_t^\top$ nonsingular on the operating set, the *requested* end-effector port is the canonical model (20) with a constant exact-ZOH pair; configuration and contact mode enter through $\Lambda_t$, the feedforward $\mu_{t,\rho}$, and the feasible set, not through $(A_t,B_t)$. The realized port equals the requested model up to $r_t$, and coincides with it when $r_t=0$.
 
-**Proof.** The constrained inverse (16) is formed from the full floating-base mass matrix and restricts admissible accelerations to directions compatible with the active rigid-contact constraint. In the task coordinates, the resulting contact-consistent apparent inertia is $\Lambda_t$ in (17). Substituting the feedforward-plus-residual wrench (18) into the task dynamics cancels the nominal acceleration and leaves (19), with model mismatch, base-reaction mismatch, realization residual $d_{\rm rec}$, and external wrench collected in $d_t$. The exact-ZOH predictor is therefore the same normalized double integrator used in [1], with dimension three. $\square$
+**Proof.** The constrained inverse (16), formed from the full floating-base mass matrix, restricts admissible accelerations to directions compatible with the active rigid contacts, giving the contact-consistent apparent inertia $\Lambda_t$ (17). Substituting the commanded wrench (18) into the constrained task dynamics (17b) cancels the nominal terms and leaves (19); the exact ZOH of the requested part is (20). The gap $r_t$ between requested and realized task acceleration is the realizer residual $s_t$ of (22). $\square$
 
-The task MPC uses an input-centered cost and constrains the recovered task wrench. When enabled, the predicted torque row is a conservative surrogate only; final torque feasibility is still imposed by the whole-body interaction realizer in (22). Here $\tau_{{\rm base},j}$ is a frozen bias torque (gravity/Coriolis compensation plus the higher-priority balance contribution) evaluated at the current state and held over the solve, so that $\tau_{{\rm base},j}+J_t^\top F_{t,j}$ is an affine-in-$u_t$ estimate of the arm joint torque:
+Like the body port, the task MPC is normalized-only — it minimizes $\sum_j\!\big(\|x_{t,j}\|_{Q_t}^2+\|u_{t,j}+\hat d_{t,k}\|_{R_t}^2\big)+\|x_{t,N_t}\|_{P_t}^2$ subject to $x_{t,j+1}=A_tx_{t,j}+B_t(u_{t,j}+\hat d_{t,k})$ and $u_{t,j}\in\widehat{\mathcal U}_{t,k}$. The feasible set
 
 $$
-\|F_{t,\rm ff}+\Lambda_tu_{t,j}\|_\infty\le F_{\max},
-\qquad
-\tau_{\min}\le\tau_{\rm base,j}+J_t^\top F_{t,j}\le\tau_{\max}.
+\widehat{\mathcal U}_{t,k}=\{\,u:\ \|F_{t,\rm ff,k}+\Lambda_{t,k}u\|_\infty\le F_{\max},\ \|\tau_{{\rm base},k}+J_t^\top(F_{t,\rm ff,k}+\Lambda_{t,k}u)\|_\infty\le\tau_{\max}\,\}
 \tag{21}
 $$
 
-At runtime, $\Lambda_t$, $\mu_t$, and the torque-recovery rows are recomputed from the current measured state and active contact mode, then held fixed only inside the short prediction solve. The constant object reused across samples is the normalized exact-ZOH rollout structure $(A_t,B_t)$, not a frozen full robot model or a globally precomputed robot-dynamics Hessian. Fast configuration changes, near-singular task Jacobians, and force-box approximations can still create recovery mismatch; these effects are treated as disturbance and realization residuals rather than as a certified robust-stability guarantee.
+is a conservative box on the recovered *total* task wrench and the affine-in-$u$ arm-torque surrogate ($\tau_{{\rm base},k}$ the frozen gravity/Coriolis-plus-balance bias), evaluated at the current state/mode and frozen over the short horizon; it bounds the total commanded wrench, not the corrective increment. Exact torque and contact feasibility is still enforced instantaneously by the realizer (22). The only object reused across samples is the canonical predictor $(A_t,B_t)$; $\Lambda_t$, $\mu_{t,\rho}$, and $\widehat{\mathcal U}_{t,k}$ are recomputed each sample. Fast configuration changes, near-singular task Jacobians, and box approximations create recovery mismatch, which appears as $d_{h,t}$ and $r_t$ rather than as a certified robust-stability guarantee.
 
 ---
 
 ## VI. Whole-Body Interaction Realizer
 
-The two MPCs output a desired body interaction request and a desired task interaction request. These enter the realizer in their natural coordinates: the body request as a centroidal wrench $W_b^{\rm des}$ realized by the contact forces, and the task request as the desired end-effector acceleration $\ddot x_{t,d}+u_t^\star$ realized by the joint torques (equivalently the task wrench $F_t$, since $F_t$ and $\ddot x_{t,d}+u_t$ are related one-to-one through $\Lambda_t$). This asymmetry is deliberate: the body wrench is what the unilateral, friction, and CoP constraints act on, whereas the task objective is most directly imposed as an acceleration. This middle layer does not predict future robot states and is therefore not an MPC. Its role is physical realization: at the current sample, it projects the two interaction requests onto the set of generalized accelerations, contact wrenches, and joint torques that satisfy the floating-base dynamics and constraints. It is therefore better understood as a projection operator from interaction space to the robot-feasible torque set, not as another controller that plans robot motion over time.
+The two MPCs output a desired body interaction request and a desired task interaction request. These enter the realizer in their natural coordinates: the body request as a centroidal wrench $W_b^{\rm des}$ realized by the contact forces, and the task request as the desired end-effector acceleration $\ddot x_{t,d}+u_t^\star$ realized by the joint torques. Under *exact, unconstrained* recovery this acceleration request and the commanded task wrench $F_t^{\rm cmd}$ correspond through $\Lambda_t$; the correspondence is **not** one-to-one once torque saturation, friction/CoP limits, or a higher-priority balance task are active, precisely because the realizer must then trade the request off against those constraints and reports the shortfall as the residual $s_t=r_t$. Imposing the task as an acceleration and letting the realizer expose $s_t$ is therefore the honest form. This asymmetry with the body port is deliberate: the body wrench is what the unilateral, friction, and CoP constraints act on, whereas the task objective is most directly imposed as an acceleration. This middle layer does not predict future robot states and is therefore not an MPC. Its role is physical realization: at the current sample, it projects the two interaction requests onto the set of generalized accelerations, contact wrenches, and joint torques that satisfy the floating-base dynamics and constraints. It is therefore better understood as a projection operator from interaction space to the robot-feasible torque set, not as another controller that plans robot motion over time.
 
 Let $S_j$ select the actuated joint coordinates from $q$, and let $\tau_{\rm ref}$ be a nominal torque used only for regularization, such as the previous command or a gravity-compensating inverse-dynamics torque. With polyhedral friction pyramids, the whole-body interaction realizer is the convex instantaneous inverse-dynamics QP
 
@@ -401,11 +411,17 @@ A mode change is declared only after $\eta_k$ exceeds a calibrated threshold for
 
 ## IX. Relation to the Fixed-Base Theory
 
-The normalized predictor, nominal offset-free regulation, stability conditions, and impedance interpretation are taken directly from [1]. They are not restated as propositions or re-proved here. The centroidal and task equations in Sections IV-V establish only that the two ports satisfy the assumptions and coordinate form required to invoke those results.
+The normalized predictor, nominal offset-free regulation, and impedance interpretation are taken directly from [1] and are not re-proved here. It is essential, however, that [1] characterizes the *requested* interaction dynamics $\ddot e=u+d$; the physically realized closed loop additionally carries the realization residual $r$ and the active-set evolution of the whole-body realizer. Stability and offset-free behavior of the realized, constrained interconnection therefore do not follow from the fixed-base results by themselves. We state two conditional results that make the dependence explicit.
+
+**Proposition 3 (faithful realization).** If the realization residual vanishes, $r_i\equiv0$ — the requested port wrench, moment, and acceleration are exactly recovered within the feasible set — then the realized port dynamics coincide with the canonical requested model of Propositions 1–2, and every requested-model property inherited from [1] holds for the realized port.
+
+**Proposition 4 (conditional offset-free regulation).** Fix a contact mode and suppose the realizer admits a locally constant active set and realizes the requested port acceleration with a *constant matched* residual $r^\star$, so the effective disturbance $d^{\rm eff}=d+r^\star$ is constant. If the augmented observer is detectable, its estimate $\hat d^{\rm eff}$ converges, and the cancelling input $u=-\hat d^{\rm eff}$ lies in the feasible set $\widehat{\mathcal U}_k$, then the regulated port reaches zero steady-state error. When the active set switches, or the residual is state-dependent, only *bounded* regulation is claimed: the observer tracks $d^{\rm eff}$ but cannot null a residual that no feasible input can cancel. This is exactly the mechanism behind the H2 result — offset-free regulation appears only once the recovery is faithful ($r^\star$ small and matched), and degrades when it is not.
 
 Several conditions are specific to this floating-base realization and must be checked independently. The centroidal momentum matrix $A_G$ and the task apparent inertia $\Lambda_t$ are assumed finite and well-conditioned on the operating set; the body rotational channel is regulated in angular-momentum coordinates, so no attitude chart enters the port dynamics — a local orientation chart is used only when an outer loop converts a desired attitude into the angular-momentum reference $k_{G,d}$. The cancelling residual accelerations and moments must be realizable by contact wrenches and joint torques within the physical constraints. Any recovery residual from the whole-body interaction realizer is treated as part of the disturbance model, and estimator convergence is considered only for contact modes that are correctly modeled or correctly detected. Thus citation of [1] does not by itself prove recursive feasibility of the contact-constrained G1 controller.
 
 Constant $(A,B)$ removes model switching from the normalized state dynamics, but the feasible input set still switches with contact mode. Stability under arbitrary switching does not follow automatically. A certified switching claim would require either recursive feasibility for the scheduled mode sequence with a terminal set and terminal cost, or a common Lyapunov certificate for the actual constrained feedback regions. Until such a certificate is completed, the paper reports bounded empirical switching performance rather than certified arbitrary-switching stability.
+
+Finally, the body and task ports are not two independent linear systems in closed loop. The realizer (22) is a single active-set-dependent, piecewise-affine projection of *both* requests onto the feasible generalized-force set; when the requests conflict or a constraint activates, the residuals $s_b,s_t$ couple the ports. The two ideal per-port models therefore compose into the physical closed loop only through that projection, and certifying the coupled constrained interconnection — not merely each requested port in isolation — remains open. The experiments consequently report the realized residuals and active-constraint margins directly, rather than asserting inherited closed-loop stability.
 
 ---
 
