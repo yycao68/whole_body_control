@@ -125,21 +125,10 @@ def verify_result_prefix(prefix: str, *, expected_push: bool):
     else:
         require(float(np.max(np.linalg.norm(log["push_accel"][:, :2], axis=1))) == 0.0, "no-push log contains disturbance")
 
-    reader = imageio.get_reader(video_path)
-    metadata = reader.get_meta_data()
-    reader.close()
-    require(metadata.get("duration", 0.0) >= 9.5, "video duration is too short")
-    require(tuple(metadata.get("size", ())) == (1400, 640), "unexpected video resolution")
-
     return {
         "prefix": prefix,
         "summary": summary,
         "log_samples": int(log["t"].shape[0]),
-        "video": {
-            "duration_s": metadata.get("duration"),
-            "fps": metadata.get("fps"),
-            "size": metadata.get("size"),
-        },
     }
 
 
@@ -336,6 +325,30 @@ def verify_unitree_a2_results():
             "A.2 interaction layer no longer removes the policy's lateral drift")
     require(stats["unitree_load_preview"]["max"] < stats["unitree_load_no_preview"]["max"],
             "A.2 preview no longer reduces the peak lateral error under the planned load")
+    # Appendix A.2 media package: verify the three retained videos exist and match
+    # the expected 10 s / 1280x720 / 30 fps composition.
+    videos = [
+        "unitree_d0_baseline_comparison.mp4",
+        "unitree_d1_d2_push_comparison.mp4",
+        "unitree_d3_preview_comparison.mp4",
+    ]
+    stats["videos"] = {}
+    for v in videos:
+        path = UNITREE_RESULTS / v
+        require_file(path)
+        reader = imageio.get_reader(path)
+        meta = reader.get_meta_data()
+        try:
+            nframes = int(reader.count_frames())
+        except Exception:
+            nframes = 0
+        reader.close()
+        require(meta.get("duration", 0.0) >= 9.0, f"A.2 video {v} shorter than the 10 s run")
+        require(tuple(meta.get("size", ())) == (1280, 720), f"A.2 video {v} unexpected resolution")
+        require(abs(meta.get("fps", 0.0) - 30.0) < 1.0, f"A.2 video {v} unexpected frame rate")
+        require(nframes >= 250, f"A.2 video {v} too few frames ({nframes})")
+        stats["videos"][v] = {"duration_s": meta.get("duration"), "size": meta.get("size"),
+                              "fps": meta.get("fps"), "nframes": nframes}
     return stats
 
 

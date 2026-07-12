@@ -310,7 +310,9 @@ class InverseDynamicsQPRealizer:
         # from the recovery QP (unconstrained recovery, for the H5 ablation).
         self.constraints_on = True
         self.last_status = "not_solved"
-        self.last_eq_residual = np.inf
+        self.last_eq_residual = np.inf          # rigid-body dynamics-equality residual
+        self.last_body_acc_residual = np.inf    # ||Jcom qdd - com_acc_des|| (realized - requested)
+        self.last_task_acc_residual = np.inf    # ||Jhand qdd - task_acc_des|| (realized - requested)
         self.last_contact_force = np.zeros(0)
         self.last_fallback = False
 
@@ -541,6 +543,8 @@ class InverseDynamicsQPRealizer:
             tau = np.clip(data.qfrc_bias[self.dof], self.torque_min, self.torque_max)
             data.ctrl[self.ctrl_id] = tau
             self.last_eq_residual = np.inf
+            self.last_body_acc_residual = np.inf
+            self.last_task_acc_residual = np.inf
             self.last_contact_force = np.zeros(nlam)
             return tau, tau.copy(), np.zeros_like(tau)
 
@@ -554,6 +558,15 @@ class InverseDynamicsQPRealizer:
         if nlam:
             dyn -= Jc.T @ lam
         self.last_eq_residual = float(np.linalg.norm(dyn))
+        # True body/task realization residuals: realized minus requested acceleration
+        # (the soft-objective residuals of the CoM and hand acceleration objectives).
+        self.last_task_acc_residual = float(np.linalg.norm(hand_jac @ qdd - task_acc_des))
+        if com_acc_des is not None:
+            Jcom_r = np.zeros((3, self.nv))
+            mujoco.mj_jacSubtreeCom(model, data, Jcom_r, self.root_body)
+            self.last_body_acc_residual = float(np.linalg.norm(Jcom_r @ qdd - com_acc_des))
+        else:
+            self.last_body_acc_residual = float("nan")
         self.last_contact_force = lam.copy()
         data.ctrl[self.ctrl_id] = tau
         return tau, tau_qp, saturation
@@ -659,7 +672,9 @@ def run_trial(
         "tau": np.zeros((steps, model.nu)),
         "tau_sat_norm": np.zeros(steps),
         "tau_limit_utilization": np.zeros(steps),
-        "realizer_residual": np.zeros(steps),
+        "dynamics_equality_residual": np.zeros(steps),
+        "body_acc_residual": np.zeros(steps),
+        "task_acc_residual": np.zeros(steps),
         "realizer_fallback": np.zeros(steps, dtype=int),
         "contact_force_norm": np.zeros(steps),
         "push_force": np.zeros((steps, 3)),
@@ -823,7 +838,9 @@ def run_trial(
         tau_limit = np.maximum(np.abs(realizer.torque_min), np.abs(realizer.torque_max))
         tau_limit = np.maximum(tau_limit, 1e-9)
         log["tau_limit_utilization"][k] = float(np.max(np.abs(tau) / tau_limit))
-        log["realizer_residual"][k] = realizer.last_eq_residual
+        log["dynamics_equality_residual"][k] = realizer.last_eq_residual
+        log["body_acc_residual"][k] = realizer.last_body_acc_residual
+        log["task_acc_residual"][k] = realizer.last_task_acc_residual
         log["realizer_fallback"][k] = int(realizer.last_fallback)
         log["contact_force_norm"][k] = float(np.linalg.norm(realizer.last_contact_force))
         log["push_force"][k] = push.force if active_push else 0.0
@@ -851,8 +868,10 @@ def summarize_trial(log, seed, scenario, requested_duration, distance, push, con
     contact_switches = int(len(contact_events))
     push_mask = np.linalg.norm(log["push_force"][:end + 1], axis=1) > 0
     detected_push = bool(np.max(np.linalg.norm(log["d_body"][:end + 1], axis=1)) > 0.35 and np.any(push_mask))
-    residual = log["realizer_residual"][:end + 1]
+    residual = log["dynamics_equality_residual"][:end + 1]
     finite_residual = residual[np.isfinite(residual)]
+    body_res = log["body_acc_residual"][:end + 1]; body_res = body_res[np.isfinite(body_res)]
+    task_res = log["task_acc_residual"][:end + 1]; task_res = task_res[np.isfinite(task_res)]
     return {
         "seed": int(seed),
         "scenario": scenario,
@@ -874,6 +893,9 @@ def summarize_trial(log, seed, scenario, requested_duration, distance, push, con
         "max_tau_saturation_norm": float(np.max(log["tau_sat_norm"][:end + 1])),
         "max_tau_limit_utilization": float(np.max(log["tau_limit_utilization"][:end + 1])),
         "max_realizer_residual": finite_or_none(np.max(finite_residual)) if finite_residual.size else None,
+        "max_dynamics_equality_residual": finite_or_none(np.max(finite_residual)) if finite_residual.size else None,
+        "max_body_acc_residual": finite_or_none(np.max(body_res)) if body_res.size else None,
+        "max_task_acc_residual": finite_or_none(np.max(task_res)) if task_res.size else None,
         "num_realizer_fallbacks": int(np.sum(log["realizer_fallback"][:end + 1])),
         "max_contact_force_norm_n": float(np.max(log["contact_force_norm"][:end + 1])),
         "min_friction_margin": finite_or_none(np.min(log["friction_margin"][:end + 1])),
@@ -915,7 +937,7 @@ def save_plot(log, summary, out_png):
 
     axes[4].plot(t, log["tau_sat_norm"], label="post-QP clipping residual")
     axes[4].plot(t, log["tau_limit_utilization"], label="max torque utilization")
-    axes[4].plot(t, log["realizer_residual"] / 100.0, label="ID residual / 100")
+    axes[4].plot(t, log["dynamics_equality_residual"] / 100.0, label="ID residual / 100")
     axes[4].step(t, log["contact"][:, 0], where="post", label="left contact")
     axes[4].step(t, log["contact"][:, 1] + 1.2, where="post", label="right contact")
     axes[4].set_ylabel("constraints")
