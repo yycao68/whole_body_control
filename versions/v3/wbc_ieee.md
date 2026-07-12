@@ -655,7 +655,7 @@ The claims of this paper are made in fixed support. This appendix collects two s
 
 Three retained videos document this probe. `unitree_d0_baseline_comparison.mp4` compares the Unitree policy alone against the same command with the interaction-dynamics correction enabled and no external push; the correction removes the policy's lateral drift over the 10 s run (final lateral error $-0.402\to-0.0026$ m, RMS $0.189\to0.010$ m). `unitree_d1_d2_push_comparison.mp4` applies the same 40 N lateral push for 0.35 s to both runs; the immediate peak displacement is similar because it is dominated by the impact, but the corrected run recenters by the end of the trial (final error $0.438\to-0.0028$ m, RMS $0.349\to0.136$ m). `unitree_d3_preview_comparison.mp4` compares reactive and previewed correction under a planned 60 N lateral load; preview reduces the peak and RMS lateral errors ($0.817\to0.714$ m peak, $0.319\to0.264$ m RMS). All runs remain upright. These numbers are generated from `unitree_locomotion_demo/results/*_log.npz`; the package keeps only the final three videos and deletes raw scene MP4s after composition.
 
-| Probe | External load | Added correction | Max. $|e_y|$ (m) | RMS $e_y$ (m) | Final $e_y$ (m) |
+| Probe | External load | Added correction | Max. $\lvert e_y\rvert$ (m) | RMS $e_y$ (m) | Final $e_y$ (m) |
 |---|---:|---|---:|---:|---:|
 | D0-A Unitree policy only | 0 N | off | 0.402 | 0.189 | -0.402 |
 | D0-B same gait + interaction layer | 0 N | feedback | 0.0195 | 0.010 | -0.0026 |
