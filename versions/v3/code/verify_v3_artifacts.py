@@ -204,6 +204,14 @@ def verify_torque_aggregate(name: str, *, expected_trials: int, expected_passed:
         require("RandomWalkDisturbanceObserver" in trial["claim_scope"], f"{name}: missing observer claim scope")
         require(trial["max_realizer_residual"] is not None, f"{name}: missing realizer residual")
         require(trial["max_realizer_residual"] < max_residual, f"{name}: realizer residual too large")
+        for key in ("max_body_acc_residual", "max_task_acc_residual", "min_friction_margin"):
+            require(key in trial and trial[key] is not None, f"{name}: missing {key}")
+            require(np.isfinite(float(trial[key])), f"{name}: non-finite {key}")
+        # These are peak smoke-test diagnostics, including initialization, not
+        # claims of uniformly small realization error.  The bounds catch stale,
+        # missing, or numerically divergent residual logging.
+        require(trial["max_body_acc_residual"] < 40.0, f"{name}: body acceleration residual diverged")
+        require(trial["max_task_acc_residual"] < 20.0, f"{name}: task acceleration residual diverged")
         require(trial["max_tau_saturation_norm"] < max_tau_sat, f"{name}: post-QP torque clipping residual too large")
         require(0.0 <= trial["max_tau_limit_utilization"] <= 1.0 + 1e-9, f"{name}: torque utilization out of range")
         require_file(RESULTS / f"g1_torque_{name}_seed{trial['seed']}_summary.json")
