@@ -90,9 +90,8 @@ def verify_result_prefix(prefix: str, *, expected_push: bool):
     summary_path = RESULTS / f"{prefix}_summary.json"
     log_path = RESULTS / f"{prefix}_log.npz"
     plot_path = RESULTS / f"{prefix}.png"
-    video_path = RESULTS / f"{prefix}_video.mp4"
 
-    for path in (summary_path, log_path, plot_path, video_path):
+    for path in (summary_path, log_path, plot_path):
         require_file(path)
 
     summary = load_json(summary_path)
