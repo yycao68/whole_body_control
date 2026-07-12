@@ -28,6 +28,7 @@ from normalized_mpc import NormalizedMPC
 HERE = Path(__file__).resolve().parent
 MODEL_PATH = HERE / "models" / "g1_wbc.xml"
 RESULTS = HERE / "results"
+UNITREE_RESULTS = HERE.parent / "unitree_locomotion_demo" / "results"
 
 
 def require(condition: bool, message: str):
@@ -228,64 +229,16 @@ def verify_torque_aggregate(name: str, *, expected_trials: int, expected_passed:
 
 
 def verify_torque_smoke_results():
+    # Fixed-support standing behavior of the torque realizer (referenced by the
+    # Section X pointer). The old DCM contact-switch/walk checks were retired
+    # with Appendix A.2 (now the Unitree open-source locomotion-stack probe).
     stand = verify_torque_aggregate("stand", expected_trials=1, expected_passed=1, expected_fell=0)
     stand_push = verify_torque_aggregate("stand_push", expected_trials=3, expected_passed=3, expected_fell=0)
-    contact_switch = verify_torque_aggregate("contact_switch", expected_trials=1, expected_passed=0, expected_fell=1,
-                                              max_residual=1.5, max_tau_sat=1.5)
-    walk = verify_torque_aggregate("walk", expected_trials=1, expected_passed=0, expected_fell=1,
-                                   max_residual=1.5, max_tau_sat=1.5)
 
     push_data = load_json(RESULTS / "g1_torque_stand_push_aggregate.json")
     require(all(trial["detected_push"] for trial in push_data["trials"]), "not all stand-push trials detected the push")
 
-    contact_data = load_json(RESULTS / "g1_torque_contact_switch_aggregate.json")
-    walk_data = load_json(RESULTS / "g1_torque_walk_aggregate.json")
-    # With the DCM (capture-point) reference unified into the smoke test, the
-    # stepping gates no longer tip immediately in single support; they now carry
-    # the faithful recovery through several contact-mode switches before the
-    # single-support bandwidth limit is reached. They still fall (fell=1 above).
-    require(contact_data["trials"][0]["duration_completed_s"] > 1.5, "contact-switch (DCM ref) fall time regressed; update paper text")
-    require(contact_data["trials"][0]["contact_switches_detected"] >= 4, "contact-switch DCM stepping regressed")
-    require(walk_data["trials"][0]["duration_completed_s"] > 1.5, "walk (DCM ref) fall time regressed; update paper text")
-    require(walk_data["trials"][0]["contact_switches_detected"] >= 6, "walk DCM stepping regressed")
-
-    return {
-        "stand": stand,
-        "stand_push": stand_push,
-        "contact_switch": contact_switch,
-        "walk": walk,
-    }
-
-
-def verify_gait_extension_results():
-    faithful = load_json(RESULTS / "gait_faithful_summary.json")
-    dcm = load_json(RESULTS / "gait_dcm_summary.json")
-    require_file(RESULTS / "gait_faithful.png")
-    require_file(RESULTS / "gait_dcm.png")
-
-    require(faithful["fell"] is True, "faithful gait unexpectedly stopped falling; update paper text")
-    require(faithful["contact_switches"] >= 4, "faithful gait no longer reaches four contact switches")
-    require(faithful["min_pelvis_height_m"] > 0.70, "faithful gait fall mode changed from roll/pitch to height")
-
-    require(dcm["fell"] is True, "DCM gait unexpectedly stopped falling; update paper text")
-    require(dcm["contact_switches"] >= 6, "DCM gait contact switching regressed")
-    require(dcm["min_pelvis_height_m"] < 0.46, "DCM gait fall mode changed from height threshold")
-
-    # CoP/DCM stabilizer: implemented, isolates the single-support authority limit
-    # (ankle CoP saturates on the wide stance); still does not sustain walking.
-    stab = load_json(RESULTS / "gait_dcm_stab_summary.json")
-    require_file(RESULTS / "gait_dcm_stab.png")
-    require(stab["fell"] is True, "DCM stabilizer unexpectedly sustains walking; update paper text")
-    require(stab["completed_full_plan"] is False, "DCM stabilizer now completes the plan; update paper text")
-
-    # Full walker: hip strategy + capture-point step adaptation + initiation.
-    # Implemented; still does not sustain walking (a few adapted steps, then falls).
-    walk = load_json(RESULTS / "gait_walk_summary.json")
-    require_file(RESULTS / "gait_walk.png")
-    require(walk["fell"] is True, "full walker unexpectedly sustains walking; update paper text")
-    require(walk["completed_full_plan"] is False, "full walker now completes the plan; update paper text")
-
-    return {"faithful": faithful, "dcm": dcm, "dcm_stab": stab, "walk": walk}
+    return {"stand": stand, "stand_push": stand_push}
 
 
 def verify_h3_h4_results():
@@ -350,6 +303,43 @@ def verify_h3_h4_results():
     return {"h3": h3, "h4": h4, "h5": h5, "h6": h6}
 
 
+def verify_unitree_a2_results():
+    """Appendix A.2: interaction layer riding Unitree's open-source G1 policy.
+
+    Validates the six probes' Table A2 stats. Max |e_y| and the upright check come
+    from the committed summary JSONs; RMS and final e_y are additionally checked
+    against the npz logs when those are present locally (they are gitignored)."""
+    # probe -> (max |e_y|, RMS e_y, final e_y) as reported in Table A2
+    expected = {
+        "unitree_base_only":       (0.402, 0.189, -0.402),
+        "unitree_base_idmpc":      (0.0195, 0.010, -0.0026),
+        "unitree_push_layer_off":  (0.465, 0.349, 0.438),
+        "unitree_push_layer_on":   (0.446, 0.136, -0.0028),
+        "unitree_load_no_preview": (0.817, 0.319, -0.0037),
+        "unitree_load_preview":    (0.714, 0.264, -0.0031),
+    }
+    stats = {}
+    for name, (emx, erms, efin) in expected.items():
+        s = load_json(UNITREE_RESULTS / f"{name}_summary.json")
+        mx = float(s["max_abs_lateral_error_m"])
+        require(abs(mx - emx) < 6e-3, f"A.2 {name} max |e_y| drifted from Table A2 ({mx:.4f} vs {emx})")
+        require(s["max_projected_gravity_xy"] < 0.5, f"A.2 {name} did not remain upright")
+        stats[name] = {"max": round(mx, 4)}
+        npz = UNITREE_RESULTS / f"{name}_log.npz"
+        if npz.exists():
+            e = np.asarray(np.load(npz)["y_error"]).ravel()
+            rms, fin = float(np.sqrt(np.mean(e**2))), float(e[-1])
+            require(abs(rms - erms) < 6e-3, f"A.2 {name} RMS e_y drifted from Table A2 ({rms:.4f} vs {erms})")
+            require(abs(fin - efin) < 6e-3, f"A.2 {name} final e_y drifted from Table A2 ({fin:.4f} vs {efin})")
+            stats[name].update(rms=round(rms, 4), final=round(fin, 4))
+    # qualitative claims the appendix makes (from committed summaries)
+    require(stats["unitree_base_idmpc"]["max"] < stats["unitree_base_only"]["max"],
+            "A.2 interaction layer no longer removes the policy's lateral drift")
+    require(stats["unitree_load_preview"]["max"] < stats["unitree_load_no_preview"]["max"],
+            "A.2 preview no longer reduces the peak lateral error under the planned load")
+    return stats
+
+
 def verify_results():
     paper_alias = RESULTS / "g1_walk_10s_1p2ms.png"
     require_file(paper_alias)
@@ -365,7 +355,7 @@ def verify_results():
         "h1_h2": verify_h1_h2_results(),
         "h3_h4": verify_h3_h4_results(),
         "torque_smoke": verify_torque_smoke_results(),
-        "gait_extension": verify_gait_extension_results(),
+        "unitree_a2": verify_unitree_a2_results(),
     }
 
 

@@ -1,0 +1,45 @@
+{
+  "source": "unitreerobotics/unitree_rl_gym",
+  "config": "/Users/yycao/ai_learn/whole_body_control/versions/v3/external_deps/unitree_rl_gym/deploy/deploy_mujoco/configs/g1.yaml",
+  "policy_path": "/Users/yycao/ai_learn/whole_body_control/versions/v3/external_deps/unitree_rl_gym/deploy/pre_train/g1/motion.pt",
+  "xml_path": "/Users/yycao/ai_learn/whole_body_control/versions/v3/external_deps/unitree_rl_gym/resources/robots/g1_description/scene.xml",
+  "duration_s": 10.0,
+  "simulation_dt": 0.002,
+  "control_rate_hz": 50.0,
+  "command": {
+    "vx": 0.49871769547462463,
+    "vy": 0.06291985511779785,
+    "yaw_rate": 0.031309064477682114
+  },
+  "nominal_command": {
+    "vx": 0.5,
+    "vy": 0.0,
+    "yaw_rate": 0.0
+  },
+  "scenario": "load_preview",
+  "interaction_layer": "on",
+  "preview": "off",
+  "push": {
+    "body": "pelvis",
+    "start_s": 3.0,
+    "duration_s": 0.35,
+    "force_y_N": 60.0,
+    "absolute_impulse_Ns": 21.119999999999997
+  },
+  "base_displacement_m": {
+    "x": 4.250283370157781,
+    "y": -0.0037287325217222377,
+    "z_final": 0.7652825652472409
+  },
+  "max_abs_lateral_error_m": 0.8173787413140368,
+  "max_abs_vy_correction_mps": 0.5073257684707642,
+  "min_base_z_m": 0.7116598567096353,
+  "max_projected_gravity_xy": 0.20727071166038513,
+  "max_abs_motor_torque": 133.10599745425787,
+  "fall_detected": false,
+  "fall_time_s": null,
+  "video": "results/unitree_load_no_preview.mp4",
+  "log": "results/unitree_load_no_preview_log.npz",
+  "video_frames": 295,
+  "claim_boundary": "Unitree RL policy supplies locomotion. This run is demo-only and is not evidence that the v3 dual-MPC controller generates walking."
+}
