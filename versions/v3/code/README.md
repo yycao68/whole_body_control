@@ -82,13 +82,12 @@ contact-wrench recovery, and randomized push trials.
 
 ## Torque-Level Realizer Smoke Benchmark
 
-The first torque-actuated v3 runner is now implemented:
+The fixed-support torque-actuated runner (used by H2–H5 and the Section X
+pointer):
 
 ```bash
 MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_g1_torque_realizer_benchmark.py --scenario stand --duration 3.0 --trials 1 --seed 31
 MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_g1_torque_realizer_benchmark.py --scenario stand_push --duration 3.0 --trials 3 --seed 21
-MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_g1_torque_realizer_benchmark.py --scenario contact_switch --duration 3.0 --trials 1 --seed 41
-MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_g1_torque_realizer_benchmark.py --scenario walk --duration 3.0 --trials 1 --seed 51
 ```
 
 The runner generates `models/g1_wbc_torque.xml` from the local position-actuated
@@ -101,29 +100,16 @@ min ||J_t qdd - xdd_task_des||^2 + ||J_c qdd - xdd_contact_des||^2 + posture
 s.t. M qdd + h = S^T tau + J_c^T lambda, torque bounds, friction pyramid
 ```
 
-Current status: the fixed-support portion now passes, but this is not yet a
-passed replacement for the root-assisted walking video because support switching
-and walking still fall.
-
 | Scenario | Trials | Passed | Falls | Median completed time |
 |---|---:|---:|---:|---:|
 | stand | 1 | 1 | 0 | 2.999 s |
 | stand_push | 3 | 3 | 0 | 2.999 s |
-| contact_switch | 1 | 0 | 1 | 2.041 s (5 switches) |
-| walk | 1 | 0 | 1 | 1.889 s (8 switches) |
 
 The randomized-push trials complete and detect all injected pushes with the
-normalized disturbance observer. The contact-switch and walking trials still
-fall. The logs now distinguish post-QP clipping residual from torque-limit
-utilization: all scenarios reach the torque bounds, but the applied clipping
-residual remains small for fixed-support push trials (0.13--0.30 Nm) and is
-explicitly reported for stepping failures. The failed contact-switch and
-walking runs are now DCM-referenced rather than centered-CoM scaffolds; they
-survive several support changes, then fail with negative measured foot-floor
-friction margins and many QP fallback samples as single-support balance
-authority runs out. The next missing components are a production gait/contact
-realizer with hip/angular-momentum balance, capture-point step timing/placement
-adaptation, and stable support-mode control.
+normalized disturbance observer; all reach the torque bounds while the post-QP
+clipping residual stays small (0.13--0.30 Nm). The earlier DCM stepping /
+contact-switch gates were retired when Appendix A.2 became the Unitree
+open-source locomotion-stack probe (see `../unitree_locomotion_demo/`).
 
 ## H3/H4/H6 Hypothesis Checks
 
