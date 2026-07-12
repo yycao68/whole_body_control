@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE.parent / "figures"; OUT.mkdir(exist_ok=True)
+OUT = HERE; OUT.mkdir(exist_ok=True)   # this script lives in figures/
 
 fig, ax = plt.subplots(figsize=(11, 3.6))
 ax.set_xlim(0, 11); ax.set_ylim(0, 3.6); ax.axis("off")
@@ -40,25 +40,25 @@ def arrow(x0, y0, x1, y1, color, label=None, lx=0, ly=0, style="-", rad=0.0):
 
 
 # top row: generator -> predictor -> realizer -> plant
-box(0.2, 1.9, 2.2, 1.2, "Reference", "planner / learned policy", GRAY, LGRAY)
-box(3.1, 1.9, 2.7, 1.2, "PREDICTOR", r"interface:  $\ddot e = u + d$" + "\nrobot-independent $(A,B)$", BLUE, LBLUE)
-box(6.5, 1.9, 2.7, 1.2, "REALIZER", "whole-body QP: carries\n$M_p$, contacts, limits", GRAY, LGRAY)
-box(9.6, 1.9, 1.2, 1.2, "Robot", "actual $\\ddot e$", "#111111", "#f4f4f4")
+box(0.5, 1.9, 2.0, 1.0, "Reference", "planner / learned policy", GRAY, LGRAY)
+box(3.4, 1.9, 2.0, 1.0, "PREDICTOR", r"interface:  $\ddot e = u + d$" + "\nrobot-independent $(A,B)$", BLUE, LBLUE)
+box(6.5, 1.9, 2.0, 1.0, "REALIZER", "whole-body QP: carries\n$M_p$, contacts, limits", GRAY, LGRAY)
+box(9.2, 1.9, 1.3, 1.0, "Robot", "actual $\\ddot e$", "#111111", "#f4f4f4")
 
-arrow(2.4, 2.5, 3.1, 2.5, GRAY, r"intent $\ddot e_d$", 0, 0.28)
-arrow(5.8, 2.5, 6.5, 2.5, BLUE, r"command $u$", 0, 0.28)
-arrow(9.2, 2.5, 9.6, 2.5, GRAY)
+arrow(2.5, 2.5, 3.4, 2.5, GRAY, r"intent $\ddot e_d$", 0, 0.2)
+arrow(5.4, 2.5, 6.5, 2.5, BLUE, r"command $u$", 0, 0.2)
+arrow(8.5, 2.5, 9.2, 2.5, GRAY)
 
 # feedback: residual r (realizer -> predictor) and disturbance d (observer)
-arrow(6.5, 2.1, 5.8, 2.1, GREEN, r"residual $r$", 0, -0.30, rad=0.0)
-box(6.5, 0.25, 2.7, 0.95, "OBSERVER", "Kalman: estimates $d$", GREEN, "#e9f5ee")
-arrow(7.85, 1.9, 7.85, 1.2, GRAY, "innovation", 1.15, 0)
-arrow(6.5, 0.72, 4.45, 0.72, GREEN)
-arrow(4.45, 0.72, 4.45, 1.9, GREEN, r"disturbance $d$", -0.75, 0)
+arrow(6.5, 2.1, 5.4, 2.1, GREEN, r"residual $r$", 0, -0.20, rad=0.0)
+box(6.5, 0.25, 2.0, 0.95, "OBSERVER", "Kalman: estimates $d$", GREEN, "#e9f5ee")
+arrow(7.5, 1.9, 7.5, 1.2, GRAY, "innovation", 0.5, 0)
+arrow(6.5, 0.70, 4.45, 0.70, GREEN)
+arrow(4.45, 0.70, 4.45, 1.9, GREEN, r"disturbance $d$", -0.6, 0)
 
-ax.text(4.45, 3.35, "prediction  (future, robot-invariant)", ha="center", fontsize=9,
+ax.text(4.45, 3.15, "prediction  (future, robot-invariant)", ha="center", fontsize=9,
         color=BLUE, fontweight="bold")
-ax.text(7.85, 3.35, "realization  (present, robot-specific)", ha="center", fontsize=9,
+ax.text(7.85, 3.15, "realization  (present, robot-specific)", ha="center", fontsize=9,
         color=GRAY, fontweight="bold")
 
 fig.tight_layout()
