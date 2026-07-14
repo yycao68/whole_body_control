@@ -191,6 +191,13 @@ def friction_margin(model: mujoco.MjModel, data: mujoco.MjData, mu: float = 0.9)
     return float(min(margins)) if margins else float("inf")
 
 
+def com_velocity(model: mujoco.MjModel, data: mujoco.MjData, root_body: int) -> np.ndarray:
+    """Whole-robot CoM velocity from the subtree CoM Jacobian."""
+    jac = np.zeros((3, model.nv))
+    mujoco.mj_jacSubtreeCom(model, data, jac, root_body)
+    return jac @ data.qvel
+
+
 def smooth_forward_reference(t: float, duration: float, distance: float):
     x, xd, xdd = trapezoid_profile(t, duration=duration, distance=distance)
     return (
@@ -269,7 +276,7 @@ class InverseDynamicsQPRealizer:
     over generalized acceleration, actuator torque, and stance contact forces.
     """
 
-    def __init__(self, model: mujoco.MjModel):
+    def __init__(self, model: mujoco.MjModel, *, exact_realizer: bool = False):
         self.nv = model.nv
         self.nu = model.nu
         self.qadr = np.array([model.jnt_qposadr[joint_id(model, n)] for n in ACTUATED_JOINT_NAMES])
@@ -304,17 +311,59 @@ class InverseDynamicsQPRealizer:
         )
         self.mu = 0.9
         self.fz_max = 900.0
-        self.task_weight = 6.0        # hand-task objective weight (benchmark default)
+        # Hand-task objective weight.  This is a SOFT approximation of the hard
+        # task row of Eq. (22) (J_t qdd + Jdot qdot = x_ddot_td + u_t + s_t).
+        # The default below is the BODY-ONLY value: the hand task is inert in the
+        # balance/transition experiments, and a large weight there destabilises
+        # the support transition.  A closed-loop TASK PORT needs it ~1000x larger
+        # (see run_multirate_benchmarks.e6_*): the contact-consistent task inertia
+        # spans 30x across the hand axes (Lambda_t ~0.4 kg in x, ~12.5 kg in z),
+        # so a small scalar weight starves the heavy vertical axis -- at w=6 the
+        # nominal hand residual is 1.8 m/s^2 and the task authority set is EMPTY.
+        # At w=8e3 the residual is <0.3 m/s^2 on every axis and the body port is
+        # essentially unaffected.  The weight is therefore a per-experiment design
+        # parameter, and that dependence is itself a reported result.
+        self.task_weight = 6.0
         self.task_acc_clip = 18.0     # hand acceleration clip [m/s^2]
+        self.wrench_weight = 80.0     # Eq. (22) body-slack priority
         # When False, the friction-pyramid and joint-torque limits are dropped
         # from the recovery QP (unconstrained recovery, for the H5 ablation).
         self.constraints_on = True
+        # In exact_realizer mode the implementation follows (22): the body
+        # request is a six-dimensional centroidal wrench, virtual stance-point
+        # accelerations are equality constraints, and one-step joint-position
+        # limits are imposed.  The wrench/task slacks are eliminated from the
+        # QP (their squared norms are the corresponding least-squares terms)
+        # but reconstructed and logged after every solve.
+        self.exact_realizer = exact_realizer
         self.last_status = "not_solved"
         self.last_eq_residual = np.inf          # rigid-body dynamics-equality residual
         self.last_body_acc_residual = np.inf    # ||Jcom qdd - com_acc_des|| (realized - requested)
         self.last_task_acc_residual = np.inf    # ||Jhand qdd - task_acc_des|| (realized - requested)
         self.last_contact_force = np.zeros(0)
+        self.last_wrench_slack = np.full(6, np.inf)
+        self.last_task_slack = np.full(3, np.inf)
+        self.last_contact_acc_residual = np.inf
         self.last_fallback = False
+        self.last_qdd = np.full(self.nv, np.nan)
+        self.last_tau_qp = np.full(self.nu, np.nan)
+        self.last_qdd_lower = np.full(self.nv, -120.0)
+        self.last_qdd_upper = np.full(self.nv, 120.0)
+        # Retained QP data for the exact input-sensitivity (dz/du) KKT solve.
+        self._qp_P = None
+        self._qp_A = None
+        self._qp_l = None
+        self._qp_u = None
+        self._qp_z = None
+        self._qp_y = None
+        self._com_dq_du = None   # d(linear cost)/d(u_c); set when a CoM objective is active
+        self._com_clipped = False
+        self._qp_pattern = None   # cached OSQP solver + sparsity pattern for the warm 1 kHz path
+        self.last_com_acc_des = np.zeros(3)   # last requested CoM acceleration (c_ddot_d + u_c)
+        self.last_task_acc_des = np.zeros(3)  # last requested hand acceleration (x_ddot_td + u_t)
+        self.last_hand_jac = None             # hand Jacobian of the last solve
+        self._task_dq_du = None
+        self._task_clipped = False
 
     def joint_state(self, data: mujoco.MjData):
         return data.qpos[self.qadr].copy(), data.qvel[self.dof].copy()
@@ -358,6 +407,8 @@ class InverseDynamicsQPRealizer:
         nlam: int,
         Aeq_extra: np.ndarray | None = None,
         beq_extra: np.ndarray | None = None,
+        qdd_lb: np.ndarray | None = None,
+        qdd_ub: np.ndarray | None = None,
     ):
         n = self.nv + self.nu + nlam
         A_dyn = np.zeros((self.nv, n))
@@ -395,6 +446,10 @@ class InverseDynamicsQPRealizer:
         ub = np.full(n, np.inf)
         lb[:self.nv] = -120.0
         ub[:self.nv] = 120.0
+        if qdd_lb is not None:
+            lb[:self.nv] = np.maximum(lb[:self.nv], qdd_lb)
+        if qdd_ub is not None:
+            ub[:self.nv] = np.minimum(ub[:self.nv], qdd_ub)
         if self.constraints_on:
             lb[self.nv:self.nv + self.nu] = self.torque_min
             ub[self.nv:self.nv + self.nu] = self.torque_max
@@ -411,21 +466,97 @@ class InverseDynamicsQPRealizer:
         A = sp.vstack(rows, format="csc")
         l = np.concatenate(lows)
         u = np.concatenate(ups)
-        solver = osqp.OSQP()
-        solver.setup(
-            P=sp.csc_matrix(0.5 * (P + P.T)),
-            q=q,
-            A=A,
-            l=l,
-            u=u,
-            verbose=False,
-            polish=False,
-            eps_abs=1e-4,
-            eps_rel=1e-4,
-            max_iter=250,
-            adaptive_rho=True,
+        # Retain the exact QP data so the input sensitivity dz/du can be taken
+        # from the active-set KKT system instead of by re-solving the QP.
+        Psym = 0.5 * (P + P.T)
+        Adense = A.toarray()
+        self._qp_P = Psym
+        self._qp_A = Adense
+        self._qp_l = l
+        self._qp_u = u
+
+        # 1 kHz path: set the solver up once per sparsity pattern and thereafter
+        # only push new values.  OSQP's update() requires an unchanged pattern,
+        # so the pattern itself is the cache key: if it ever changes (different
+        # contact mode, different active structure) we fall back to a fresh
+        # setup rather than corrupting the factorization.
+        pat = self._qp_pattern
+        reuse = (
+            pat is not None
+            and pat["n"] == n
+            and pat["m"] == Adense.shape[0]
+            # A structurally-new nonzero outside the cached pattern would be
+            # silently dropped, so verify the pattern still covers the data.
+            and int(np.count_nonzero(np.triu(Psym))) <= pat["pnnz"]
+            and int(np.count_nonzero(Adense)) <= pat["annz"]
         )
-        return solver.solve()
+        if reuse:
+            Px = Psym[pat["pr"], pat["pc"]]
+            Ax = Adense[pat["ar"], pat["ac"]]
+            solver = pat["solver"]
+            solver.update(Px=Px, Ax=Ax, q=q, l=l, u=u)
+        else:
+            Pcsc = sp.triu(sp.csc_matrix(Psym), format="csc")
+            Acsc = sp.csc_matrix(Adense)
+            solver = osqp.OSQP()
+            solver.setup(
+                P=Pcsc, q=q, A=Acsc, l=l, u=u,
+                verbose=False, polish=True,
+                eps_abs=1e-4, eps_rel=1e-4, max_iter=2000, adaptive_rho=True,
+            )
+            pr_ = Pcsc.indices
+            pc_ = np.repeat(np.arange(n), np.diff(Pcsc.indptr))
+            ar_ = Acsc.indices
+            ac_ = np.repeat(np.arange(n), np.diff(Acsc.indptr))
+            self._qp_pattern = {
+                "n": n, "m": Adense.shape[0], "solver": solver,
+                "pr": pr_, "pc": pc_, "ar": ar_, "ac": ac_,
+                "pnnz": int(Pcsc.nnz), "annz": int(Acsc.nnz),
+            }
+        result = solver.solve()
+        self._qp_z = None if result.x is None else np.asarray(result.x, dtype=float)
+        self._qp_y = None if result.y is None else np.asarray(result.y, dtype=float)
+        return result
+
+    def input_sensitivity(self, dq_du: np.ndarray, active_tol: float = 1e-6) -> np.ndarray | None:
+        """Exact dz/du on the current active-set cell, from one KKT solve.
+
+        ``dq_du`` is d(linear cost)/du with shape (n, m).  The QP Hessian does
+        not depend on u, so on a fixed active set the solution is affine in u
+        and its Jacobian solves
+
+            [P   Aa^T] [dz/du]   [-dq_du]
+            [Aa   0  ] [dnu  ] = [   0  ]
+
+        where ``Aa`` are the rows active at the current solution.  Returns None
+        if the QP has not been solved or the KKT system is singular.
+        """
+        if self._qp_z is None or self._qp_y is None:
+            return None
+        A, l, u, y = self._qp_A, self._qp_l, self._qp_u, self._qp_y
+        Az = A @ self._qp_z
+        # Equalities (l == u) are always active; inequalities are active when the
+        # row sits at a finite bound with a nonzero multiplier.
+        equality = np.isclose(l, u)
+        at_bound = (
+            (np.isfinite(l) & (np.abs(Az - l) <= 1e-6))
+            | (np.isfinite(u) & (np.abs(Az - u) <= 1e-6))
+        )
+        active = equality | (at_bound & (np.abs(y) > active_tol))
+        Aa = A[active]
+        n = self._qp_P.shape[0]
+        na = int(Aa.shape[0])
+        K = np.zeros((n, na))
+        kkt = np.block([
+            [self._qp_P, Aa.T],
+            [Aa, np.zeros((na, na))],
+        ]) if na else self._qp_P
+        rhs = np.vstack((-np.asarray(dq_du, dtype=float), np.zeros((na, dq_du.shape[1]))))
+        try:
+            sol = np.linalg.solve(kkt + 1e-9 * np.eye(kkt.shape[0]), rhs)
+        except np.linalg.LinAlgError:
+            return None
+        return sol[:n]
 
     def command(
         self,
@@ -443,6 +574,7 @@ class InverseDynamicsQPRealizer:
         com_acc_des: np.ndarray | None = None,
         swing_task: dict | None = None,
         attitude_weight: float = 8.0,
+        centroidal_moment_des: np.ndarray | None = None,
     ):
         q_act, qd_act = self.joint_state(data)
         ncontacts = len(stance_contacts)
@@ -452,6 +584,8 @@ class InverseDynamicsQPRealizer:
         q = np.zeros(n)
         foot_eq_rows = []
         foot_eq_targets = []
+        wrench_map = np.zeros((6, nlam))
+        wrench_des = None
 
         C_joint = np.zeros((self.nu, n))
         C_joint[:, self.dof] = np.eye(self.nu)
@@ -459,15 +593,21 @@ class InverseDynamicsQPRealizer:
         self._add_ls(P, q, C_joint, np.clip(qdd_joint_des, -80.0, 80.0), 1.0)
 
         if com_acc_des is not None:
-            # Faithful body-port recovery: drive the whole-body CoM linear
-            # acceleration to c_ddot_d + u_c (equivalent to allocating the desired
-            # centroidal wrench m(c_ddot_d - g) + m u_c across the contacts), so
-            # that e_ddot_com = u_c + d holds and the observer is consistent.
+            # Practical body-port recovery: penalize the difference between the
+            # realized whole-body CoM acceleration and c_ddot_d + u_c.  This is a
+            # weighted objective, so its realization residual is logged below.
             Jcom = np.zeros((3, self.nv))
             mujoco.mj_jacSubtreeCom(model, data, Jcom, self.root_body)
             C_com = np.zeros((3, n))
             C_com[:, :self.nv] = Jcom
             self._add_ls(P, q, C_com, np.clip(com_acc_des, -35.0, 35.0), 40.0)
+            # u_c enters the QP only through objective targets, so dq/du is a sum
+            # of -w * C^T (dtarget/du) over every objective whose target depends
+            # on u.  This is the CoM-acceleration term; the exact realizer adds a
+            # centroidal-wrench term below.  The map is affine only off the clip.
+            self._com_dq_du = -40.0 * C_com[:2, :].T
+            self._com_clipped = bool(np.any(np.abs(np.asarray(com_acc_des)[:2]) >= 35.0))
+            self.last_com_acc_des = np.asarray(com_acc_des, dtype=float).copy()
             # Vertical height stays stiff (weight 8). Torso attitude uses a
             # separate weight: relaxing it (attitude_weight < 8) lets the QP use
             # centroidal angular momentum (torso/arm rotation) for balance beyond
@@ -489,7 +629,14 @@ class InverseDynamicsQPRealizer:
 
         C_task = np.zeros((3, n))
         C_task[:, :self.nv] = hand_jac
+        self.last_hand_jac = np.asarray(hand_jac, dtype=float).copy()
         self._add_ls(P, q, C_task, np.clip(task_acc_des, -self.task_acc_clip, self.task_acc_clip), self.task_weight)
+        # u_t enters only this objective's target, so dq/du_t = -w_task * C_task^T.
+        self.last_task_acc_des = np.asarray(task_acc_des, dtype=float).copy()
+        self._task_dq_du = -self.task_weight * C_task.T
+        self._task_clipped = bool(
+            np.any(np.abs(np.asarray(task_acc_des, dtype=float)) >= self.task_acc_clip)
+        )
 
         Jc_blocks = []
         if ncontacts:
@@ -511,8 +658,80 @@ class InverseDynamicsQPRealizer:
                 base = 3 * i
                 C_lam[base:base + 3, self.nv + self.nu + base:self.nv + self.nu + base + 3] = np.eye(3)
                 target_lam[base + 2] = fz_nom
+                wrench_map[:3, base:base + 3] = np.eye(3)
+                arm = pos - data.subtree_com[self.root_body]
+                wrench_map[3:, base:base + 3] = np.array(
+                    [[0.0, -arm[2], arm[1]],
+                     [arm[2], 0.0, -arm[0]],
+                     [-arm[1], arm[0], 0.0]]
+                )
             self._add_ls(P, q, C_lam, target_lam, 2e-4)
             Jc = np.vstack(Jc_blocks)
+
+            if self.exact_realizer:
+                # Contact forces remain distributed over virtual sole corners,
+                # but rigid-contact acceleration is imposed once per stance
+                # foot as a six-dimensional body constraint.  Constraining all
+                # four corner Jacobians separately is redundant and becomes
+                # numerically inconsistent when Jdot*qdot is approximated.
+                stance_feet = sorted({key.split("_", 1)[0]
+                                      for key in stance_contacts})
+                fd_eps = 1e-6
+                data_fd = mujoco.MjData(model)
+                data_fd.qpos[:] = data.qpos
+                data_fd.qvel[:] = data.qvel
+                mujoco.mj_integratePos(model, data_fd.qpos, data.qvel, fd_eps)
+                mujoco.mj_forward(model, data_fd)
+                for foot in stance_feet:
+                    jp = np.zeros((3, self.nv))
+                    jr = np.zeros((3, self.nv))
+                    mujoco.mj_jacBody(model, data, jp, jr, self.foot_body[foot])
+                    Jfoot6 = np.vstack((jp, jr))
+                    jp_fd = np.zeros((3, self.nv))
+                    jr_fd = np.zeros((3, self.nv))
+                    mujoco.mj_jacBody(model, data_fd, jp_fd, jr_fd, self.foot_body[foot])
+                    Jdot_qdot = ((np.vstack((jp_fd, jr_fd)) - Jfoot6) / fd_eps) @ data.qvel
+                    Cfoot6 = np.zeros((6, n))
+                    Cfoot6[:, :self.nv] = Jfoot6
+                    # Acceleration-level rigid contact with a Baumgarte velocity
+                    # term and translational drift correction.  The latter is
+                    # essential after touchdown: velocity damping alone permits
+                    # a newly added stance foot to separate slowly from its
+                    # measured world target.  Corner-target errors provide the
+                    # corresponding sole translation without imposing four
+                    # redundant six-dimensional hard constraints.
+                    foot_keys = [key for key in stance_contacts
+                                 if key.split("_", 1)[0] == foot]
+                    sole_pos_error = np.mean(
+                        [stance_contacts[key][0] - stance_targets[key]
+                         for key in foot_keys],
+                        axis=0,
+                    )
+                    afoot6 = -Jdot_qdot - 36.0 * (Jfoot6 @ data.qvel)
+                    afoot6[:3] -= 360.0 * sole_pos_error
+                    afoot6 = np.clip(afoot6, -80.0, 80.0)
+                    foot_eq_rows.append(Cfoot6)
+                    foot_eq_targets.append(afoot6)
+
+            if self.exact_realizer and com_acc_des is not None:
+                # Eq. (22), with s_W eliminated: ||G lambda-W_des||^2.
+                # MuJoCo's bias term contains gravity, hence static support
+                # corresponds to F_des=m*g_up.
+                total_mass = float(np.sum(model.body_mass))
+                moment_des = (np.zeros(3) if centroidal_moment_des is None
+                              else np.asarray(centroidal_moment_des, dtype=float))
+                wrench_des = np.r_[total_mass * (np.asarray(com_acc_des) + G), moment_des]
+                C_wrench = np.zeros((6, n))
+                C_wrench[:, self.nv + self.nu:] = wrench_map
+                self._add_ls(P, q, C_wrench, wrench_des, self.wrench_weight)
+                # The exact realizer also drives u through the centroidal-wrench
+                # target: d(wrench_des[:2])/du = m*I, so this term must be added
+                # to dq/du or the sensitivity is wrong (it dominates at the
+                # wrench weight actually used).
+                if self._com_dq_du is not None:
+                    self._com_dq_du = self._com_dq_du + (
+                        -self.wrench_weight * total_mass * C_wrench[:2, :].T
+                    )
         else:
             Jc = np.zeros((0, self.nv))
 
@@ -535,7 +754,38 @@ class InverseDynamicsQPRealizer:
         M = self._mass_matrix(model, data)
         Aeq_extra = np.vstack(foot_eq_rows) if foot_eq_rows else None
         beq_extra = np.concatenate(foot_eq_targets) if foot_eq_targets else None
-        result = self._solve_qp(M, data.qfrc_bias.copy(), Jc, P, q, nlam, Aeq_extra, beq_extra)
+        qdd_lb = qdd_ub = None
+        if self.exact_realizer:
+            # One-step actuated-joint position row of (22), expressed as qdd
+            # bounds and intersected with the generic acceleration bounds.
+            eps = 1e-3
+            dt = COMMAND_DT
+            qdd_lb = np.full(self.nv, -np.inf)
+            qdd_ub = np.full(self.nv, np.inf)
+            for qadr, dof in zip(self.qadr, self.dof):
+                jid = int(model.dof_jntid[dof])
+                if not model.jnt_limited[jid]:
+                    continue
+                lo, hi = model.jnt_range[jid]
+                predicted_no_acc = data.qpos[qadr] + dt * data.qvel[dof]
+                # The Menagerie stand keyframe places a few joints inside the
+                # numerical epsilon band.  A one-step invariant constraint is
+                # undefined there (it would demand acceleration beyond the
+                # physical qdd bound), so activate it after the state is inside
+                # the shrunken interval; torque/acceleration bounds still apply
+                # during recovery into that interval.
+                if predicted_no_acc <= lo + eps or predicted_no_acc >= hi - eps:
+                    continue
+                qdd_lb[dof] = 2.0 * (lo + eps - predicted_no_acc) / dt**2
+                qdd_ub[dof] = 2.0 * (hi - eps - predicted_no_acc) / dt**2
+        result = self._solve_qp(M, data.qfrc_bias.copy(), Jc, P, q, nlam,
+                                Aeq_extra, beq_extra, qdd_lb, qdd_ub)
+        self.last_qdd_lower = np.full(self.nv, -120.0)
+        self.last_qdd_upper = np.full(self.nv, 120.0)
+        if qdd_lb is not None:
+            self.last_qdd_lower = np.maximum(self.last_qdd_lower, qdd_lb)
+        if qdd_ub is not None:
+            self.last_qdd_upper = np.minimum(self.last_qdd_upper, qdd_ub)
         self.last_status = result.info.status
         self.last_fallback = result.x is None or result.info.status_val not in (1, 2)
 
@@ -546,11 +796,18 @@ class InverseDynamicsQPRealizer:
             self.last_body_acc_residual = np.inf
             self.last_task_acc_residual = np.inf
             self.last_contact_force = np.zeros(nlam)
+            self.last_wrench_slack = np.full(6, np.inf)
+            self.last_task_slack = np.full(3, np.inf)
+            self.last_contact_acc_residual = np.inf
+            self.last_qdd = np.full(self.nv, np.nan)
+            self.last_tau_qp = np.full(self.nu, np.nan)
             return tau, tau.copy(), np.zeros_like(tau)
 
         z = result.x
         qdd = z[:self.nv]
         tau_qp = z[self.nv:self.nv + self.nu]
+        self.last_qdd = qdd.copy()
+        self.last_tau_qp = tau_qp.copy()
         saturation = np.maximum(tau_qp - self.torque_max, 0.0) + np.maximum(self.torque_min - tau_qp, 0.0)
         tau = np.clip(tau_qp, self.torque_min, self.torque_max)
         lam = z[self.nv + self.nu:] if nlam else np.zeros(0)
@@ -560,7 +817,8 @@ class InverseDynamicsQPRealizer:
         self.last_eq_residual = float(np.linalg.norm(dyn))
         # True body/task realization residuals: realized minus requested acceleration
         # (the soft-objective residuals of the CoM and hand acceleration objectives).
-        self.last_task_acc_residual = float(np.linalg.norm(hand_jac @ qdd - task_acc_des))
+        self.last_task_slack = hand_jac @ qdd - task_acc_des
+        self.last_task_acc_residual = float(np.linalg.norm(self.last_task_slack))
         if com_acc_des is not None:
             Jcom_r = np.zeros((3, self.nv))
             mujoco.mj_jacSubtreeCom(model, data, Jcom_r, self.root_body)
@@ -568,6 +826,14 @@ class InverseDynamicsQPRealizer:
         else:
             self.last_body_acc_residual = float("nan")
         self.last_contact_force = lam.copy()
+        self.last_wrench_slack = (wrench_map @ lam - wrench_des
+                                  if wrench_des is not None else np.full(6, np.nan))
+        if foot_eq_rows:
+            Cc = np.vstack(foot_eq_rows)[:, :self.nv]
+            ac = np.concatenate(foot_eq_targets)
+            self.last_contact_acc_residual = float(np.linalg.norm(Cc @ qdd - ac))
+        else:
+            self.last_contact_acc_residual = float("nan")
         data.ctrl[self.ctrl_id] = tau
         return tau, tau_qp, saturation
 
@@ -589,6 +855,7 @@ def run_trial(
     scenario: str,
     distance: float,
     push_enabled: bool,
+    exact_realizer: bool = False,
 ):
     model_path = generate_torque_model()
     model = mujoco.MjModel.from_xml_path(str(model_path))
@@ -602,7 +869,7 @@ def run_trial(
     mujoco.mj_forward(model, data)
 
     command_layer = G1CommandLayer()
-    realizer = InverseDynamicsQPRealizer(model)
+    realizer = InverseDynamicsQPRealizer(model, exact_realizer=exact_realizer)
     body_mpc = NormalizedMPC(dim=2, dt=COMMAND_DT, horizon=35, q_pos=55.0, q_vel=12.0, r=0.08, u_max=np.array([3.5, 3.0]))
     task_mpc = NormalizedMPC(dim=3, dt=COMMAND_DT, horizon=18, q_pos=100.0, q_vel=10.0, r=0.12, u_max=np.array([4.5, 4.5, 4.5]))
     body_obs = RandomWalkDisturbanceObserver(dim=2, dt=COMMAND_DT, q_d=0.05, r_y=1.5e-4)
@@ -617,6 +884,28 @@ def run_trial(
 
     q_nom = TORQUE_STAND_CTRL.copy()
     qd_ref = np.zeros_like(q_nom)
+    if exact_realizer:
+        # The keyframe is initially above the floor.  Establish physical sole
+        # contacts with the validated soft-contact realizer before enabling the
+        # hard contact equalities of the Eq. (22) path.
+        warm = InverseDynamicsQPRealizer(model, exact_realizer=False)
+        warm_com = robot_com(model, data)
+        warm_height = float(data.qpos[2])
+        for _ in range(int(round(0.35 / SIM_DT))):
+            warm_contacts = warm.contact_points(model, data, ("left", "right"))
+            warm_targets = {key: pos.copy() for key, (pos, _) in warm_contacts.items()}
+            _, _, warm_hand_jac = hand_state(model, data, hand_sid)
+            warm_rpy = roll_pitch_yaw_from_body(data, torso)
+            warm_acc = -25.0 * (robot_com(model, data) - warm_com) - 8.0 * com_velocity(
+                model, data, warm.root_body)
+            warm.command(
+                model, data, q_nom, qd_ref, np.zeros(2), np.zeros(3),
+                warm_hand_jac, warm_contacts, warm_targets, warm_height,
+                warm_rpy, com_acc_des=np.clip(warm_acc, -3.0, 3.0),
+                attitude_weight=60.0,
+            )
+            mujoco.mj_step(model, data); mujoco.mj_forward(model, data)
+        data.time = 0.0
     com0 = robot_com(model, data)
     hand0, _, _ = hand_state(model, data, hand_sid)
     base_height_ref = float(data.qpos[2])
@@ -638,8 +927,11 @@ def run_trial(
         left0 = data.site_xpos[left_sid][:2].copy()
         right0 = data.site_xpos[right_sid][:2].copy()
         step_len = 0.05 if scenario == "walk" else 0.0
+        quasi_static_switch = exact_realizer and scenario == "contact_switch"
         dcm_plan = DCMWalk(left0, right0, step_len, n_steps=12, z_c=z_c,
-                           t_step=0.36, t_ds=0.12, t_settle=0.8)
+                           t_step=0.60 if quasi_static_switch else 0.36,
+                           t_ds=0.20 if quasi_static_switch else 0.12,
+                           t_settle=0.8)
         walk_body_mpc = NormalizedMPC(dim=2, dt=COMMAND_DT, horizon=35,
                                       q_pos=90.0, q_vel=16.0, r=0.05, u_max=np.array([6.0, 6.0]))
 
@@ -677,6 +969,9 @@ def run_trial(
         "task_acc_residual": np.zeros(steps),
         "realizer_fallback": np.zeros(steps, dtype=int),
         "contact_force_norm": np.zeros(steps),
+        "wrench_slack": np.zeros((steps, 6)),
+        "task_slack": np.zeros((steps, 3)),
+        "contact_acc_residual": np.zeros(steps),
         "push_force": np.zeros((steps, 3)),
         "friction_margin": np.zeros(steps),
         "fall": np.zeros(steps, dtype=int),
@@ -710,6 +1005,8 @@ def run_trial(
             hand_ref = hand0 + np.array([0.0, 0.03 * math.sin(2.0 * math.pi * 0.35 * t), 0.0])
             hand_v_ref = np.array([0.0, 0.03 * 2.0 * math.pi * 0.35 * math.cos(2.0 * math.pi * 0.35 * t), 0.0])
             hand_a_ref = np.array([0.0, -0.03 * (2.0 * math.pi * 0.35) ** 2 * math.sin(2.0 * math.pi * 0.35 * t), 0.0])
+            if exact_realizer:
+                hand_ref = hand0.copy(); hand_v_ref[:] = 0.0; hand_a_ref[:] = 0.0
             if stance != stance_prev:
                 current_contacts = realizer.contact_points(model, data, stance)
                 for key, (pos, _) in current_contacts.items():
@@ -727,7 +1024,8 @@ def run_trial(
                 com_ref_vel_xy = dcm_plan.w * (xi - com_ref_xy)
                 com_ref_acc = dcm_plan.w * (xi_dot - com_ref_vel_xy)
                 com_ref_xy = com_ref_xy + com_ref_vel_xy * COMMAND_DT
-                x_body = np.r_[com[:2] - com_ref_xy, data.qvel[:2] - com_ref_vel_xy]
+                x_body = np.r_[com[:2] - com_ref_xy,
+                               com_velocity(model, data, realizer.root_body)[:2] - com_ref_vel_xy]
                 u_body = walk_body_mpc.solve(x_body, d_body)
                 d_body, innovation_body = body_obs.step(com[:2] - com_ref_xy, u_body)
                 x_task = np.r_[hand - hand_ref, hand_vel - hand_v_ref]
@@ -739,9 +1037,13 @@ def run_trial(
                 if swing is not None:
                     sid = right_sid if swing == "right" else left_sid
                     xy = sw_start + (sw_target - sw_start) * (0.5 - 0.5 * np.cos(np.pi * s))
-                    zt = ground_z_walk + 0.05 * np.sin(np.pi * s)
+                    lift = 0.025 if (exact_realizer and scenario == "contact_switch") else 0.05
+                    zt = ground_z_walk + lift * np.sin(np.pi * s)
                     swing_cmd = dict(sid=sid, pos_des=np.array([xy[0], xy[1], zt]),
-                                     vel_des=np.zeros(3), kp=280.0, kd=32.0, weight=14.0)
+                                     vel_des=np.zeros(3),
+                                     kp=180.0 if exact_realizer else 280.0,
+                                     kd=25.0 if exact_realizer else 32.0,
+                                     weight=10.0 if exact_realizer else 14.0)
                 else:
                     swing_cmd = None
         else:
@@ -752,6 +1054,8 @@ def run_trial(
             hand_ref = hand0 + np.array([traj.position[0], 0.03 * math.sin(2.0 * math.pi * 0.35 * t), 0.0])
             hand_v_ref = np.array([traj.velocity[0], 0.03 * 2.0 * math.pi * 0.35 * math.cos(2.0 * math.pi * 0.35 * t), 0.0])
             hand_a_ref = np.array([traj.acceleration[0], -0.03 * (2.0 * math.pi * 0.35) ** 2 * math.sin(2.0 * math.pi * 0.35 * t), 0.0])
+            if exact_realizer:
+                hand_ref = hand0.copy(); hand_v_ref[:] = 0.0; hand_a_ref[:] = 0.0
             stance = scheduled_stance_feet(t, scenario)
             if stance != stance_prev:
                 current_contacts = realizer.contact_points(model, data, stance)
@@ -767,7 +1071,8 @@ def run_trial(
             stance_contacts = realizer.contact_points(model, data, stance)
 
             if k % command_period == 0:
-                x_body = np.r_[com[:2] - com_ref[:2], data.qvel[:2] - traj.velocity]
+                x_body = np.r_[com[:2] - com_ref[:2],
+                               com_velocity(model, data, realizer.root_body)[:2] - traj.velocity]
                 u_body = body_mpc.solve(x_body, d_body)
                 d_body, innovation_body = body_obs.step(com[:2] - com_ref[:2], u_body)
                 x_task = np.r_[hand - hand_ref, hand_vel - hand_v_ref]
@@ -805,6 +1110,7 @@ def run_trial(
             rpy,
             com_acc_des=np.array([body_acc_des[0], body_acc_des[1], 0.0]),
             swing_task=swing_task,
+            attitude_weight=60.0 if exact_realizer else 8.0,
         )
         mujoco.mj_step(model, data)
         mujoco.mj_forward(model, data)
@@ -843,6 +1149,9 @@ def run_trial(
         log["task_acc_residual"][k] = realizer.last_task_acc_residual
         log["realizer_fallback"][k] = int(realizer.last_fallback)
         log["contact_force_norm"][k] = float(np.linalg.norm(realizer.last_contact_force))
+        log["wrench_slack"][k] = realizer.last_wrench_slack
+        log["task_slack"][k] = realizer.last_task_slack
+        log["contact_acc_residual"][k] = realizer.last_contact_acc_residual
         log["push_force"][k] = push.force if active_push else 0.0
         log["friction_margin"][k] = friction_margin(model, data)
         log["fall"][k] = int(fall)
@@ -856,11 +1165,13 @@ def run_trial(
                     value[k + 1:] = value[k]
             break
 
-    summary = summarize_trial(log, seed, scenario, duration, distance, push, contact_events, model_path)
+    summary = summarize_trial(log, seed, scenario, duration, distance, push,
+                              contact_events, model_path, exact_realizer)
     return log, summary
 
 
-def summarize_trial(log, seed, scenario, requested_duration, distance, push, contact_events, model_path):
+def summarize_trial(log, seed, scenario, requested_duration, distance, push,
+                    contact_events, model_path, exact_realizer=False):
     t = log["t"]
     valid = np.flatnonzero(t >= 0.0)
     end = int(valid[-1]) if len(valid) else len(t) - 1
@@ -872,9 +1183,17 @@ def summarize_trial(log, seed, scenario, requested_duration, distance, push, con
     finite_residual = residual[np.isfinite(residual)]
     body_res = log["body_acc_residual"][:end + 1]; body_res = body_res[np.isfinite(body_res)]
     task_res = log["task_acc_residual"][:end + 1]; task_res = task_res[np.isfinite(task_res)]
+    wrench_res = np.linalg.norm(log["wrench_slack"][:end + 1], axis=1)
+    wrench_res = wrench_res[np.isfinite(wrench_res)]
+    contact_res = log["contact_acc_residual"][:end + 1]
+    contact_res = contact_res[np.isfinite(contact_res)]
+    contact_log = log["contact"][:end + 1]
+    single_support_s = float(SIM_DT * np.sum(np.sum(contact_log, axis=1) == 1))
+    double_support_s = float(SIM_DT * np.sum(np.sum(contact_log, axis=1) == 2))
     return {
         "seed": int(seed),
         "scenario": scenario,
+        "exact_realizer": bool(exact_realizer),
         "model": str(model_path.relative_to(HERE)),
         "duration_requested_s": float(requested_duration),
         "duration_completed_s": float(t[end]),
@@ -887,6 +1206,8 @@ def summarize_trial(log, seed, scenario, requested_duration, distance, push, con
         "detected_push": detected_push,
         "contact_switches_detected": contact_switches,
         "contact_event_times_s": contact_events,
+        "physical_single_support_s": single_support_s,
+        "physical_double_support_s": double_support_s,
         "max_abs_roll_pitch_rad": float(np.max(np.abs(log["rpy"][:end + 1, :2]))),
         "min_pelvis_height_m": float(np.min(log["qpos"][:end + 1, 2])),
         "max_tau_abs_nm": float(np.max(np.abs(log["tau"][:end + 1]))),
@@ -896,12 +1217,18 @@ def summarize_trial(log, seed, scenario, requested_duration, distance, push, con
         "max_dynamics_equality_residual": finite_or_none(np.max(finite_residual)) if finite_residual.size else None,
         "max_body_acc_residual": finite_or_none(np.max(body_res)) if body_res.size else None,
         "max_task_acc_residual": finite_or_none(np.max(task_res)) if task_res.size else None,
+        "max_wrench_slack_norm": finite_or_none(np.max(wrench_res)) if wrench_res.size else None,
+        "max_contact_acc_residual": finite_or_none(np.max(contact_res)) if contact_res.size else None,
         "num_realizer_fallbacks": int(np.sum(log["realizer_fallback"][:end + 1])),
         "max_contact_force_norm_n": float(np.max(log["contact_force_norm"][:end + 1])),
         "min_friction_margin": finite_or_none(np.min(log["friction_margin"][:end + 1])),
         "hand_rms_error_mm": float(1000.0 * np.sqrt(np.mean(np.sum((log["hand"][:end + 1] - log["hand_ref"][:end + 1]) ** 2, axis=1)))),
         "fell": fell,
-        "passes_torque_realizer_smoke": bool((not fell) and t[end] > 0.95 * t[-1]),
+        "passes_torque_realizer_smoke": bool(
+            (not fell) and t[end] > 0.95 * t[-1]
+            and (not exact_realizer or int(np.sum(log["realizer_fallback"][:end + 1])) == 0)
+            and (scenario != "contact_switch" or single_support_s >= 0.30)
+        ),
         "claim_scope": (
             "Torque-actuated G1 smoke benchmark with normalized body/task MPCs, "
             "RandomWalkDisturbanceObserver detection, and a present-sample "
@@ -979,14 +1306,18 @@ def main():
     parser.add_argument("--trials", type=int, default=3)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--push", action="store_true", default=False)
+    parser.add_argument("--exact-realizer", action="store_true",
+                        help="use the residual-aware six-dimensional realizer of Eq. (22)")
     args = parser.parse_args()
 
     summaries = []
     for i in range(args.trials):
         seed = args.seed + i
         push_enabled = args.push or args.scenario == "stand_push"
-        log, summary = run_trial(seed, args.duration, args.scenario, args.distance, push_enabled)
-        prefix = f"g1_torque_{args.scenario}_seed{seed}"
+        log, summary = run_trial(seed, args.duration, args.scenario, args.distance,
+                                 push_enabled, args.exact_realizer)
+        mode = "_exact" if args.exact_realizer else ""
+        prefix = f"g1_torque_{args.scenario}{mode}_seed{seed}"
         np.savez_compressed(RESULTS / f"{prefix}_log.npz", **log)
         with (RESULTS / f"{prefix}_summary.json").open("w") as f:
             json.dump(summary, f, indent=2)
@@ -995,7 +1326,8 @@ def main():
         print(json.dumps(summary, indent=2))
 
     agg = aggregate(summaries)
-    out = RESULTS / f"g1_torque_{args.scenario}_aggregate.json"
+    mode = "_exact" if args.exact_realizer else ""
+    out = RESULTS / f"g1_torque_{args.scenario}{mode}_aggregate.json"
     with out.open("w") as f:
         json.dump(agg, f, indent=2)
     print(json.dumps(agg, indent=2))

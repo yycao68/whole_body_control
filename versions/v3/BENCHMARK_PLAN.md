@@ -37,10 +37,32 @@ and cross-port anticipation.
 | Scenario | Main comparison | Trials | Primary metric |
 |---|---|---:|---|
 | S1 sustained hand force + payload | C0-C4 | 20 | dual-port SS error |
-| S2 fast arm reach | C3 vs C4 | 20 per speed | peak CoM excursion |
-| S3 foot lift/place | C3-C5 | 5 cycles/trial | contact latency/F1 |
-| S4 walking with randomized pushes | C1, C3-C5 | 30 pushes | recovery rate |
+| S2 fast arm reach | C3 vs C4 | implemented smoke check; full sweep planned | peak CoM excursion |
+| S3 foot lift/place / contact-event detection | ID-MPC vs locally gain-matched PD-WBC | 10 paired one-way transitions; return gate remains failed | survival, RMS CoM error, contact residual |
+| S4 walking with scripted pushes | Unitree open-source G1 MuJoCo policy + interaction layer | demo-only; generated locally from Unitree RL Gym | recovery/visual demo |
 | S5 active force/friction/torque limits | C2-C4 | 20 | violations/slack |
+
+## Scope Split: Paper Evidence vs. Locomotion Demo
+
+The v3 paper is about interaction dynamics for floating-base whole-body
+manipulation. It should not claim to solve walking, running, gait scheduling,
+or capture recovery. Unitree already provides mature locomotion software for
+G1-class platforms, and that stack should remain the gait provider.
+
+Therefore the validation is split into two tracks:
+
+1. **Paper evidence track:** fixed-support, double-support, and bounded
+   double-to-single-support interaction
+   tests that verify the normalized predictor, offset-free disturbance
+   rejection, preview, contact-event detection, and physical-constraint
+   realization.
+2. **Demo track:** walking/running videos where a Unitree locomotion base
+   supplies the gait and our interaction-dynamics layer adds high-level
+   disturbance estimation, load preview, and correction.
+
+The demo track is useful for communication and future integration, but it is not
+paper evidence unless the Unitree controller interface, logs, safety limits, and
+disturbance schedule are documented.
 
 ## G1 Walking Visualization Gate
 
@@ -79,8 +101,9 @@ The repository now includes an initial torque-actuated runner:
 ```bash
 MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_g1_torque_realizer_benchmark.py --scenario stand --duration 3.0 --trials 1 --seed 31
 MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_g1_torque_realizer_benchmark.py --scenario stand_push --duration 3.0 --trials 3 --seed 21
-MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_g1_torque_realizer_benchmark.py --scenario contact_switch --duration 3.0 --trials 1 --seed 41
-MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_g1_torque_realizer_benchmark.py --scenario walk --duration 3.0 --trials 1 --seed 51
+MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_g1_torque_realizer_benchmark.py --scenario contact_switch --duration 1.4 --trials 1 --seed 42 --exact-realizer
+MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_contact_transition_robustness.py --seeds 10 --seed 60
+MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_contact_transition_robustness.py --seeds 1 --seed 60 --require-return
 ```
 
 It generates a local torque-actuated `models/g1_wbc_torque.xml`, runs the
@@ -90,20 +113,105 @@ logs pushes, detected contact events, torque-limit utilization, post-QP
 clipping residual, friction margin, QP residuals, falls, and realization
 failures.
 
-Current result: the fixed-support portion now passes, but the walking portion
-does not. The no-push standing trial completes 3.0 s without falling, and the
-three randomized-push standing trials all complete 3.0 s while detecting every
-injected push. After the benchmark was aligned with the faithful CoM-acceleration
-recovery used in H2 and a DCM lateral-sway stepping reference, the contact-switch
-trial carries five contact-mode switches before falling at 2.041 s, and the
-walking trial carries eight switches before falling at 1.889 s. Both failures
-occur with active torque limits, nonzero QP residual/fallback samples, and
-negative measured foot-floor friction margins; the dominant observed failure
-mode remains single-support balance authority rather than the old centered-CoM
-scaffold. Therefore the root-assisted walking video has not been replaced by a
-valid torque-level walking result. The next required implementation is a
+Current minimum-publishable result: the exact-realizer nominal transition
+sustains 0.551 s of measured left-foot single support with no fall or QP
+fallback. Across ten paired perturbed one-way transitions, ID-MPC and locally
+gain-matched PD-WBC each pass 5/10. ID-MPC reduces median RMS CoM error from
+47.4 to 37.9 mm, but has a larger peak recovery wrench-slack norm and no
+survival-rate advantage. A paired double–single–double development trial fails
+for both controllers. Therefore the root-assisted walking video has not been
+replaced by a valid torque-level walking result. The next required implementation is a
 production gait/contact realizer with hip/angular-momentum balance,
 capture-point step timing/placement adaptation, and stable support-mode control.
+
+Post-paper reliability development adds a measured lift-readiness dwell and
+planned payload-wrench compensation, identically for ID-MPC and PD-WBC. Frozen
+seeds 60–69 yield 8/10 versus 10/10 successful transitions; unseen seeds 70–79
+repeat 8/10 versus 10/10. All 40 adaptive controller trials avoid falls and QP
+fallbacks. The remaining ID-MPC failures are safe non-lift or insufficient
+single-support dwell under the heaviest payloads. This improves safety but does
+not support a robustness-advantage claim over PD-WBC.
+
+## Demo-Only Unitree Locomotion Track
+
+The walking/running demo should be built as:
+
+```text
+Unitree locomotion stack
+  -> walking / running / stopping / contact schedule / balance
+
+interaction-dynamics layer
+  -> body disturbance estimate
+  -> task disturbance estimate
+  -> planned-load preview
+  -> high-level CoM, trunk, or task-reference correction
+```
+
+Do not inject joint torques underneath Unitree's controller unless the chosen
+SDK/runtime explicitly exposes a safe torque/current mode. The preferred
+interface is high-level correction:
+
+- base velocity or lateral velocity correction;
+- pelvis/trunk pose or lean correction;
+- hand/task reference correction;
+- planned external-load compensation, if a wrench-aware interface exists.
+
+The demo package is:
+
+```text
+whole_body_control/versions/v3/unitree_locomotion_demo/
+```
+
+It defines four video scenes:
+
+| ID | Scene | Purpose |
+|---|---|---|
+| D0 | Unitree locomotion base only | establish walking/running baseline |
+| D1 | locomotion with push/load, layer off | show disturbance effect |
+| D2 | locomotion with same push/load, layer on | show interaction correction |
+| D3 | locomotion with planned load preview | show preview during loco-manipulation |
+
+Generate the demo videos locally from Unitree's open-source G1 MuJoCo policy:
+
+```bash
+cd whole_body_control/versions/v3/unitree_locomotion_demo
+mjpython scripts/generate_all_open_source_videos.py
+python3 scripts/verify_demo_package.py --require-generated
+```
+
+This produces:
+
+```text
+unitree_locomotion_demo/videos/unitree_base_only.mp4
+unitree_locomotion_demo/videos/unitree_push_layer_off.mp4
+unitree_locomotion_demo/videos/unitree_push_layer_on.mp4
+unitree_locomotion_demo/videos/unitree_load_preview.mp4
+unitree_locomotion_demo/results/unitree_locomotion_demo.mp4
+```
+
+## Implemented S2/S3 Smoke Gates
+
+The repository also includes two standing torque-actuated checks for the
+cross-port and event-detection hypotheses:
+
+```bash
+MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_h3_coupling_v2.py
+MPLCONFIGDIR=/private/tmp/mplconfig python3 whole_body_control/versions/v3/code/run_h4_detection.py
+```
+
+The S2/H3 check first gates unloaded standing across six perturbed seeds, then
+scores each loaded trajectory relative to its paired zero-load trajectory.
+External-wrench preview reduces the mean paired peak from 37.1 to 26.4 mm with
+no falls. For internal arm motion, the unified QP already includes the arm in
+the total CoM Jacobian: adding the reaction again increases the mean response
+from 7.7 to 82.9 mm and causes 3/6 falls. The verifier enforces this distinction.
+
+The S3/H4 check applies three scripted brace-contact intervals, yielding six
+onset/offset contact events. The detector uses only the body observer's
+normalized innovation and a quiet-window threshold; the scripted schedule is
+used only as the scoring oracle. After correcting the detector to count only
+independent observer updates, it produces 5 declarations, 2 matched events, 4
+misses, and 3 false positives. This is retained as a negative stress test.
 
 ## S3 Acceptance Gate
 
@@ -141,7 +249,7 @@ Otherwise use the hand-brace transition and name it accordingly.
 1. Torque-actuated G1 MJCF and physical-interface audit.
 2. Centroidal normalized MPC with fixed double support.
 3. Dual observers and S1.
-4. Arm-reaction preview and S2.
-5. Contact detector and S3 acceptance gate.
+4. Arm-reaction preview and S2 smoke gate.
+5. Contact detector and S3 brace-event smoke gate.
 6. Dynamic gait integration and S4.
 7. Active-constraint stress tests and final timing audit.

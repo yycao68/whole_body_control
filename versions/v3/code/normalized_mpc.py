@@ -13,6 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+import osqp
+import scipy.sparse as sp
 
 
 @dataclass
@@ -43,6 +45,133 @@ class NormalizedMPC:
             + [self.qf_vel if self.qf_vel is not None else self.q_vel] * n
         )
         self._build_lifted_matrices()
+        self._solver = None
+        self._poly_solver = None
+        self._H_poly = None
+        self._h_poly = None
+        self.last_polytope_failed = False
+        self._u_lower = None
+        self._u_upper = None
+        self.last_u_sequence = None
+        self.last_input_lower = None
+        self.last_input_upper = None
+        self.last_bound_active = False
+        if self.u_max is not None:
+            lim = np.asarray(self.u_max, dtype=float)
+            if lim.ndim == 0:
+                lim = np.full(self.dim, float(lim))
+            lim = lim.reshape(self.dim)
+            if np.any(~np.isfinite(lim)) or np.any(lim < 0.0):
+                raise ValueError("u_max must be finite and nonnegative")
+            self.update_input_box(-lim, lim)
+
+    def _setup_constrained_solver(self):
+        n_dec = self.horizon * self.dim
+        self._solver = osqp.OSQP()
+        self._solver.setup(
+            P=sp.csc_matrix(2.0 * (self.H + 1e-10 * np.eye(self.H.shape[0]))),
+            q=np.zeros(n_dec),
+            A=sp.eye(n_dec, format="csc"),
+            l=-np.inf * np.ones(n_dec),
+            u=np.inf * np.ones(n_dec),
+            verbose=False,
+            polish=False,
+            eps_abs=1e-7,
+            eps_rel=1e-7,
+            max_iter=1000,
+        )
+
+    def update_input_box(
+        self,
+        u_lower: np.ndarray | float,
+        u_upper: np.ndarray | float,
+    ) -> None:
+        """Set asymmetric residual-command bounds for the next MPC solve.
+
+        Each argument may be scalar, shape ``(dim,)`` for a box frozen over
+        the horizon, or shape ``(horizon, dim)`` for stage-scheduled boxes.
+        Updating these bounds does not rebuild the canonical model or Hessian.
+        """
+
+        def _stages(value: np.ndarray | float, name: str) -> np.ndarray:
+            arr = np.asarray(value, dtype=float)
+            if arr.ndim == 0:
+                arr = np.full((self.horizon, self.dim), float(arr))
+            elif arr.shape == (self.dim,):
+                arr = np.tile(arr, (self.horizon, 1))
+            elif arr.shape != (self.horizon, self.dim):
+                raise ValueError(
+                    f"{name} must be scalar, ({self.dim},), or "
+                    f"({self.horizon}, {self.dim})"
+                )
+            if np.any(~np.isfinite(arr)):
+                raise ValueError(f"{name} must contain only finite values")
+            return arr.copy()
+
+        lower = _stages(u_lower, "u_lower")
+        upper = _stages(u_upper, "u_upper")
+        if np.any(lower > upper):
+            raise ValueError("u_lower must not exceed u_upper")
+        self._u_lower = lower
+        self._u_upper = upper
+        if self._solver is None:
+            self._setup_constrained_solver()
+
+    def clear_input_box(self) -> None:
+        """Return to the unconstrained canonical predictor."""
+        self._u_lower = None
+        self._u_upper = None
+        self._H_poly = None
+        self._h_poly = None
+
+    def update_input_polytope(self, H: np.ndarray, h: np.ndarray) -> None:
+        """Constrain every horizon stage by the realization polytope H u <= h.
+
+        This is the general form of the residual-command constraint supplied by
+        the 1 kHz realizer (torque bounds, friction pyramid, unilateral force
+        mapped through the input sensitivity).  It is frozen over the short
+        horizon.  The canonical pair (A, B) and the condensed Hessian are NOT
+        touched -- only the constraint rows change, which is the whole point:
+        a contact transition switches the admissible geometry, not the dynamics.
+        """
+        H = np.atleast_2d(np.asarray(H, dtype=float))
+        h = np.asarray(h, dtype=float).reshape(-1)
+        if H.shape[1] != self.dim or H.shape[0] != h.size:
+            raise ValueError("H must be (n_con, dim) and h must be (n_con,)")
+        if not (np.all(np.isfinite(H)) and np.all(np.isfinite(h))):
+            raise ValueError("H and h must be finite")
+        rebuild = (
+            self._poly_solver is None
+            or self._H_poly is None
+            or self._H_poly.shape != H.shape
+        )
+        self._H_poly = H.copy()
+        self._h_poly = h.copy()
+        self._u_lower = None          # polytope supersedes the box
+        self._u_upper = None
+        # A = blockdiag(H, ..., H) has a FIXED pattern once H's shape is fixed, so
+        # it is built once and only its data is refreshed.  Rebuilding the
+        # block-diagonal every solve costs ~30 ms and would defeat the whole
+        # point of a fast predictor.  The pattern is pinned dense so that a zero
+        # entry in H cannot silently drop a column.
+        if rebuild:
+            n_dec = self.horizon * self.dim
+            pattern = sp.block_diag(
+                [sp.csc_matrix(np.ones(H.shape))] * self.horizon, format="csc")
+            self._poly_A = pattern
+            self._poly_solver = osqp.OSQP()
+            self._poly_solver.setup(
+                P=sp.csc_matrix(2.0 * (self.H + 1e-10 * np.eye(self.H.shape[0]))),
+                q=np.zeros(n_dec),
+                A=self._poly_A,
+                l=-np.inf * np.ones(self.horizon * H.shape[0]),
+                u=np.inf * np.ones(self.horizon * H.shape[0]),
+                verbose=False, polish=False,
+                eps_abs=1e-6, eps_rel=1e-6, max_iter=6000,
+            )
+        # CSC data of a dense (m, dim) block is column-major; block_diag just
+        # concatenates the blocks' data, so the whole array is one tile.
+        self._poly_solver.update(Ax=np.tile(H.flatten(order="F"), self.horizon))
 
     def _build_lifted_matrices(self):
         n_x = 2 * self.dim
@@ -72,6 +201,8 @@ class NormalizedMPC:
 
         self.Phi = Phi
         self.Gamma = Gamma
+        self.H = H
+        self.Qbar = Qbar
         self.K0 = K_lift[:n_u, :]
 
     def solve(self, x: np.ndarray, d_hat: np.ndarray | None = None) -> np.ndarray:
@@ -81,14 +212,60 @@ class NormalizedMPC:
             d_hat = np.zeros(self.dim)
         d_hat = np.asarray(d_hat, dtype=float).reshape(self.dim)
 
-        v0 = -self.K0 @ x
-        u0 = v0 - d_hat
-        if self.u_max is not None:
-            lim = np.asarray(self.u_max, dtype=float)
-            if lim.ndim == 0:
-                lim = np.full(self.dim, float(lim))
-            u0 = np.clip(u0, -lim, lim)
-        return u0
+        if self._H_poly is not None:
+            # Stagewise polytope on the physical command U: H u_j <= h.  With the
+            # input-centered variable V = U + d_hat this is H v_j <= h + H d_hat.
+            gradient = self.Gamma.T @ self.Qbar @ (self.Phi @ x)
+            ub = np.tile(self._h_poly + self._H_poly @ d_hat, self.horizon)
+            self._poly_solver.update(q=2.0 * gradient,
+                                     l=-np.inf * np.ones(ub.size), u=ub)
+            result = self._poly_solver.solve()
+            if result.x is None or result.info.status_val not in (1, 2):
+                # The fallback must itself be ADMISSIBLE.  -d_hat (the offset-free
+                # cancelling input) is not: it can lie outside H u <= h, and
+                # returning it would hand the realizer a command the contacts
+                # cannot produce -- exactly what this constraint exists to stop.
+                # u = 0 is always admissible whenever the nominal is feasible
+                # (then h >= 0), so fall back to it.
+                self.last_u_sequence = None
+                self.last_bound_active = False
+                self.last_polytope_failed = True
+                return np.zeros(self.dim)
+            self.last_polytope_failed = False
+            self.last_u_sequence = result.x.reshape(self.horizon, self.dim) - d_hat
+            u0 = result.x[:self.dim] - d_hat
+            slack = self._h_poly - self._H_poly @ u0
+            self.last_bound_active = bool(np.any(slack <= 1e-6))
+            return u0
+
+        if self._u_lower is None:
+            v0 = -self.K0 @ x
+            self.last_u_sequence = None
+            self.last_input_lower = None
+            self.last_input_upper = None
+            self.last_bound_active = False
+            return v0 - d_hat
+
+        # Optimize the complete input-centered horizon V.  The physical
+        # residual command is U = V - d_hat, so stagewise bounds on U become
+        # d_hat-lim <= V_j <= d_hat+lim at every horizon sample.
+        dbar = np.tile(d_hat, self.horizon)
+        lower = self._u_lower.reshape(-1)
+        upper = self._u_upper.reshape(-1)
+        gradient = self.Gamma.T @ self.Qbar @ (self.Phi @ x)
+        self._solver.update(q=2.0 * gradient, l=dbar + lower, u=dbar + upper)
+        result = self._solver.solve()
+        if result.x is None or result.info.status_val not in (1, 2):
+            raise RuntimeError(f"normalized MPC solve failed: {result.info.status}")
+        self.last_u_sequence = result.x.reshape(self.horizon, self.dim) - d_hat
+        self.last_input_lower = self._u_lower.copy()
+        self.last_input_upper = self._u_upper.copy()
+        tol = 5e-6
+        self.last_bound_active = bool(
+            np.any(self.last_u_sequence <= self._u_lower + tol)
+            or np.any(self.last_u_sequence >= self._u_upper - tol)
+        )
+        return result.x[:self.dim] - d_hat
 
 
 class RandomWalkDisturbanceObserver:
@@ -120,12 +297,15 @@ class RandomWalkDisturbanceObserver:
         y = np.asarray(y, dtype=float).reshape(self.dim)
         u = np.asarray(u, dtype=float).reshape(self.dim)
 
-        self.z = self.Aa @ self.z + self.Ba @ u
-        self.P = self.Aa @ self.P @ self.Aa.T + self.Q
-
+        # Correct the current prior with y_k, then propagate with u_k to form
+        # the prior for k+1.  This avoids comparing y_k against a state already
+        # advanced by the newly computed u_k.
         innovation = y - self.C @ self.z
         S = self.C @ self.P @ self.C.T + self.R
         K = self.P @ self.C.T @ np.linalg.inv(S)
         self.z = self.z + K @ innovation
         self.P = (np.eye(self.P.shape[0]) - K @ self.C) @ self.P
-        return self.z[2 * self.dim:].copy(), innovation
+        d_corrected = self.z[2 * self.dim:].copy()
+        self.z = self.Aa @ self.z + self.Ba @ u
+        self.P = self.Aa @ self.P @ self.Aa.T + self.Q
+        return d_corrected, innovation

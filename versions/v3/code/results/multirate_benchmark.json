@@ -1,0 +1,555 @@
+{
+  "rates": {
+    "realizer_hz": 1000,
+    "body_mpc_hz": 200,
+    "task_mpc_hz": 500
+  },
+  "realization_tolerance_mps2": 0.35,
+  "E1_realtime": {
+    "claim": "the 1 kHz loop solves exactly ONE whole-body QP per cycle",
+    "whole_body_qp_solves_per_cycle": {
+      "max": 1,
+      "mean": 1.0
+    },
+    "realizer_qp_ms": {
+      "median_ms": 2.0030625018989667,
+      "p99_ms": 3.019801750197075,
+      "max_ms": 6.1322499823290855,
+      "n": 800
+    },
+    "authority_kkt_ms": {
+      "median_ms": 0.3611249994719401,
+      "p99_ms": 0.7686808428843506,
+      "max_ms": 2.556166989961639,
+      "n": 800
+    },
+    "realization_cycle_ms": {
+      "median_ms": 2.4217085156124085,
+      "p99_ms": 3.595090075978077,
+      "max_ms": 8.290124969789758,
+      "n": 800
+    },
+    "body_mpc_ms": {
+      "median_ms": 13.38870800100267,
+      "p99_ms": 85.97808902122765,
+      "max_ms": 190.09987500612624,
+      "n": 160
+    },
+    "budget_ms": 1.0,
+    "cycle_median_within_budget": false,
+    "note": "Compare against the previous design, which ran a 62-QP ray-bisection authority search before every MPC update (~154 ms median)."
+  },
+  "E2_fixed_vs_mapped": {
+    "C1_fixed_box": {
+      "variant": "C1_fixed_box",
+      "rms_planar_error_mm": 42.13146091185033,
+      "median_residual": 1.2128574898171862,
+      "max_residual": 5.734537258946278,
+      "residual_over_tol_fraction": 0.85375,
+      "fell": false,
+      "qp_fallbacks": 0,
+      "body_constraint_sources": {
+        "fallback_box": 160
+      },
+      "max_abs_u": [
+        1.024,
+        4.0
+      ],
+      "diagnostics": {
+        "timing": {
+          "realizer": {
+            "median_ms": 1.9932295108446851,
+            "p99_ms": 4.09942301659612,
+            "max_ms": 7.883749989559874,
+            "n": 800
+          },
+          "authority_kkt": {
+            "median_ms": 0.000166997779160738,
+            "p99_ms": 0.0004159912350587547,
+            "max_ms": 0.0013339740689843893,
+            "n": 800
+          },
+          "realization_cycle": {
+            "median_ms": 1.9934380252379924,
+            "p99_ms": 4.099631441349629,
+            "max_ms": 7.883874990511686,
+            "n": 800
+          },
+          "body_mpc": {
+            "median_ms": 0.18520849698688835,
+            "p99_ms": 0.285915003332775,
+            "max_ms": 0.3517500008456409,
+            "n": 160
+          },
+          "task_mpc": null,
+          "whole_body_qp_solves_per_1khz_cycle": {
+            "max": 1,
+            "mean": 1.0
+          }
+        },
+        "body_solves": 160,
+        "task_solves": 0,
+        "stale_fallbacks": 0,
+        "mode_mismatch_fallbacks": 0,
+        "invalid_snapshots": 0,
+        "polytope_failures": 0,
+        "task_invalid_snapshots": 0
+      }
+    },
+    "C2_analytic_authority": {
+      "variant": "C2_analytic_authority",
+      "rms_planar_error_mm": 46.778661764172085,
+      "median_residual": 0.5599605210638592,
+      "max_residual": 2.8337415259231467,
+      "residual_over_tol_fraction": 0.6725,
+      "fell": false,
+      "qp_fallbacks": 0,
+      "body_constraint_sources": {
+        "fallback_box": 105,
+        "authority_polytope": 55
+      },
+      "max_abs_u": [
+        0.998,
+        4.0
+      ],
+      "diagnostics": {
+        "timing": {
+          "realizer": {
+            "median_ms": 1.919312504469417,
+            "p99_ms": 2.6992574334144583,
+            "max_ms": 9.033292008098215,
+            "n": 800
+          },
+          "authority_kkt": {
+            "median_ms": 0.3405210009077564,
+            "p99_ms": 0.7301791707868688,
+            "max_ms": 0.987374980468303,
+            "n": 800
+          },
+          "realization_cycle": {
+            "median_ms": 2.3301880137296394,
+            "p99_ms": 3.4602875993004996,
+            "max_ms": 9.430042002350092,
+            "n": 800
+          },
+          "body_mpc": {
+            "median_ms": 13.298166508320719,
+            "p99_ms": 82.75548823905397,
+            "max_ms": 184.3958749959711,
+            "n": 160
+          },
+          "task_mpc": null,
+          "whole_body_qp_solves_per_1khz_cycle": {
+            "max": 1,
+            "mean": 1.0
+          }
+        },
+        "body_solves": 160,
+        "task_solves": 0,
+        "stale_fallbacks": 0,
+        "mode_mismatch_fallbacks": 0,
+        "invalid_snapshots": 105,
+        "polytope_failures": 1,
+        "task_invalid_snapshots": 0
+      }
+    }
+  },
+  "E3_occupancy": {
+    "claim": "current feedforward, payload, arm reference and contact mode all move H_k, h_k; the canonical (A, B) and condensed Hessian never change",
+    "rows": [
+      {
+        "scenario": "double_support_nominal",
+        "contact_mode": [
+          "left",
+          "right"
+        ],
+        "valid": true,
+        "status": "ok",
+        "n_constraints": 106,
+        "axis_extent_lower": [
+          -1.425,
+          -0.902
+        ],
+        "axis_extent_upper": [
+          0.665,
+          0.881
+        ],
+        "axis_extent_area": 3.728,
+        "min_torque_margin_nm": 4.68,
+        "min_friction_margin_n": 22.81,
+        "min_normal_margin_n": 25.57,
+        "canonical_A_unchanged": true,
+        "canonical_B_unchanged": true,
+        "canonical_hessian_unchanged": true
+      },
+      {
+        "scenario": "double_support_payload",
+        "contact_mode": [
+          "left",
+          "right"
+        ],
+        "valid": true,
+        "status": "ok",
+        "n_constraints": 106,
+        "axis_extent_lower": [
+          -1.665,
+          -0.923
+        ],
+        "axis_extent_upper": [
+          0.692,
+          0.931
+        ],
+        "axis_extent_area": 4.371,
+        "min_torque_margin_nm": 4.26,
+        "min_friction_margin_n": 23.29,
+        "min_normal_margin_n": 26.38,
+        "canonical_A_unchanged": true,
+        "canonical_B_unchanged": true,
+        "canonical_hessian_unchanged": true
+      },
+      {
+        "scenario": "double_support_arm_reach",
+        "contact_mode": [
+          "left",
+          "right"
+        ],
+        "valid": true,
+        "status": "ok",
+        "n_constraints": 106,
+        "axis_extent_lower": [
+          -1.423,
+          -0.903
+        ],
+        "axis_extent_upper": [
+          0.667,
+          0.883
+        ],
+        "axis_extent_area": 3.733,
+        "min_torque_margin_nm": 4.69,
+        "min_friction_margin_n": 22.86,
+        "min_normal_margin_n": 25.62,
+        "canonical_A_unchanged": true,
+        "canonical_B_unchanged": true,
+        "canonical_hessian_unchanged": true
+      },
+      {
+        "scenario": "double_support_accel_ref",
+        "contact_mode": [
+          "left",
+          "right"
+        ],
+        "valid": true,
+        "status": "margin_exhausted (4 rows; 0 numerical)",
+        "n_constraints": 106,
+        "axis_extent_lower": [
+          -0.0,
+          -0.0
+        ],
+        "axis_extent_upper": [
+          0.022,
+          1.52
+        ],
+        "axis_extent_area": 0.034,
+        "min_torque_margin_nm": 4.66,
+        "min_friction_margin_n": 0.0,
+        "min_normal_margin_n": -1.0,
+        "canonical_A_unchanged": true,
+        "canonical_B_unchanged": true,
+        "canonical_hessian_unchanged": true
+      },
+      {
+        "scenario": "single_support_left",
+        "contact_mode": [
+          "left"
+        ],
+        "valid": false,
+        "status": "nominal realization residual exceeds tolerance",
+        "n_constraints": 0,
+        "axis_extent_lower": [
+          0.0,
+          0.0
+        ],
+        "axis_extent_upper": [
+          0.0,
+          0.0
+        ],
+        "axis_extent_area": 0.0,
+        "min_torque_margin_nm": null,
+        "min_friction_margin_n": null,
+        "min_normal_margin_n": null,
+        "canonical_A_unchanged": true,
+        "canonical_B_unchanged": true,
+        "canonical_hessian_unchanged": true
+      }
+    ],
+    "all_canonical_invariant": true
+  },
+  "E4_contact_switch": {
+    "exact_authority": {
+      "variant": "exact_authority",
+      "authority_source": "exact",
+      "fell": false,
+      "qp_fallbacks": 0,
+      "lift_authorized": true,
+      "lift_time_s": 1.4000000000000001,
+      "single_support_s": 1.1520000000000457,
+      "foot_lift_m": 0.033423382328177625,
+      "max_roll_pitch_rad": 0.5590585570971328,
+      "rms_planar_error_mm": 32.16450793211166,
+      "max_realization_residual": 0.9859989714964793,
+      "authority_valid_fraction": 0.9047619047619048,
+      "active_query_ms_median": 126.66560399520677,
+      "active_query_whole_body_qp_solves": 65,
+      "canonical_matrices_bitwise_invariant": true
+    },
+    "analytic_authority": {
+      "variant": "analytic_authority",
+      "authority_source": "analytic",
+      "fell": true,
+      "qp_fallbacks": 0,
+      "lift_authorized": true,
+      "lift_time_s": 1.4000000000000001,
+      "single_support_s": 0.864999999999905,
+      "foot_lift_m": 0.08021997227806953,
+      "max_roll_pitch_rad": 0.850975354296351,
+      "rms_planar_error_mm": 30.098905311746265,
+      "max_realization_residual": 1.0914818593031352,
+      "authority_valid_fraction": 0.7413793103448276,
+      "active_query_ms_median": 0.1533954928163439,
+      "active_query_whole_body_qp_solves": 0,
+      "canonical_matrices_bitwise_invariant": true
+    },
+    "continuation_authority": {
+      "variant": "continuation_authority",
+      "authority_source": "continuation",
+      "fell": false,
+      "qp_fallbacks": 0,
+      "lift_authorized": true,
+      "lift_time_s": 1.4000000000000001,
+      "single_support_s": 1.1420000000000454,
+      "foot_lift_m": 0.035842790626148646,
+      "max_roll_pitch_rad": 0.5519394195921605,
+      "rms_planar_error_mm": 32.48343923010637,
+      "max_realization_residual": 1.1161020358209146,
+      "authority_valid_fraction": 0.9166666666666666,
+      "active_query_ms_median": 13.616375494166277,
+      "active_query_whole_body_qp_solves": 0,
+      "canonical_matrices_bitwise_invariant": true
+    }
+  },
+  "E6_task_weight_sweep": {
+    "claim": "the task port is only a faithful port above a weight threshold; the body port is unaffected",
+    "rows": [
+      {
+        "task_weight": 6.0,
+        "body_residual": 0.0016,
+        "task_residual": 1.834,
+        "task_set_valid": false,
+        "task_set_status": "nominal task residual exceeds tolerance"
+      },
+      {
+        "task_weight": 80.0,
+        "body_residual": 0.0018,
+        "task_residual": 0.228,
+        "task_set_valid": true,
+        "task_set_status": "ok"
+      },
+      {
+        "task_weight": 800.0,
+        "body_residual": 0.0018,
+        "task_residual": 0.11,
+        "task_set_valid": true,
+        "task_set_status": "ok"
+      },
+      {
+        "task_weight": 2000.0,
+        "body_residual": 0.0017,
+        "task_residual": 0.064,
+        "task_set_valid": true,
+        "task_set_status": "ok"
+      },
+      {
+        "task_weight": 8000.0,
+        "body_residual": 0.0017,
+        "task_residual": 0.021,
+        "task_set_valid": true,
+        "task_set_status": "ok"
+      },
+      {
+        "task_weight": 30000.0,
+        "body_residual": 0.0017,
+        "task_residual": 0.006,
+        "task_set_valid": true,
+        "task_set_status": "ok"
+      }
+    ]
+  },
+  "E6_task_port": {
+    "fixed_box_no_observer": {
+      "task_authority": "fixed_box",
+      "observer": false,
+      "ss_hand_error_mm": 364.5,
+      "ss_com_error_mm": 4.7,
+      "median_task_residual": 0.045,
+      "task_solves": 1500,
+      "whole_body_qp_per_cycle": 1,
+      "task_mpc_ms": {
+        "median_ms": 0.21456250397022814,
+        "p99_ms": 0.35845198988681654,
+        "max_ms": 0.7897499890532345,
+        "n": 1500
+      }
+    },
+    "fixed_box_observer": {
+      "task_authority": "fixed_box",
+      "observer": true,
+      "ss_hand_error_mm": 26.0,
+      "ss_com_error_mm": 3.2,
+      "median_task_residual": 0.049,
+      "task_solves": 1500,
+      "whole_body_qp_per_cycle": 1,
+      "task_mpc_ms": {
+        "median_ms": 0.211187987588346,
+        "p99_ms": 0.33124008332379157,
+        "max_ms": 3.7950830010231584,
+        "n": 1500
+      }
+    },
+    "mapped_no_observer": {
+      "task_authority": "mapped",
+      "observer": false,
+      "ss_hand_error_mm": 366.2,
+      "ss_com_error_mm": 68.6,
+      "median_task_residual": NaN,
+      "task_solves": 1500,
+      "whole_body_qp_per_cycle": 1,
+      "task_mpc_ms": {
+        "median_ms": 6.433833506889641,
+        "p99_ms": 130.45764843438513,
+        "max_ms": 305.41649999213405,
+        "n": 1500
+      }
+    },
+    "mapped_observer": {
+      "task_authority": "mapped",
+      "observer": true,
+      "ss_hand_error_mm": 502.6,
+      "ss_com_error_mm": 148.2,
+      "median_task_residual": NaN,
+      "task_solves": 1500,
+      "whole_body_qp_per_cycle": 1,
+      "task_mpc_ms": {
+        "median_ms": 6.5676874946802855,
+        "p99_ms": 279.59573582629673,
+        "max_ms": 282.0144579745829,
+        "n": 1500
+      }
+    },
+    "hand_offset_reduction_x": 14.0,
+    "hand_force_N": 5.0,
+    "claim": "the canonical task port rejects a sustained hand force offset-free (observer on vs off); the analytic task authority is too conservative to permit it -- the same single-active-set conservatism that blocks single-support balance. Zero extra whole-body QP solves either way."
+  },
+  "E5_mapping_fidelity": {
+    "claim": "analytic mapping graded against exact-QP bisection",
+    "rows": [
+      {
+        "scenario": "double_support_nominal",
+        "grid": "21x21 over [-3.0,3.0]^2",
+        "analytic": {
+          "ms": 0.655,
+          "whole_body_qp": 0,
+          "kkt": 1,
+          "true_positive": 35,
+          "true_negative": 105,
+          "false_positive": 0,
+          "false_negative": 301,
+          "false_positive_rate": 0.0,
+          "false_negative_rate": 0.6825
+        },
+        "continuation": {
+          "ms": 15.79,
+          "whole_body_qp": 0,
+          "kkt": 97,
+          "true_positive": 336,
+          "true_negative": 105,
+          "false_positive": 0,
+          "false_negative": 0,
+          "false_positive_rate": 0.0,
+          "false_negative_rate": 0.0
+        },
+        "exact_oracle": {
+          "ms": 151.2,
+          "whole_body_qp": 62,
+          "box_lower": [
+            -2.777,
+            -3.479
+          ],
+          "box_upper": [
+            1.831,
+            3.51
+          ]
+        },
+        "continuation_box_lower": [
+          -2.849,
+          -3.591
+        ],
+        "continuation_box_upper": [
+          1.894,
+          3.599
+        ],
+        "continuation_vs_oracle_max_boundary_error": 0.112,
+        "speedup_continuation_over_oracle": 9.6,
+        "note": "false positives are the safety-relevant error. The 1-cell analytic map is sound but refuses ~68% of feasible commands; PWA continuation recovers them with zero extra whole-body QP solves."
+      },
+      {
+        "scenario": "double_support_payload",
+        "grid": "21x21 over [-3.0,3.0]^2",
+        "analytic": {
+          "ms": 0.575,
+          "whole_body_qp": 0,
+          "kkt": 1,
+          "true_positive": 46,
+          "true_negative": 84,
+          "false_positive": 0,
+          "false_negative": 311,
+          "false_positive_rate": 0.0,
+          "false_negative_rate": 0.7052
+        },
+        "continuation": {
+          "ms": 16.73,
+          "whole_body_qp": 0,
+          "kkt": 97,
+          "true_positive": 357,
+          "true_negative": 84,
+          "false_positive": 0,
+          "false_negative": 0,
+          "false_positive_rate": 0.0,
+          "false_negative_rate": 0.0
+        },
+        "exact_oracle": {
+          "ms": 149.5,
+          "whole_body_qp": 62,
+          "box_lower": [
+            -3.082,
+            -3.784
+          ],
+          "box_upper": [
+            1.831,
+            3.845
+          ]
+        },
+        "continuation_box_lower": [
+          -3.191,
+          -3.902
+        ],
+        "continuation_box_upper": [
+          1.896,
+          3.942
+        ],
+        "continuation_vs_oracle_max_boundary_error": 0.118,
+        "speedup_continuation_over_oracle": 8.9,
+        "note": "false positives are the safety-relevant error. The 1-cell analytic map is sound but refuses ~68% of feasible commands; PWA continuation recovers them with zero extra whole-body QP solves."
+      }
+    ]
+  }
+}

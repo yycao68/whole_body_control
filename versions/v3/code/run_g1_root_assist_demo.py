@@ -624,6 +624,9 @@ def main():
         json.dump(summary, f, indent=2)
     np.savez_compressed(RESULTS / f"{prefix}_log.npz", **log)
     save_plot(log, summary, RESULTS / f"{prefix}.png")
+    if not args.push and abs(args.duration - 10.0) < 1e-9 and abs(args.distance - 10.8) < 1e-9:
+        # Paper-facing alias for the canonical 1.2 m/s, 10 s visualization.
+        save_plot(log, summary, RESULTS / "g1_walk_10s_1p2ms.png")
     print(json.dumps(summary, indent=2))
     print(f"saved: {RESULTS / f'{prefix}_summary.json'}")
     print(f"saved: {RESULTS / f'{prefix}_log.npz'}")

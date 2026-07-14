@@ -3,8 +3,10 @@
 
 Runs the full reproducibility suite for the paper
 "Interaction Dynamics for Floating-Base Whole-Body Manipulation" in a fixed
-order, regenerating every artifact under ``results/`` that the paper figures
-and ``verify_v3_artifacts.py`` depend on, then runs the verifier.
+order, regenerating every artifact the paper cites, then runs
+``verify_paper_claims.py``.
+
+
 
 Usage:
     python3 run_all.py                # run everything, then verify
@@ -29,21 +31,18 @@ HERE = Path(__file__).resolve().parent
 # (label, [script, *args]) in deterministic execution order. The two torque
 # invocations mirror the documented stand / stand_push smoke gates (H2-H5).
 STEPS: list[tuple[str, list[str]]] = [
-    ("H1 multi-robot predictor invariance", ["run_h1_multirobot.py"]),
-    ("H1/H2 equivalence + offset-free regulation", ["run_h1_h2.py"]),
-    ("H3 arm-reaction preview", ["run_h3_coupling.py"]),
-    ("H4 contact-event detection", ["run_h4_detection.py"]),
-    ("H5 constraint recovery", ["run_h5_constraints.py"]),
-    ("H6 interaction layer on a moving base", ["run_h6_onbase.py"]),
-    ("Torque realizer smoke (stand)",
-     ["run_g1_torque_realizer_benchmark.py", "--scenario", "stand",
-      "--duration", "3.0", "--trials", "1", "--seed", "31"]),
-    ("Torque realizer smoke (stand_push)",
-     ["run_g1_torque_realizer_benchmark.py", "--scenario", "stand_push",
-      "--duration", "3.0", "--trials", "3", "--seed", "21"]),
-    ("Root-assisted walking visualization (Appendix A.1)",
-     ["run_g1_root_assist_demo.py"]),
+    # --- the paper's pipeline -------------------------------------------------
+    ("E1-E5 multirate architecture benchmark", ["run_multirate_benchmarks.py"]),
+    ("E4 support transition, exact-query authority",
+     ["run_authority_transition.py", "--authority", "exact",
+      "--trials", "4", "--seed", "100"]),
+    ("E4 support transition, analytic KKT authority (expected negative)",
+     ["run_authority_transition.py", "--authority", "analytic",
+      "--trials", "4", "--seed", "100"]),
+
 ]
+
+
 
 
 def _env() -> dict[str, str]:
@@ -84,7 +83,7 @@ def main() -> int:
                 return 1
 
     if not args.skip_verify and not failures:
-        if not run_step("Verify artifacts", ["verify_v3_artifacts.py"]):
+        if not run_step("Verify artifacts", ["verify_paper_claims.py"]):
             failures.append("Verify artifacts")
 
     print("\n" + "=" * 60)
