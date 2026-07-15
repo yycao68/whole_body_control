@@ -502,7 +502,13 @@ class InverseDynamicsQPRealizer:
             solver.setup(
                 P=Pcsc, q=q, A=Acsc, l=l, u=u,
                 verbose=False, polish=True,
-                eps_abs=1e-4, eps_rel=1e-4, max_iter=2000, adaptive_rho=True,
+                # The authority estimators identify the active set from this
+                # solve's duals with a 1e-6 bound test.  At eps=1e-4 that test
+                # sits BELOW the solver's own noise floor, and the identified
+                # active set flips with the warm start (2 vs 14 weakly-active
+                # rows on the same problem).  1e-8 makes it warm-start
+                # independent at no measurable cost (QP ~2.1 ms either way).
+                eps_abs=1e-8, eps_rel=1e-8, max_iter=20000, adaptive_rho=True,
             )
             pr_ = Pcsc.indices
             pc_ = np.repeat(np.arange(n), np.diff(Pcsc.indptr))

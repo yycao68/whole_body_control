@@ -308,6 +308,19 @@ class AnalyticAuthorityMapper:
         H = np.vstack(rows)
         h = np.asarray(bounds, dtype=float)
 
+        # Prune rows that CANNOT bind.  A row H_i u <= h_i is unreachable within
+        # the command range if h_i exceeds the largest value H_i u can take over
+        # ||u||_inf <= absolute_limit, i.e. if h_i > |H_i|_1 * u_max.  Most of the
+        # ~100 torque/friction rows are of this kind (huge margins), and keeping
+        # them costs real time: the predictor lifts every row over its horizon,
+        # so 102 rows x 25 stages = 2550 constraints in its QP.  Pruning is exact
+        # -- it removes only rows that are vacuous on the admissible range.
+        reach = np.abs(H).sum(axis=1) * self.absolute_limit
+        keep = h <= reach + 1e-9
+        n_pruned = int((~keep).sum())
+        if keep.any():
+            H, h = H[keep], h[keep]
+
         # h_k < 0 handling.  Clamping such a row to H_i u <= 0 RELAXES the
         # linearized margined row (u = 0 violated it), so the set is no longer
         # conservative *by construction* against the margined limits.  It is

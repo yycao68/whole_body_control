@@ -1,35 +1,37 @@
 """Multirate interaction-dynamics controller.
 
-The architecture this module implements, and the one the paper now claims:
+The architecture, corrected. An earlier version put the whole-body QP inside a
+1 kHz loop.  It does not fit: the QP alone is ~2 ms.  The rates are therefore
 
-    1 kHz   realization loop  (never blocks, never waits)
-              - update M, h, J_c, J_t and the nominal feedforward
-              - solve exactly ONE whole-body inverse-dynamics QP
-              - emit joint torques
-              - publish a RealizationAuthority snapshot (tau_ff, lambda_ff,
-                K_tau, K_lambda, H_k, h_k, margins) from one KKT sensitivity
+    1 kHz   JOINT SERVO (JointServo)
+              - holds the latest optimized command (zero-order hold)
+              - tau = tau_star + Kq (q_d - q) + Dq (qd_d - qd)
+              - no optimization, no model update: this is the only loop that
+                must actually close at 1 kHz, and it does
 
-    100-200 Hz  body predictor   (asynchronous)
-    200-500 Hz  task predictor   (asynchronous)
-              - canonical model x+ = A x + B (u + d_hat), (A, B) CONSTANT
-              - constrained by the latest published H_k u <= h_k
-              - publish u*; the 1 kHz loop uses the last valid command and
-                never waits for a new one
+    200 Hz  OPTIMIZATION NODE (OptimizationNode), one real-time thread,
+            executed SEQUENTIALLY so both predictors and the realizer see the
+            same synchronized state:
+              1. read (q, qdot, contacts)
+              2. update M, h, J_c, J_t and the nominal feedforward
+              3. run the disturbance observers
+              4. solve the body predictor          (canonical, constant (A,B))
+              5. solve the task predictor          (on the capacity the body left)
+              6. solve ONE whole-body realization QP
+              7. publish tau* and the joint reference to the servo
+            Measured: ~2.8 ms of a 5 ms budget with the single-cell authority.
 
-The predictors are slow consumers of a fast producer.  A stale snapshot, or one
-taken in a different contact mode, is NOT used and NOT waited on: the predictor
-falls back to a conservative fixed box.  The whole-body QP remains the final
-hard constraint layer, because H_k u <= h_k is only a local (active-set-cell)
-model of what the realizer can do.
+    ~50 Hz  AUTHORITY REFRESH (asynchronous, lower priority)
+              - the PWA continuation costs ~16 ms and does NOT fit 200 Hz.
+              - it is therefore refreshed off the critical path; the node uses
+                the most recent set, and falls back to a conservative fixed box
+                if that set is stale or was taken in a different contact mode.
 
-Body-priority allocation (Phase 1 of the design): the body predictor is solved
-first against its own constraints; the task predictor then receives the
-*remaining* capacity h_t - H_tb u_b*, so the two ports never both assume they
-own the full actuator/contact budget.
-
-In simulation the three rates are realized by decimation of the 1 ms step, not
-by OS threads.  Wall-clock compute time of each component is measured, so the
-deadline margin is reported rather than assumed.
+The two predictors share one state read, one model update, and one set of
+prediction matrices.  They remain functionally distinct -- the body port
+predicts centroidal interaction, the task port hand interaction -- but they are
+solved in sequence in the same node, not as two asynchronous consumers of stale
+data.  The dependency is explicit: u_b(k) -> u_t(k) -> tau(k).
 """
 
 from __future__ import annotations
@@ -49,11 +51,23 @@ from realization_authority import (
 
 @dataclass
 class RateConfig:
-    sim_dt: float = 0.001            # 1 kHz realization loop
-    body_dt: float = 0.005           # 200 Hz body predictor
-    task_dt: float = 0.002           # 500 Hz task predictor
+    servo_dt: float = 0.001          # 1 kHz joint servo (ZOH + PD), no optimization
+    node_dt: float = 0.005           # 200 Hz optimization node (predictors + WBC QP)
+    authority_dt: float = 0.020      # ~50 Hz asynchronous authority refresh
     max_snapshot_age: float = 0.040  # older than this -> conservative fallback
-    authority_dt: float = 0.020      # authority refresh period (asynchronous, ~50 Hz)
+
+    # backward-compatible aliases
+    @property
+    def sim_dt(self) -> float:
+        return self.servo_dt
+
+    @property
+    def body_dt(self) -> float:
+        return self.node_dt
+
+    @property
+    def task_dt(self) -> float:
+        return self.node_dt
 
 
 @dataclass
@@ -63,6 +77,7 @@ class Timing:
     body_mpc_ms: list[float] = field(default_factory=list)
     task_mpc_ms: list[float] = field(default_factory=list)
     qp_solves_per_cycle: list[int] = field(default_factory=list)
+    node_ms: list[float] = field(default_factory=list)
 
     def summary(self) -> dict:
         def stat(v):
@@ -82,11 +97,55 @@ class Timing:
             "realization_cycle": stat(list(cyc)),
             "body_mpc": stat(self.body_mpc_ms),
             "task_mpc": stat(self.task_mpc_ms),
-            "whole_body_qp_solves_per_1khz_cycle": {
+            "optimization_node": stat(self.node_ms),
+            "whole_body_qp_solves_per_node_update": {
                 "max": int(max(self.qp_solves_per_cycle)) if self.qp_solves_per_cycle else 0,
                 "mean": float(np.mean(self.qp_solves_per_cycle)) if self.qp_solves_per_cycle else 0.0,
             },
         }
+
+
+class JointServo:
+    """1 kHz joint servo.  Zero-order-holds the last optimized command.
+
+    This is the only loop that must actually close at 1 kHz, and it can: it
+    performs no optimization and no model update.  Between optimization updates
+    it holds tau* and tracks the joint reference the node published,
+
+        tau = tau_star + Kq (q_d - q) + Dq (qd_d - qd),
+
+    which is what keeps the joints stiff at 1 kHz while the optimizer runs at
+    200 Hz.  Reporting this loop and the optimization node as one 1 kHz loop --
+    as an earlier version of this controller did -- is simply wrong: the
+    whole-body QP alone costs ~2 ms.
+    """
+
+    def __init__(self, realizer, *, kp: float = 0.0, kd: float = 0.0):
+        self.realizer = realizer
+        self.kp = float(kp)
+        self.kd = float(kd)
+        self.tau_star = None          # last optimized torque (ZOH)
+        self.q_des = None
+        self.qd_des = None
+        self.n_holds = 0              # servo ticks served from a held command
+
+    def publish(self, tau_star, q_des, qd_des) -> None:
+        """Called by the optimization node at 200 Hz."""
+        self.tau_star = np.asarray(tau_star, float).copy()
+        self.q_des = None if q_des is None else np.asarray(q_des, float).copy()
+        self.qd_des = None if qd_des is None else np.asarray(qd_des, float).copy()
+
+    def step(self, model, data) -> np.ndarray | None:
+        """Called every 1 ms.  No optimization here."""
+        if self.tau_star is None:
+            return None
+        tau = self.tau_star
+        if self.kp > 0.0 and self.q_des is not None:
+            q, qd = self.realizer.joint_state(data)
+            tau = tau + self.kp * (self.q_des - q) + self.kd * (self.qd_des - qd)
+        data.ctrl[self.realizer.ctrl_id] = tau
+        self.n_holds += 1
+        return tau
 
 
 class MultirateInteractionController:
@@ -135,6 +194,11 @@ class MultirateInteractionController:
         self.u_body = np.zeros(2)
         self.u_task = np.zeros(3)
 
+        self.servo = JointServo(realizer)
+        self._last_node_t = -np.inf
+        self.n_node_updates = 0
+        self.n_servo_ticks = 0
+        self.n_deadline_miss = 0
         self.timing = Timing()
         self.n_body_solves = 0
         self.n_task_solves = 0
@@ -200,13 +264,28 @@ class MultirateInteractionController:
         swing_task: dict | None = None,
         attitude_weight: float = 60.0,
     ) -> dict:
-        """Run one 1 kHz realization cycle, plus any predictor due this tick."""
+        """One servo tick (1 kHz).  The optimization node runs on its own 200 Hz
+        sub-schedule; between node updates the servo simply holds the last
+        optimized command, which is the whole point of the rate separation."""
         R = self.rates
-        info = {"body_source": None, "body_solved": False, "task_solved": False}
+        info = {"body_source": None, "body_solved": False, "task_solved": False,
+                "node_ran": False}
 
-        # ---- asynchronous body predictor (uses the LAST published snapshot) --
-        if t - self._last_body_t >= R.body_dt - 1e-12:
-            self._last_body_t = t
+        # ---- not a node tick: 1 kHz servo holds the last optimized command ----
+        if t - self._last_node_t < R.node_dt - 1e-12:
+            self.servo.step(model, data)
+            self.n_servo_ticks += 1
+            info["residual"] = float(self.realizer.last_body_acc_residual)
+            info["fallback"] = bool(self.realizer.last_fallback)
+            return info
+
+        self._last_node_t = t
+        self.n_node_updates += 1
+        info["node_ran"] = True
+        t_node0 = time.perf_counter()
+
+        # ---- body predictor: step 4 of the node, sequential, same state --------
+        if True:
             t0 = time.perf_counter()
             src = self._apply_body_constraints(t, stance)
             d_b, _ = self.body_obs.step(np.asarray(body_error, float)[:2], self.u_body)
@@ -218,10 +297,8 @@ class MultirateInteractionController:
             info["body_source"] = src
             info["body_solved"] = True
 
-        # ---- asynchronous task predictor, body-priority remaining capacity ---
-        if (self.task_mpc is not None and task_error is not None
-                and t - self._last_task_t >= R.task_dt - 1e-12):
-            self._last_task_t = t
+        # ---- task predictor: step 5, on the capacity the body just committed --
+        if self.task_mpc is not None and task_error is not None:
             t0 = time.perf_counter()
             src = "fallback_box"
             if self.use_authority and self.task_snapshot is not None \
@@ -252,7 +329,7 @@ class MultirateInteractionController:
             task_acc_des = task_acc_des + self.u_task
 
         t0 = time.perf_counter()
-        tau = self.realizer.command(
+        tau, _tau_unsat, _sat = self.realizer.command(
             model, data, q_ref, qd_ref, com_acc_des[:2], task_acc_des, hand_jac,
             stance_contacts, stance_targets, base_height_ref, rpy,
             com_acc_des=com_acc_des, swing_task=swing_task,
@@ -282,13 +359,27 @@ class MultirateInteractionController:
                 )
         self.timing.authority_ms.append((time.perf_counter() - t0) * 1e3)
 
+        # ---- step 7: publish the optimized command to the 1 kHz servo ---------
+        self.servo.publish(tau, None, None)
+        self.n_servo_ticks += 1
+
+        node_ms = (time.perf_counter() - t_node0) * 1e3
+        self.timing.node_ms.append(node_ms)
+        if node_ms > 1000.0 * R.node_dt:
+            self.n_deadline_miss += 1
+
         info["fallback"] = bool(self.realizer.last_fallback)
         info["residual"] = float(self.realizer.last_body_acc_residual)
+        info["node_ms"] = node_ms
         return info
 
     def diagnostics(self) -> dict:
         return {
             "timing": self.timing.summary(),
+            "node_updates": self.n_node_updates,
+            "servo_ticks": self.n_servo_ticks,
+            "servo_holds": self.servo.n_holds,
+            "node_deadline_misses": self.n_deadline_miss,
             "body_solves": self.n_body_solves,
             "task_solves": self.n_task_solves,
             "stale_fallbacks": self.n_stale_fallbacks,

@@ -147,21 +147,68 @@ def lateral_step_run(use_authority: bool, *, rates: RateConfig,
 # ---------------------------------------------------------------------------
 
 def e1_realtime(rates: RateConfig) -> dict:
-    r = lateral_step_run(True, rates=rates)
-    d = r["diagnostics"]["timing"]
-    cyc = d["realization_cycle"]
+    # A REPRESENTATIVE controller, not the deliberately-aggressive E2 stress
+    # predictor: nominal gains, short horizon, and both ports active -- the
+    # configuration a deployment would actually run.  E2's high-gain predictor
+    # exists to make a fixed box overshoot and is not a real-time reference.
+    model, data, torso, hand_sid, hr = settle_model()
+    realizer = InverseDynamicsQPRealizer(model, exact_realizer=True)
+    ctrl = MultirateInteractionController(
+        realizer, rates=rates,
+        body_mpc=NormalizedMPC(dim=2, dt=rates.node_dt, horizon=10,
+                               q_pos=55.0, q_vel=12.0, r=0.08),
+        task_mpc=NormalizedMPC(dim=3, dt=rates.node_dt, horizon=10,
+                               q_pos=800.0, q_vel=40.0, r=0.05),
+        body_obs=RandomWalkDisturbanceObserver(dim=2, dt=rates.node_dt, q_d=0.05, r_y=1.5e-4),
+        task_obs=RandomWalkDisturbanceObserver(dim=3, dt=rates.node_dt, q_d=0.04, r_y=2.0e-4),
+        mapper=AnalyticAuthorityMapper(), use_authority=True)
+    R = ctrl.realizer
+    stance = ("left", "right")
+    com0 = robot_com(model, data)
+    targets = {k: p.copy() for k, (p, _) in R.contact_points(model, data, stance).items()}
+    hand0, _, _ = hand_state(model, data, hand_sid)
+    for k in range(int(round(3.0 / rates.servo_dt))):
+        t = k * rates.servo_dt
+        com = robot_com(model, data); vel = com_velocity(model, data, R.root_body)
+        rpy = roll_pitch_yaw_from_body(data, torso)
+        hp, hv, hj = hand_state(model, data, hand_sid)
+        ctrl.step(model, data, t,
+                  q_ref=TORQUE_STAND_CTRL.copy(), qd_ref=np.zeros(model.nu),
+                  com_ref_acc=np.zeros(3), body_error=np.r_[com[:2] - com0[:2], vel[:2]],
+                  stance=stance, stance_contacts=R.contact_points(model, data, stance),
+                  stance_targets=targets, base_height_ref=hr, rpy=rpy, hand_jac=hj,
+                  task_acc_ref=np.zeros(3), task_error=np.r_[hp - hand0, hv])
+        mujoco.mj_step(model, data); mujoco.mj_forward(model, data)
+    diag = ctrl.diagnostics()
+    d = diag["timing"]
+    node = d["optimization_node"]
+    budget = 1000.0 * rates.node_dt
     return {
-        "claim": "the 1 kHz loop solves exactly ONE whole-body QP per cycle",
-        "whole_body_qp_solves_per_cycle": d["whole_body_qp_solves_per_1khz_cycle"],
-        "realizer_qp_ms": d["realizer"],
-        "authority_kkt_ms": d["authority_kkt"],
-        "realization_cycle_ms": cyc,
-        "body_mpc_ms": d["body_mpc"],
-        "budget_ms": 1000.0 * rates.sim_dt,
-        "cycle_median_within_budget": bool(cyc["median_ms"] < 1000.0 * rates.sim_dt),
+        "claim": ("a 1 kHz servo holds the last optimized command; a 200 Hz "
+                  "optimization node solves EXACTLY ONE whole-body QP per update"),
+        "servo_hz": int(round(1.0 / rates.servo_dt)),
+        "node_hz": int(round(1.0 / rates.node_dt)),
+        "authority_hz": int(round(1.0 / rates.authority_dt)),
+        "servo_ticks": diag["servo_ticks"],
+        "node_updates": diag["node_updates"],
+        "whole_body_qp_solves_per_node_update": d["whole_body_qp_solves_per_node_update"],
+        "node_ms": node,
+        "node_budget_ms": budget,
+        "node_deadline_misses": diag["node_deadline_misses"],
+        "node_deadline_miss_fraction": round(
+            diag["node_deadline_misses"] / max(diag["node_updates"], 1), 4),
+        "component_ms": {
+            "whole_body_qp": d["realizer"],
+            "authority_kkt": d["authority_kkt"],
+            "body_predictor": d["body_mpc"],
+            "task_predictor": d.get("task_mpc"),
+        },
         "note": (
-            "Compare against the previous design, which ran a 62-QP ray-bisection "
-            "authority search before every MPC update (~154 ms median)."
+            "The whole-body QP (~2.4 ms, of which only ~0.3 ms is the OSQP solve; "
+            "the rest is Python matrix assembly) does not fit a 1 kHz cycle, which "
+            "is why the QP runs in the 200 Hz node and a torque servo runs at 1 kHz. "
+            "Compare against the previous design, whose 62-QP authority search cost "
+            "~154 ms per update."
         ),
     }
 
@@ -363,7 +410,7 @@ def e6_task_port(rates: RateConfig, *, hand_force_n: float = 5.0,
                 ss_com_error_mm=round(float(np.mean(be)), 1),
                 median_task_residual=round(float(np.median(tr)), 3),
                 task_solves=d["task_solves"],
-                whole_body_qp_per_cycle=d["timing"]["whole_body_qp_solves_per_1khz_cycle"]["max"],
+                whole_body_qp_per_cycle=d["timing"]["whole_body_qp_solves_per_node_update"]["max"],
                 task_mpc_ms=d["timing"]["task_mpc"],
             )
     out["hand_offset_reduction_x"] = round(
@@ -498,7 +545,7 @@ def e5_mapping_fidelity(n_grid: int = 21, span: float = 3.0) -> dict:
 # ---------------------------------------------------------------------------
 
 def main():
-    rates = RateConfig(sim_dt=0.001, body_dt=0.005, task_dt=0.002)
+    rates = RateConfig(servo_dt=0.001, node_dt=0.005, authority_dt=0.020)
     out = {"rates": {"realizer_hz": 1000, "body_mpc_hz": int(1 / rates.body_dt),
                      "task_mpc_hz": int(1 / rates.task_dt)},
            "realization_tolerance_mps2": TOL}
@@ -506,9 +553,12 @@ def main():
     print("E1 real-time budget ...")
     out["E1_realtime"] = e1_realtime(rates)
     t = out["E1_realtime"]
-    print("   1 kHz cycle median %.3f ms (budget %.1f ms) | QP/cycle max %d"
-          % (t["realization_cycle_ms"]["median_ms"], t["budget_ms"],
-             t["whole_body_qp_solves_per_cycle"]["max"]))
+    print("   node %d Hz: median %.2f ms (budget %.1f ms), p99 %.2f, misses %.1f%% | "
+          "servo %d Hz, %d ticks | QP/node %d"
+          % (t["node_hz"], t["node_ms"]["median_ms"], t["node_budget_ms"],
+             t["node_ms"]["p99_ms"], 100 * t["node_deadline_miss_fraction"],
+             t["servo_hz"], t["servo_ticks"],
+             t["whole_body_qp_solves_per_node_update"]["max"]))
 
     print("E2 fixed box vs mapped authority ...")
     e2 = e2_fixed_vs_mapped(rates)

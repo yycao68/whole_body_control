@@ -2,91 +2,115 @@
   "rates": {
     "realizer_hz": 1000,
     "body_mpc_hz": 200,
-    "task_mpc_hz": 500
+    "task_mpc_hz": 200
   },
   "realization_tolerance_mps2": 0.35,
   "E1_realtime": {
-    "claim": "the 1 kHz loop solves exactly ONE whole-body QP per cycle",
-    "whole_body_qp_solves_per_cycle": {
+    "claim": "a 1 kHz servo holds the last optimized command; a 200 Hz optimization node solves EXACTLY ONE whole-body QP per update",
+    "servo_hz": 1000,
+    "node_hz": 200,
+    "authority_hz": 50,
+    "servo_ticks": 3000,
+    "node_updates": 600,
+    "whole_body_qp_solves_per_node_update": {
       "max": 1,
       "mean": 1.0
     },
-    "realizer_qp_ms": {
-      "median_ms": 2.0030625018989667,
-      "p99_ms": 3.019801750197075,
-      "max_ms": 6.1322499823290855,
-      "n": 800
+    "node_ms": {
+      "median_ms": 2.9955420177429914,
+      "p99_ms": 3.885274263157043,
+      "max_ms": 6.932333024451509,
+      "n": 600
     },
-    "authority_kkt_ms": {
-      "median_ms": 0.3611249994719401,
-      "p99_ms": 0.7686808428843506,
-      "max_ms": 2.556166989961639,
-      "n": 800
+    "node_budget_ms": 5.0,
+    "node_deadline_misses": 1,
+    "node_deadline_miss_fraction": 0.0017,
+    "component_ms": {
+      "whole_body_qp": {
+        "median_ms": 2.0041875104652718,
+        "p99_ms": 2.5031610700534657,
+        "max_ms": 4.865125025389716,
+        "n": 600
+      },
+      "authority_kkt": {
+        "median_ms": 0.5976665124762803,
+        "p99_ms": 0.7813846005592493,
+        "max_ms": 0.8778329938650131,
+        "n": 600
+      },
+      "body_predictor": {
+        "median_ms": 0.2617499994812533,
+        "p99_ms": 1.2106434136512687,
+        "max_ms": 1.5052079979795963,
+        "n": 600
+      },
+      "task_predictor": {
+        "median_ms": 0.11266650108154863,
+        "p99_ms": 0.15503066853852937,
+        "max_ms": 0.5467919982038438,
+        "n": 600
+      }
     },
-    "realization_cycle_ms": {
-      "median_ms": 2.4217085156124085,
-      "p99_ms": 3.595090075978077,
-      "max_ms": 8.290124969789758,
-      "n": 800
-    },
-    "body_mpc_ms": {
-      "median_ms": 13.38870800100267,
-      "p99_ms": 85.97808902122765,
-      "max_ms": 190.09987500612624,
-      "n": 160
-    },
-    "budget_ms": 1.0,
-    "cycle_median_within_budget": false,
-    "note": "Compare against the previous design, which ran a 62-QP ray-bisection authority search before every MPC update (~154 ms median)."
+    "note": "The whole-body QP (~2.4 ms, of which only ~0.3 ms is the OSQP solve; the rest is Python matrix assembly) does not fit a 1 kHz cycle, which is why the QP runs in the 200 Hz node and a torque servo runs at 1 kHz. Compare against the previous design, whose 62-QP authority search cost ~154 ms per update."
   },
   "E2_fixed_vs_mapped": {
     "C1_fixed_box": {
       "variant": "C1_fixed_box",
-      "rms_planar_error_mm": 42.13146091185033,
-      "median_residual": 1.2128574898171862,
-      "max_residual": 5.734537258946278,
-      "residual_over_tol_fraction": 0.85375,
+      "rms_planar_error_mm": 42.10464862562685,
+      "median_residual": 1.3653346846596253,
+      "max_residual": 4.01299870373044,
+      "residual_over_tol_fraction": 0.975,
       "fell": false,
       "qp_fallbacks": 0,
       "body_constraint_sources": {
         "fallback_box": 160
       },
       "max_abs_u": [
-        1.024,
+        1.006,
         4.0
       ],
       "diagnostics": {
         "timing": {
           "realizer": {
-            "median_ms": 1.9932295108446851,
-            "p99_ms": 4.09942301659612,
-            "max_ms": 7.883749989559874,
-            "n": 800
+            "median_ms": 4.385437496239319,
+            "p99_ms": 58.66352125420225,
+            "max_ms": 100.76087500783615,
+            "n": 160
           },
           "authority_kkt": {
             "median_ms": 0.000166997779160738,
-            "p99_ms": 0.0004159912350587547,
-            "max_ms": 0.0013339740689843893,
-            "n": 800
+            "p99_ms": 0.00037500285543501377,
+            "max_ms": 0.0004169996827840805,
+            "n": 160
           },
           "realization_cycle": {
-            "median_ms": 1.9934380252379924,
-            "p99_ms": 4.099631441349629,
-            "max_ms": 7.883874990511686,
-            "n": 800
+            "median_ms": 4.385624997667037,
+            "p99_ms": 58.66368027491252,
+            "max_ms": 100.76104200561531,
+            "n": 160
           },
           "body_mpc": {
-            "median_ms": 0.18520849698688835,
-            "p99_ms": 0.285915003332775,
-            "max_ms": 0.3517500008456409,
+            "median_ms": 0.1683750015217811,
+            "p99_ms": 0.23929228889755902,
+            "max_ms": 0.24912500521168113,
             "n": 160
           },
           "task_mpc": null,
-          "whole_body_qp_solves_per_1khz_cycle": {
+          "optimization_node": {
+            "median_ms": 4.564895993098617,
+            "p99_ms": 58.859380559879256,
+            "max_ms": 100.99500001524575,
+            "n": 160
+          },
+          "whole_body_qp_solves_per_node_update": {
             "max": 1,
             "mean": 1.0
           }
         },
+        "node_updates": 160,
+        "servo_ticks": 800,
+        "servo_holds": 640,
+        "node_deadline_misses": 61,
         "body_solves": 160,
         "task_solves": 0,
         "stale_fallbacks": 0,
@@ -98,58 +122,68 @@
     },
     "C2_analytic_authority": {
       "variant": "C2_analytic_authority",
-      "rms_planar_error_mm": 46.778661764172085,
-      "median_residual": 0.5599605210638592,
-      "max_residual": 2.8337415259231467,
-      "residual_over_tol_fraction": 0.6725,
+      "rms_planar_error_mm": 45.839973428102326,
+      "median_residual": 0.93553434645675,
+      "max_residual": 4.572632690507056,
+      "residual_over_tol_fraction": 0.8875,
       "fell": false,
       "qp_fallbacks": 0,
       "body_constraint_sources": {
-        "fallback_box": 105,
-        "authority_polytope": 55
+        "fallback_box": 136,
+        "authority_polytope": 24
       },
       "max_abs_u": [
-        0.998,
+        1.063,
         4.0
       ],
       "diagnostics": {
         "timing": {
           "realizer": {
-            "median_ms": 1.919312504469417,
-            "p99_ms": 2.6992574334144583,
-            "max_ms": 9.033292008098215,
-            "n": 800
+            "median_ms": 4.029750489280559,
+            "p99_ms": 55.18133125849997,
+            "max_ms": 87.89220900507644,
+            "n": 160
           },
           "authority_kkt": {
-            "median_ms": 0.3405210009077564,
-            "p99_ms": 0.7301791707868688,
-            "max_ms": 0.987374980468303,
-            "n": 800
+            "median_ms": 0.3462290042079985,
+            "p99_ms": 0.7832165464060376,
+            "max_ms": 1.8026249890681356,
+            "n": 160
           },
           "realization_cycle": {
-            "median_ms": 2.3301880137296394,
-            "p99_ms": 3.4602875993004996,
-            "max_ms": 9.430042002350092,
-            "n": 800
+            "median_ms": 4.388687491882592,
+            "p99_ms": 55.724648985487846,
+            "max_ms": 88.34395901067182,
+            "n": 160
           },
           "body_mpc": {
-            "median_ms": 13.298166508320719,
-            "p99_ms": 82.75548823905397,
-            "max_ms": 184.3958749959711,
+            "median_ms": 4.942812010995112,
+            "p99_ms": 72.5085277788457,
+            "max_ms": 88.01824998226948,
             "n": 160
           },
           "task_mpc": null,
-          "whole_body_qp_solves_per_1khz_cycle": {
+          "optimization_node": {
+            "median_ms": 10.868833502172492,
+            "p99_ms": 86.0840859095333,
+            "max_ms": 148.32824998302385,
+            "n": 160
+          },
+          "whole_body_qp_solves_per_node_update": {
             "max": 1,
             "mean": 1.0
           }
         },
+        "node_updates": 160,
+        "servo_ticks": 800,
+        "servo_holds": 640,
+        "node_deadline_misses": 136,
         "body_solves": 160,
         "task_solves": 0,
         "stale_fallbacks": 0,
         "mode_mismatch_fallbacks": 0,
-        "invalid_snapshots": 105,
-        "polytope_failures": 1,
+        "invalid_snapshots": 136,
+        "polytope_failures": 0,
         "task_invalid_snapshots": 0
       }
     }
@@ -165,19 +199,19 @@
         ],
         "valid": true,
         "status": "ok",
-        "n_constraints": 106,
+        "n_constraints": 48,
         "axis_extent_lower": [
-          -1.425,
-          -0.902
+          -1.426,
+          -0.913
         ],
         "axis_extent_upper": [
-          0.665,
-          0.881
+          0.664,
+          0.887
         ],
-        "axis_extent_area": 3.728,
+        "axis_extent_area": 3.762,
         "min_torque_margin_nm": 4.68,
-        "min_friction_margin_n": 22.81,
-        "min_normal_margin_n": 25.57,
+        "min_friction_margin_n": 22.59,
+        "min_normal_margin_n": 25.52,
         "canonical_A_unchanged": true,
         "canonical_B_unchanged": true,
         "canonical_hessian_unchanged": true
@@ -190,19 +224,19 @@
         ],
         "valid": true,
         "status": "ok",
-        "n_constraints": 106,
+        "n_constraints": 48,
         "axis_extent_lower": [
-          -1.665,
-          -0.923
+          -1.667,
+          -0.935
         ],
         "axis_extent_upper": [
-          0.692,
-          0.931
+          0.69,
+          0.94
         ],
-        "axis_extent_area": 4.371,
+        "axis_extent_area": 4.419,
         "min_torque_margin_nm": 4.26,
-        "min_friction_margin_n": 23.29,
-        "min_normal_margin_n": 26.38,
+        "min_friction_margin_n": 23.4,
+        "min_normal_margin_n": 26.36,
         "canonical_A_unchanged": true,
         "canonical_B_unchanged": true,
         "canonical_hessian_unchanged": true
@@ -215,19 +249,19 @@
         ],
         "valid": true,
         "status": "ok",
-        "n_constraints": 106,
+        "n_constraints": 48,
         "axis_extent_lower": [
-          -1.423,
-          -0.903
+          -1.425,
+          -0.913
         ],
         "axis_extent_upper": [
-          0.667,
-          0.883
+          0.665,
+          0.889
         ],
-        "axis_extent_area": 3.733,
+        "axis_extent_area": 3.769,
         "min_torque_margin_nm": 4.69,
-        "min_friction_margin_n": 22.86,
-        "min_normal_margin_n": 25.62,
+        "min_friction_margin_n": 22.66,
+        "min_normal_margin_n": 25.57,
         "canonical_A_unchanged": true,
         "canonical_B_unchanged": true,
         "canonical_hessian_unchanged": true
@@ -239,19 +273,19 @@
           "right"
         ],
         "valid": true,
-        "status": "margin_exhausted (4 rows; 0 numerical)",
-        "n_constraints": 106,
+        "status": "margin_exhausted (5 rows; 1 numerical)",
+        "n_constraints": 47,
         "axis_extent_lower": [
           -0.0,
           -0.0
         ],
         "axis_extent_upper": [
-          0.022,
-          1.52
+          0.291,
+          1.596
         ],
-        "axis_extent_area": 0.034,
+        "axis_extent_area": 0.465,
         "min_torque_margin_nm": 4.66,
-        "min_friction_margin_n": 0.0,
+        "min_friction_margin_n": -0.0,
         "min_normal_margin_n": -1.0,
         "canonical_A_unchanged": true,
         "canonical_B_unchanged": true,
@@ -292,13 +326,13 @@
       "qp_fallbacks": 0,
       "lift_authorized": true,
       "lift_time_s": 1.4000000000000001,
-      "single_support_s": 1.1520000000000457,
-      "foot_lift_m": 0.033423382328177625,
-      "max_roll_pitch_rad": 0.5590585570971328,
-      "rms_planar_error_mm": 32.16450793211166,
-      "max_realization_residual": 0.9859989714964793,
-      "authority_valid_fraction": 0.9047619047619048,
-      "active_query_ms_median": 126.66560399520677,
+      "single_support_s": 1.1540000000000454,
+      "foot_lift_m": 0.03385682405077213,
+      "max_roll_pitch_rad": 0.5657896805749403,
+      "rms_planar_error_mm": 32.47565046962828,
+      "max_realization_residual": 0.9174042707534696,
+      "authority_valid_fraction": 0.8928571428571429,
+      "active_query_ms_median": 490.2602285001194,
       "active_query_whole_body_qp_solves": 65,
       "canonical_matrices_bitwise_invariant": true
     },
@@ -308,14 +342,14 @@
       "fell": true,
       "qp_fallbacks": 0,
       "lift_authorized": true,
-      "lift_time_s": 1.4000000000000001,
-      "single_support_s": 0.864999999999905,
-      "foot_lift_m": 0.08021997227806953,
-      "max_roll_pitch_rad": 0.850975354296351,
-      "rms_planar_error_mm": 30.098905311746265,
-      "max_realization_residual": 1.0914818593031352,
-      "authority_valid_fraction": 0.7413793103448276,
-      "active_query_ms_median": 0.1533954928163439,
+      "lift_time_s": 1.48,
+      "single_support_s": 0.7219999999999207,
+      "foot_lift_m": 0.07725824776889995,
+      "max_roll_pitch_rad": 0.850300178793736,
+      "rms_planar_error_mm": 29.409315825267065,
+      "max_realization_residual": 2.195684614194347,
+      "authority_valid_fraction": 0.7142857142857143,
+      "active_query_ms_median": 0.11885400454048067,
       "active_query_whole_body_qp_solves": 0,
       "canonical_matrices_bitwise_invariant": true
     },
@@ -325,14 +359,14 @@
       "fell": false,
       "qp_fallbacks": 0,
       "lift_authorized": true,
-      "lift_time_s": 1.4000000000000001,
-      "single_support_s": 1.1420000000000454,
-      "foot_lift_m": 0.035842790626148646,
-      "max_roll_pitch_rad": 0.5519394195921605,
-      "rms_planar_error_mm": 32.48343923010637,
-      "max_realization_residual": 1.1161020358209146,
-      "authority_valid_fraction": 0.9166666666666666,
-      "active_query_ms_median": 13.616375494166277,
+      "lift_time_s": 1.44,
+      "single_support_s": 1.098000000000049,
+      "foot_lift_m": 0.041816751234760544,
+      "max_roll_pitch_rad": 0.5759559400012518,
+      "rms_planar_error_mm": 32.63003794137215,
+      "max_realization_residual": 0.9310012281014663,
+      "authority_valid_fraction": 0.8674698795180723,
+      "active_query_ms_median": 13.47262499621138,
       "active_query_whole_body_qp_solves": 0,
       "canonical_matrices_bitwise_invariant": true
     }
@@ -350,7 +384,7 @@
       {
         "task_weight": 80.0,
         "body_residual": 0.0018,
-        "task_residual": 0.228,
+        "task_residual": 0.229,
         "task_set_valid": true,
         "task_set_status": "ok"
       },
@@ -364,7 +398,7 @@
       {
         "task_weight": 2000.0,
         "body_residual": 0.0017,
-        "task_residual": 0.064,
+        "task_residual": 0.065,
         "task_set_valid": true,
         "task_set_status": "ok"
       },
@@ -388,64 +422,64 @@
     "fixed_box_no_observer": {
       "task_authority": "fixed_box",
       "observer": false,
-      "ss_hand_error_mm": 364.5,
-      "ss_com_error_mm": 4.7,
-      "median_task_residual": 0.045,
-      "task_solves": 1500,
+      "ss_hand_error_mm": 135.3,
+      "ss_com_error_mm": 5.5,
+      "median_task_residual": NaN,
+      "task_solves": 600,
       "whole_body_qp_per_cycle": 1,
       "task_mpc_ms": {
-        "median_ms": 0.21456250397022814,
-        "p99_ms": 0.35845198988681654,
-        "max_ms": 0.7897499890532345,
-        "n": 1500
+        "median_ms": 0.20906250574626029,
+        "p99_ms": 0.33233883208595216,
+        "max_ms": 0.9483330068178475,
+        "n": 600
       }
     },
     "fixed_box_observer": {
       "task_authority": "fixed_box",
       "observer": true,
-      "ss_hand_error_mm": 26.0,
-      "ss_com_error_mm": 3.2,
-      "median_task_residual": 0.049,
-      "task_solves": 1500,
+      "ss_hand_error_mm": 140.2,
+      "ss_com_error_mm": 4.5,
+      "median_task_residual": 0.097,
+      "task_solves": 600,
       "whole_body_qp_per_cycle": 1,
       "task_mpc_ms": {
-        "median_ms": 0.211187987588346,
-        "p99_ms": 0.33124008332379157,
-        "max_ms": 3.7950830010231584,
-        "n": 1500
+        "median_ms": 0.21187550737522542,
+        "p99_ms": 0.42078583210241044,
+        "max_ms": 0.7312080124393106,
+        "n": 600
       }
     },
     "mapped_no_observer": {
       "task_authority": "mapped",
       "observer": false,
-      "ss_hand_error_mm": 366.2,
-      "ss_com_error_mm": 68.6,
+      "ss_hand_error_mm": 503.0,
+      "ss_com_error_mm": 109.1,
       "median_task_residual": NaN,
-      "task_solves": 1500,
+      "task_solves": 600,
       "whole_body_qp_per_cycle": 1,
       "task_mpc_ms": {
-        "median_ms": 6.433833506889641,
-        "p99_ms": 130.45764843438513,
-        "max_ms": 305.41649999213405,
-        "n": 1500
+        "median_ms": 9.891562003758736,
+        "p99_ms": 162.91930449777274,
+        "max_ms": 288.9424170134589,
+        "n": 600
       }
     },
     "mapped_observer": {
       "task_authority": "mapped",
       "observer": true,
-      "ss_hand_error_mm": 502.6,
-      "ss_com_error_mm": 148.2,
+      "ss_hand_error_mm": 543.2,
+      "ss_com_error_mm": 12.4,
       "median_task_residual": NaN,
-      "task_solves": 1500,
+      "task_solves": 600,
       "whole_body_qp_per_cycle": 1,
       "task_mpc_ms": {
-        "median_ms": 6.5676874946802855,
-        "p99_ms": 279.59573582629673,
-        "max_ms": 282.0144579745829,
-        "n": 1500
+        "median_ms": 17.150916988612153,
+        "p99_ms": 284.50474874523934,
+        "max_ms": 293.4241250040941,
+        "n": 600
       }
     },
-    "hand_offset_reduction_x": 14.0,
+    "hand_offset_reduction_x": 1.0,
     "hand_force_N": 5.0,
     "claim": "the canonical task port rejects a sustained hand force offset-free (observer on vs off); the analytic task authority is too conservative to permit it -- the same single-active-set conservatism that blocks single-support balance. Zero extra whole-body QP solves either way."
   },
@@ -456,7 +490,7 @@
         "scenario": "double_support_nominal",
         "grid": "21x21 over [-3.0,3.0]^2",
         "analytic": {
-          "ms": 0.655,
+          "ms": 0.718,
           "whole_body_qp": 0,
           "kkt": 1,
           "true_positive": 35,
@@ -467,9 +501,9 @@
           "false_negative_rate": 0.6825
         },
         "continuation": {
-          "ms": 15.79,
+          "ms": 14.56,
           "whole_body_qp": 0,
-          "kkt": 97,
+          "kkt": 85,
           "true_positive": 336,
           "true_negative": 105,
           "false_positive": 0,
@@ -478,7 +512,7 @@
           "false_negative_rate": 0.0
         },
         "exact_oracle": {
-          "ms": 151.2,
+          "ms": 471.6,
           "whole_body_qp": 62,
           "box_lower": [
             -2.777,
@@ -491,21 +525,21 @@
         },
         "continuation_box_lower": [
           -2.849,
-          -3.591
+          -3.592
         ],
         "continuation_box_upper": [
           1.894,
           3.599
         ],
-        "continuation_vs_oracle_max_boundary_error": 0.112,
-        "speedup_continuation_over_oracle": 9.6,
+        "continuation_vs_oracle_max_boundary_error": 0.113,
+        "speedup_continuation_over_oracle": 32.4,
         "note": "false positives are the safety-relevant error. The 1-cell analytic map is sound but refuses ~68% of feasible commands; PWA continuation recovers them with zero extra whole-body QP solves."
       },
       {
         "scenario": "double_support_payload",
         "grid": "21x21 over [-3.0,3.0]^2",
         "analytic": {
-          "ms": 0.575,
+          "ms": 0.681,
           "whole_body_qp": 0,
           "kkt": 1,
           "true_positive": 46,
@@ -516,9 +550,9 @@
           "false_negative_rate": 0.7052
         },
         "continuation": {
-          "ms": 16.73,
+          "ms": 17.52,
           "whole_body_qp": 0,
-          "kkt": 97,
+          "kkt": 104,
           "true_positive": 357,
           "true_negative": 84,
           "false_positive": 0,
@@ -527,10 +561,10 @@
           "false_negative_rate": 0.0
         },
         "exact_oracle": {
-          "ms": 149.5,
+          "ms": 615.0,
           "whole_body_qp": 62,
           "box_lower": [
-            -3.082,
+            -3.113,
             -3.784
           ],
           "box_upper": [
@@ -540,14 +574,14 @@
         },
         "continuation_box_lower": [
           -3.191,
-          -3.902
+          -3.903
         ],
         "continuation_box_upper": [
           1.896,
           3.942
         ],
-        "continuation_vs_oracle_max_boundary_error": 0.118,
-        "speedup_continuation_over_oracle": 8.9,
+        "continuation_vs_oracle_max_boundary_error": 0.119,
+        "speedup_continuation_over_oracle": 35.1,
         "note": "false positives are the safety-relevant error. The 1-cell analytic map is sound but refuses ~68% of feasible commands; PWA continuation recovers them with zero extra whole-body QP solves."
       }
     ]

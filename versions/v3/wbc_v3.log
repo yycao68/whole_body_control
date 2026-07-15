@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.22)  14 JUL 2026 07:40
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.22)  14 JUL 2026 20:21
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -329,86 +329,54 @@ ocal/texlive/2026/texmf-dist/fonts/enc/dvips/base/8r.enc}
 
 
 ]
-<figures/multirate_architecture.png, id=20, 809.78535pt x 448.43535pt>
+<figures/multirate_architecture.png, id=20, 809.78535pt x 437.2335pt>
 File: figures/multirate_architecture.png Graphic file (type png)
 <use figures/multirate_architecture.png>
 Package pdftex.def Info: figures/multirate_architecture.png  used on input line
- 95.
-(pdftex.def)             Requested size: 505.6778pt x 280.02507pt.
+ 80.
+(pdftex.def)             Requested size: 505.6778pt x 273.03008pt.
+ [2]
+Underfull \vbox (badness 1281) has occurred while \output is active []
 
-Underfull \hbox (badness 2828) in paragraph at lines 109--110
-[]\T1/ptm/m/n/10 Learning-based pipelines in-creas-ingly \T1/ptm/m/it/10 gen-er
--ate \T1/ptm/m/n/10 whole-
- []
-
-
-Underfull \hbox (badness 2229) in paragraph at lines 109--110
-\T1/ptm/m/n/10 demonstration re-tar-get-ing en-gines pro-duce rich, contact-
- []
-
-[2] [3 <./figures/multirate_architecture.png>]
-<figures/prediction_realization_concept.png, id=33, 556.05388pt x 209.583pt>
+<figures/prediction_realization_concept.png, id=27, 556.05388pt x 209.583pt>
 File: figures/prediction_realization_concept.png Graphic file (type png)
 <use figures/prediction_realization_concept.png>
 Package pdftex.def Info: figures/prediction_realization_concept.png  used on in
-put line 148.
+put line 130.
 (pdftex.def)             Requested size: 252.0pt x 94.97984pt.
- [4 <./figures/prediction_realization_concept.png>] [5] [6]
-Underfull \hbox (badness 10000) in paragraph at lines 414--415
+ [3 <./figures/multirate_architecture.png> <./figures/prediction_realization_co
+ncept.png>]
+[4] [5]
+Underfull \hbox (badness 10000) in paragraph at lines 388--389
 []\T1/ptm/m/n/10 the canon-i-cal three-dimensional exact-ZOH double-
  []
 
-LaTeX Font Info:    Trying to load font information for TS1+ptm on input line 4
-52.
-(/usr/local/texlive/2026/texmf-dist/tex/latex/psnfss/ts1ptm.fd
-File: ts1ptm.fd 2001/06/04 font definitions for TS1/ptm.
-) [7]
-Underfull \hbox (badness 1603) in paragraph at lines 465--466
-\T1/ptm/m/n/10 torque/friction/CoP/joint mar-gins, authority-set cen-ter and
- []
-
-[8] [9] [10]
-
-LaTeX Font Warning: Font shape `T1/ptm/m/scit' undefined
-(Font)              using `T1/ptm/m/it' instead on input line 590.
-
-
-LaTeX Font Warning: Font shape `T1/ptm/m/scit' undefined
-(Font)              using `T1/ptm/m/it' instead on input line 590.
-
-
-Overfull \hbox (20.01831pt too wide) in paragraph at lines 591--598
- [][] 
- []
-
-[11]
-Underfull \hbox (badness 2435) in paragraph at lines 634--635
+[6] [7] [8] [9] [10]
+Underfull \hbox (badness 2435) in paragraph at lines 607--608
 []\T1/ptm/m/n/8 Y. Cao and J. Tang, ``To-ward in-ter-ac-tion dy-nam-ics: A pre-
 dic-
  []
 
 
-Underfull \hbox (badness 1389) in paragraph at lines 634--635
+Underfull \hbox (badness 1389) in paragraph at lines 607--608
 \T1/ptm/m/n/8 tive frame-work for safe phys-i-cal human-robot in-ter-ac-tion,''
  2026,
  []
 
-[12] [13
-
-] (./wbc_v3.aux)
+[11] (./wbc_v3.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
  ) 
 Here is how much of TeX's memory you used:
- 4065 strings out of 467525
- 62564 string characters out of 5418982
- 498001 words of memory out of 5000000
- 32922 multiletter control sequences out of 15000+600000
- 755932 words of font info for 170 fonts, out of 8000000 for 9000
+ 4033 strings out of 467525
+ 62067 string characters out of 5418982
+ 498416 words of memory out of 5000000
+ 32897 multiletter control sequences out of 15000+600000
+ 749223 words of font info for 166 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 57i,9n,65p,2121b,298s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 57i,9n,65p,1805b,260s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb
 ></usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb>
 </usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb><
@@ -431,10 +399,10 @@ mf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/local/texlive/2026/texmf-dist/fo
 nts/type1/urw/times/utmbi8a.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1
 /urw/times/utmr8a.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1/urw/times
 /utmri8a.pfb>
-Output written on wbc_v3.pdf (13 pages, 575682 bytes).
+Output written on wbc_v3.pdf (11 pages, 544354 bytes).
 PDF statistics:
- 163 PDF objects out of 1000 (max. 8388607)
- 99 compressed objects within 1 object stream
+ 156 PDF objects out of 1000 (max. 8388607)
+ 94 compressed objects within 1 object stream
  0 named destinations out of 1000 (max. 500000)
  11 words of extra memory for PDF output out of 10000 (max. 10000000)
 

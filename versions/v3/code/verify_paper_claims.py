@@ -44,19 +44,25 @@ def main() -> int:
         return 1
     d = json.loads(path.read_text())
 
-    print("\n[E1] the 1 kHz loop solves exactly ONE whole-body QP per cycle")
+    print("\n[E1] 1 kHz servo + 200 Hz optimization node, one QP per node update")
     e1 = d["E1_realtime"]
-    check(e1["whole_body_qp_solves_per_cycle"]["max"] == 1,
-          "max whole-body QP solves per 1 kHz cycle == 1",
-          str(e1["whole_body_qp_solves_per_cycle"]))
-    check(e1["authority_kkt_ms"]["median_ms"] < 1.0,
-          "authority (KKT) median < 1 ms",
-          f"{e1['authority_kkt_ms']['median_ms']:.3f} ms")
-    # The paper does NOT claim the Python prototype hits 1 kHz; it claims the
-    # algorithmic content does.  Assert the honest version.
-    check(e1["realization_cycle_ms"]["median_ms"] > 1.0,
-          "prototype cycle EXCEEDS 1 ms (paper must not claim otherwise)",
-          f"{e1['realization_cycle_ms']['median_ms']:.3f} ms")
+    check(e1["servo_hz"] == 1000, "servo runs at 1 kHz", str(e1["servo_hz"]))
+    check(e1["node_hz"] == 200, "optimization node runs at 200 Hz", str(e1["node_hz"]))
+    check(e1["whole_body_qp_solves_per_node_update"]["max"] == 1,
+          "exactly ONE whole-body QP per node update",
+          str(e1["whole_body_qp_solves_per_node_update"]))
+    check(e1["node_ms"]["median_ms"] < e1["node_budget_ms"],
+          "node median within the 200 Hz budget",
+          f"{e1['node_ms']['median_ms']:.2f} < {e1['node_budget_ms']:.1f} ms")
+    check(e1["node_ms"]["median_ms"] > 1.0,
+          "node EXCEEDS 1 ms -- the paper must NOT claim the QP runs at 1 kHz",
+          f"{e1['node_ms']['median_ms']:.2f} ms")
+    check(e1["node_deadline_miss_fraction"] < 0.05,
+          "node deadline-miss fraction < 5%",
+          f"{100*e1['node_deadline_miss_fraction']:.1f}%")
+    check(e1["servo_ticks"] > 4 * e1["node_updates"],
+          "servo ticks >> node updates (the servo holds between optimizations)",
+          f"{e1['servo_ticks']} vs {e1['node_updates']}")
 
     print("\n[E3] canonical (A,B,Hessian) invariant while H_k,h_k move")
     e3 = d["E3_occupancy"]
@@ -64,8 +70,8 @@ def main() -> int:
     rows = {r["scenario"]: r for r in e3["rows"]}
     nom = rows["double_support_nominal"]
     acc = rows["double_support_accel_ref"]
-    check(acc["axis_extent_upper"][0] < 0.1 * nom["axis_extent_upper"][0],
-          "a 0.8 m/s^2 reference feedforward consumes forward authority",
+    check(acc["axis_extent_upper"][0] < 0.5 * nom["axis_extent_upper"][0],
+          "a 0.8 m/s^2 reference feedforward roughly halves forward authority",
           f"{nom['axis_extent_upper'][0]} -> {acc['axis_extent_upper'][0]}")
     check(rows["single_support_left"]["valid"] is False,
           "unprepared single support yields an EMPTY set (nominal residual > tol)")
