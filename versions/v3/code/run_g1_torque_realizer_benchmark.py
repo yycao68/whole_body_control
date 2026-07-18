@@ -6,15 +6,15 @@ Menagerie-derived G1 MJCF from position actuators to torque motors at runtime,
 uses the normalized body/task interaction MPCs as command generators, and
 realizes those requests through a present-time inverse-dynamics/contact QP:
 
-    min ||J_t qdd - xdd_task_des||^2 + ||J_c qdd - xdd_contact_des||^2
-    s.t. M qdd + h = S^T tau + J_c^T lambda, torque bounds, friction bounds
+   min ||J_t qdd - xdd_task_des||^2 + ||J_c qdd - xdd_contact_des||^2
+   s.t. M qdd + h = S^T tau + J_c^T lambda, torque bounds, friction bounds
 
 The controller is intentionally logged as an initial torque-level realizer, not
 as a finished dynamic walking stack.  Failed and fallen trials remain in the
 reported denominator.
 """
 
-from __future__ import annotations
+from  __future__ import annotations
 
 import argparse
 import json
@@ -125,22 +125,19 @@ def generate_torque_model(src: Path = MODEL_POSITION, dst: Path = MODEL_TORQUE) 
     tmp.replace(dst)
     return dst
 
-
 def body_id(model: mujoco.MjModel, name: str) -> int:
     return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
-
 
 def site_id(model: mujoco.MjModel, name: str) -> int:
     return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, name)
 
-
 def joint_id(model: mujoco.MjModel, name: str) -> int:
     return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
-
 
 def hand_state(model: mujoco.MjModel, data: mujoco.MjData, sid: int):
     jp = site_jac(model, data, sid)
     return data.site_xpos[sid].copy(), jp @ data.qvel, jp
+
 
 
 def measured_foot_contacts(model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray:
@@ -161,7 +158,6 @@ def measured_foot_contacts(model: mujoco.MjModel, data: mujoco.MjData) -> np.nda
         if floor and right:
             out[1] = True
     return out
-
 
 def friction_margin(model: mujoco.MjModel, data: mujoco.MjData, mu: float = 0.9) -> float:
     """Return min(mu fz - ||ft||) across active foot-floor contacts.
@@ -190,13 +186,11 @@ def friction_margin(model: mujoco.MjModel, data: mujoco.MjData, mu: float = 0.9)
         margins.append(mu * normal - tang)
     return float(min(margins)) if margins else float("inf")
 
-
 def com_velocity(model: mujoco.MjModel, data: mujoco.MjData, root_body: int) -> np.ndarray:
     """Whole-robot CoM velocity from the subtree CoM Jacobian."""
     jac = np.zeros((3, model.nv))
     mujoco.mj_jacSubtreeCom(model, data, jac, root_body)
     return jac @ data.qvel
-
 
 def smooth_forward_reference(t: float, duration: float, distance: float):
     x, xd, xdd = trapezoid_profile(t, duration=duration, distance=distance)
@@ -205,7 +199,6 @@ def smooth_forward_reference(t: float, duration: float, distance: float):
         np.array([xd, 0.0]),
         np.array([xdd, 0.0]),
     )
-
 
 def scheduled_stance_feet(t: float, scenario: str) -> tuple[str, ...]:
     if scenario in ("stand", "stand_push"):
@@ -218,7 +211,6 @@ def scheduled_stance_feet(t: float, scenario: str) -> tuple[str, ...]:
     if phase < 0.10 or phase > 0.90:
         return ("left", "right")
     return ("right",) if left_swing else ("left",)
-
 
 class WholeBodyTorqueRealizer:
     """Present-sample torque projection used as the Level-2 realizer."""
@@ -266,7 +258,6 @@ class WholeBodyTorqueRealizer:
         data.ctrl[self.ctrl_id] = tau
         saturation = np.maximum(tau_unsat - self.torque_max, 0.0) + np.maximum(self.torque_min - tau_unsat, 0.0)
         return tau, tau_unsat, saturation
-
 
 class InverseDynamicsQPRealizer:
     """Instantaneous inverse-dynamics/contact projection for Level 2.
@@ -339,7 +330,14 @@ class InverseDynamicsQPRealizer:
         self.last_status = "not_solved"
         self.last_eq_residual = np.inf          # rigid-body dynamics-equality residual
         self.last_body_acc_residual = np.inf    # ||Jcom qdd - com_acc_des|| (realized - requested)
-        self.last_task_acc_residual = np.inf    # ||Jhand qdd - task_acc_des|| (realized - requested)
+        # Norm of the QP hand-acceleration tracking slack, not a pure
+        # force-based actuation realization residual.  External task dynamics
+        # must be separated explicitly before interpreting this quantity as an
+        # actuation deficit.
+        self.last_task_acc_tracking_slack_norm = np.inf
+        # Deprecated compatibility alias for the task acceleration-tracking
+        # slack norm above; this is not a pure actuation residual.
+        self.last_task_acc_residual = np.inf
         self.last_contact_force = np.zeros(0)
         self.last_wrench_slack = np.full(6, np.inf)
         self.last_task_slack = np.full(3, np.inf)
@@ -364,13 +362,29 @@ class InverseDynamicsQPRealizer:
         self.last_hand_jac = None             # hand Jacobian of the last solve
         self._task_dq_du = None
         self._task_clipped = False
+        self._qp_row_labels = np.zeros(0, dtype="<U32")
+        self.last_active_constraint_counts: dict[str, int] = {}
+        self.last_yaw_acc_target = 0.0
+        self.last_yaw_moment_target = 0.0
+        self.last_yaw_moment = 0.0
+        self.last_yaw_output_kind = "acceleration"
+        self._last_wrench_map = None
+        self._moment_dq_du = None
+        self.last_centroidal_moment_target = np.zeros(3)
+        self.last_centroidal_moment = np.zeros(3)
 
     def joint_state(self, data: mujoco.MjData):
         return data.qpos[self.qadr].copy(), data.qvel[self.dof].copy()
 
     def _mass_matrix(self, model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray:
         M = np.zeros((model.nv, model.nv))
-        mujoco.mj_fullM(model, data, M)
+        # MuJoCo 3.3+ exposes ``mj_fullM(model, dst, data.qM)``; older Python
+        # bindings accepted ``(model, data, dst)``. Support both so the
+        # torque-level authority examples are runnable across supported wheels.
+        try:
+            mujoco.mj_fullM(model, M, data.qM)
+        except TypeError:
+            mujoco.mj_fullM(model, data, M)
         return M
 
     def contact_points(self, model: mujoco.MjModel, data: mujoco.MjData, stance_feet: tuple[str, ...]):
@@ -394,8 +408,23 @@ class InverseDynamicsQPRealizer:
     def _add_ls(self, P: np.ndarray, q: np.ndarray, C: np.ndarray, target: np.ndarray, weight: float):
         if C.size == 0:
             return
-        P += weight * (C.T @ C)
-        q += -weight * (C.T @ target)
+        # Some macOS BLAS builds emit spurious floating-point warnings for
+        # finite dense products.  Check the operands and results explicitly so
+        # genuine non-finite QP data remains a hard failure rather than relying
+        # on warning behaviour that differs across numerical backends.
+        if not (
+            np.all(np.isfinite(C))
+            and np.all(np.isfinite(target))
+            and np.isfinite(weight)
+        ):
+            raise FloatingPointError("non-finite least-squares QP term")
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            p_add = weight * (C.T @ C)
+            q_add = -weight * (C.T @ target)
+        if not (np.all(np.isfinite(p_add)) and np.all(np.isfinite(q_add))):
+            raise FloatingPointError("least-squares QP product overflow")
+        P += p_add
+        q += q_add
 
     def _solve_qp(
         self,
@@ -409,6 +438,7 @@ class InverseDynamicsQPRealizer:
         beq_extra: np.ndarray | None = None,
         qdd_lb: np.ndarray | None = None,
         qdd_ub: np.ndarray | None = None,
+        lam_z_ub: np.ndarray | None = None,
     ):
         n = self.nv + self.nu + nlam
         A_dyn = np.zeros((self.nv, n))
@@ -422,11 +452,13 @@ class InverseDynamicsQPRealizer:
         rows = [sp.csc_matrix(A_dyn)]
         lows = [l_dyn]
         ups = [u_dyn]
+        row_labels = [np.full(self.nv, "dynamics", dtype="<U32")]
 
         if Aeq_extra is not None and len(Aeq_extra):
             rows.append(sp.csc_matrix(Aeq_extra))
             lows.append(beq_extra)
             ups.append(beq_extra)
+            row_labels.append(np.full(len(Aeq_extra), "rigid_contact", dtype="<U32"))
 
         if nlam and self.constraints_on:
             A_fric = []
@@ -441,6 +473,7 @@ class InverseDynamicsQPRealizer:
             rows.append(sp.csc_matrix(np.vstack(A_fric)))
             lows.append(-np.inf * np.ones(len(A_fric)))
             ups.append(np.zeros(len(A_fric)))
+            row_labels.append(np.full(len(A_fric), "friction", dtype="<U32"))
 
         lb = np.full(n, -np.inf)
         ub = np.full(n, np.inf)
@@ -458,10 +491,17 @@ class InverseDynamicsQPRealizer:
             lb[base:base + 2] = -self.fz_max
             ub[base:base + 2] = self.fz_max
             lb[base + 2] = 0.0
-            ub[base + 2] = self.fz_max
+            ub[base + 2] = self.fz_max if lam_z_ub is None else float(lam_z_ub[i])
         rows.append(sp.eye(n, format="csc"))
         lows.append(lb)
         ups.append(ub)
+        variable_labels = np.full(n, "acceleration_bound", dtype="<U32")
+        variable_labels[self.nv:self.nv + self.nu] = "torque_bound"
+        for i in range(nlam // 3):
+            base = self.nv + self.nu + 3 * i
+            variable_labels[base:base + 2] = "tangential_force_bound"
+            variable_labels[base + 2] = "normal_force_bound"
+        row_labels.append(variable_labels)
 
         A = sp.vstack(rows, format="csc")
         l = np.concatenate(lows)
@@ -474,6 +514,7 @@ class InverseDynamicsQPRealizer:
         self._qp_A = Adense
         self._qp_l = l
         self._qp_u = u
+        self._qp_row_labels = np.concatenate(row_labels)
 
         # 1 kHz path: set the solver up once per sparsity pattern and thereafter
         # only push new values.  OSQP's update() requires an unchanged pattern,
@@ -520,12 +561,57 @@ class InverseDynamicsQPRealizer:
                 "pnnz": int(Pcsc.nnz), "annz": int(Acsc.nnz),
             }
         result = solver.solve()
+        if result.x is None or result.info.status_val not in (1, 2):
+            # A contact transition can make a cached OSQP factorization reject
+            # one otherwise feasible update.  Rebuild once from the current
+            # dense matrices before exposing a torque-level fallback; this is a
+            # numerical recovery, not an unconstrained second control solve.
+            Pcsc = sp.triu(sp.csc_matrix(Psym), format="csc")
+            Acsc = sp.csc_matrix(Adense)
+            retry_solver = osqp.OSQP()
+            retry_solver.setup(
+                P=Pcsc, q=q, A=Acsc, l=l, u=u,
+                verbose=False, polish=True,
+                eps_abs=1e-8, eps_rel=1e-8, max_iter=20000, adaptive_rho=True,
+            )
+            result = retry_solver.solve()
+            if result.x is not None and result.info.status_val in (1, 2):
+                self._qp_pattern = {
+                    "n": n, "m": Adense.shape[0], "solver": retry_solver,
+                    "pr": Pcsc.indices,
+                    "pc": np.repeat(np.arange(n), np.diff(Pcsc.indptr)),
+                    "ar": Acsc.indices,
+                    "ac": np.repeat(np.arange(n), np.diff(Acsc.indptr)),
+                    "pnnz": int(Pcsc.nnz), "annz": int(Acsc.nnz),
+                }
         self._qp_z = None if result.x is None else np.asarray(result.x, dtype=float)
         self._qp_y = None if result.y is None else np.asarray(result.y, dtype=float)
+        self.last_active_constraint_counts = self.active_constraint_counts()
         return result
 
-    def input_sensitivity(self, dq_du: np.ndarray, active_tol: float = 1e-6) -> np.ndarray | None:
-        """Exact dz/du on the current active-set cell, from one KKT solve.
+    def active_constraint_counts(self, active_tol: float = 1e-6) -> dict[str, int]:
+        """Return typed active-row counts from the most recent QP solution."""
+        if (self._qp_z is None or self._qp_y is None or self._qp_A is None
+                or self._qp_row_labels.size != self._qp_A.shape[0]):
+            return {}
+        A, l, u, y = self._qp_A, self._qp_l, self._qp_u, self._qp_y
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            Az = A @ self._qp_z
+        if not np.all(np.isfinite(Az)):
+            return {}
+        equality = np.isclose(l, u)
+        at_bound = (
+            (np.isfinite(l) & (np.abs(Az - l) <= 1e-6))
+            | (np.isfinite(u) & (np.abs(Az - u) <= 1e-6))
+        )
+        active = equality | (at_bound & (np.abs(y) > active_tol))
+        labels, counts = np.unique(self._qp_row_labels[active], return_counts=True)
+        return {str(label): int(count) for label, count in zip(labels, counts)}
+
+    def input_sensitivity_with_duals(
+        self, dq_du: np.ndarray, active_tol: float = 1e-6,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+        """Return current-cell primal and dual KKT sensitivities.
 
         ``dq_du`` is d(linear cost)/du with shape (n, m).  The QP Hessian does
         not depend on u, so on a fixed active set the solution is affine in u
@@ -534,20 +620,31 @@ class InverseDynamicsQPRealizer:
             [P   Aa^T] [dz/du]   [-dq_du]
             [Aa   0  ] [dnu  ] = [   0  ]
 
-        where ``Aa`` are the rows active at the current solution.  Returns None
-        if the QP has not been solved or the KKT system is singular.
+        where ``Aa`` are the rows active at the current solution.  The returned
+        tuple is ``(dz_du, dnu_du, active, at_lower, at_upper)``.  ``dnu_du``
+        uses the same signed dual convention as OSQP: upper-bound multipliers
+        are nonnegative and lower-bound multipliers are nonpositive.  This lets
+        a caller impose both primal feasibility of inactive rows and sign
+        feasibility of active multipliers when constructing a critical region.
+
+        Returns ``None`` if the QP has not been solved or the KKT system is
+        singular.
         """
         if self._qp_z is None or self._qp_y is None:
             return None
+        if not (np.all(np.isfinite(self._qp_z)) and np.all(np.isfinite(self._qp_y))):
+            return None
         A, l, u, y = self._qp_A, self._qp_l, self._qp_u, self._qp_y
-        Az = A @ self._qp_z
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            Az = A @ self._qp_z
+        if not np.all(np.isfinite(Az)):
+            return None
         # Equalities (l == u) are always active; inequalities are active when the
         # row sits at a finite bound with a nonzero multiplier.
         equality = np.isclose(l, u)
-        at_bound = (
-            (np.isfinite(l) & (np.abs(Az - l) <= 1e-6))
-            | (np.isfinite(u) & (np.abs(Az - u) <= 1e-6))
-        )
+        at_lower = np.isfinite(l) & (np.abs(Az - l) <= 1e-6)
+        at_upper = np.isfinite(u) & (np.abs(Az - u) <= 1e-6)
+        at_bound = at_lower | at_upper
         active = equality | (at_bound & (np.abs(y) > active_tol))
         Aa = A[active]
         n = self._qp_P.shape[0]
@@ -557,12 +654,29 @@ class InverseDynamicsQPRealizer:
             [self._qp_P, Aa.T],
             [Aa, np.zeros((na, na))],
         ]) if na else self._qp_P
-        rhs = np.vstack((-np.asarray(dq_du, dtype=float), np.zeros((na, dq_du.shape[1]))))
+        dq_du = np.asarray(dq_du, dtype=float)
+        if not np.all(np.isfinite(dq_du)):
+            return None
+        rhs = np.vstack((-dq_du, np.zeros((na, dq_du.shape[1]))))
         try:
-            sol = np.linalg.solve(kkt + 1e-9 * np.eye(kkt.shape[0]), rhs)
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                sol = np.linalg.solve(kkt + 1e-9 * np.eye(kkt.shape[0]), rhs)
         except np.linalg.LinAlgError:
             return None
-        return sol[:n]
+        if not np.all(np.isfinite(sol)):
+            return None
+        return sol[:n], sol[n:], active, at_lower, at_upper
+
+    def input_sensitivity(self, dq_du: np.ndarray, active_tol: float = 1e-6) -> np.ndarray | None:
+        """Return ``dz/du`` on the current active-set cell.
+
+        This compatibility wrapper retains the original mapper API.  New
+        critical-region construction should call
+        :meth:`input_sensitivity_with_duals` so active dual feasibility is not
+        silently omitted.
+        """
+        sensitivity = self.input_sensitivity_with_duals(dq_du, active_tol)
+        return None if sensitivity is None else sensitivity[0]
 
     def command(
         self,
@@ -581,7 +695,29 @@ class InverseDynamicsQPRealizer:
         swing_task: dict | None = None,
         attitude_weight: float = 8.0,
         centroidal_moment_des: np.ndarray | None = None,
+        yaw_acc_des: float = 0.0,
+        yaw_moment_des: float | None = None,
+        yaw_moment_tracking_weight: float = 0.0,
+        centroidal_moment_residual_des: np.ndarray | None = None,
+        external_hand_force_ff: np.ndarray | None = None,
+        contact_force_z_max_override: dict[str, float] | None = None,
     ):
+        self._yaw_dq_du = None
+        self._body_dq_du = None
+        self._moment_dq_du = None
+        self.last_yaw_acc_target = 0.0
+        self.last_yaw_moment_target = 0.0
+        self.last_yaw_moment = 0.0
+        self.last_yaw_output_kind = "acceleration"
+        self.last_centroidal_moment_target = np.zeros(3)
+        self.last_centroidal_moment = np.zeros(3)
+        external_hand_force_ff = (
+            np.zeros(3) if external_hand_force_ff is None
+            else np.asarray(external_hand_force_ff, dtype=float).reshape(3)
+        )
+        self.last_external_hand_force_ff = external_hand_force_ff.copy()
+        if yaw_moment_tracking_weight < 0.0:
+            raise ValueError("yaw_moment_tracking_weight must be nonnegative")
         q_act, qd_act = self.joint_state(data)
         ncontacts = len(stance_contacts)
         nlam = 3 * ncontacts
@@ -620,10 +756,25 @@ class InverseDynamicsQPRealizer:
             # the ankle CoP -- the hip strategy.
             C_h = np.zeros((1, n)); C_h[:, 2] = 1.0
             self._add_ls(P, q, C_h,
-                         np.clip(np.array([80.0 * (base_height_ref - data.qpos[2]) - 14.0 * data.qvel[2]]), -35.0, 35.0),
-                         8.0)
+                        np.clip(np.array([80.0 * (base_height_ref - data.qpos[2]) - 14.0 * data.qvel[2]]), -35.0, 35.0),
+                        8.0)
             C_att = np.zeros((3, n)); C_att[:, 3:6] = np.eye(3)
-            self._add_ls(P, q, C_att, np.clip(-42.0 * rpy - 9.0 * data.qvel[3:6], -35.0, 35.0), attitude_weight)
+            attitude_acc_des = -42.0 * rpy - 9.0 * data.qvel[3:6]
+            # The legacy controller leaves yaw to this fixed PD target.  A
+            # centroidal yaw-moment controller instead owns the yaw channel
+            # through the contact-wrench objective below; retaining both
+            # objectives would request mutually inconsistent yaw dynamics.
+            # Roll/pitch PD remains active in either mode.
+            if yaw_moment_des is None and centroidal_moment_residual_des is None:
+                attitude_acc_des[2] += float(yaw_acc_des)
+            else:
+                attitude_acc_des[2] = float(yaw_acc_des)
+            self.last_yaw_acc_target = float(attitude_acc_des[2])
+            self._add_ls(P, q, C_att, np.clip(attitude_acc_des, -35.0, 35.0), attitude_weight)
+            # The yaw command changes only the yaw row of this least-squares
+            # target.  It is retained separately until the CoM sensitivity has
+            # also received its centroidal-wrench contribution below.
+            self._yaw_dq_du = -float(attitude_weight) * C_att[2:3, :].T
         else:
             C_base = np.zeros((6, n))
             C_base[:6, :6] = np.eye(6)
@@ -645,6 +796,18 @@ class InverseDynamicsQPRealizer:
         )
 
         Jc_blocks = []
+        lam_z_ub = None
+        if ncontacts and contact_force_z_max_override:
+            lam_z_ub = np.full(ncontacts, self.fz_max)
+            for i, key in enumerate(stance_contacts):
+                foot = key.split("_", 1)[0]
+                if foot in contact_force_z_max_override:
+                    lam_z_ub[i] = min(self.fz_max, float(contact_force_z_max_override[foot]))
+                elif key in contact_force_z_max_override:
+                    lam_z_ub[i] = min(self.fz_max, float(contact_force_z_max_override[key]))
+            self.last_contact_force_z_max_override = lam_z_ub.copy()
+        else:
+            self.last_contact_force_z_max_override = None
         if ncontacts:
             fz_nom = float(np.sum(model.body_mass) * 9.81 / ncontacts)
             C_lam = np.zeros((nlam, n))
@@ -668,8 +831,8 @@ class InverseDynamicsQPRealizer:
                 arm = pos - data.subtree_com[self.root_body]
                 wrench_map[3:, base:base + 3] = np.array(
                     [[0.0, -arm[2], arm[1]],
-                     [arm[2], 0.0, -arm[0]],
-                     [-arm[1], arm[0], 0.0]]
+                    [arm[2], 0.0, -arm[0]],
+                    [-arm[1], arm[0], 0.0]]
                 )
             self._add_ls(P, q, C_lam, target_lam, 2e-4)
             Jc = np.vstack(Jc_blocks)
@@ -681,7 +844,7 @@ class InverseDynamicsQPRealizer:
                 # four corner Jacobians separately is redundant and becomes
                 # numerically inconsistent when Jdot*qdot is approximated.
                 stance_feet = sorted({key.split("_", 1)[0]
-                                      for key in stance_contacts})
+                                    for key in stance_contacts})
                 fd_eps = 1e-6
                 data_fd = mujoco.MjData(model)
                 data_fd.qpos[:] = data.qpos
@@ -707,10 +870,10 @@ class InverseDynamicsQPRealizer:
                     # corresponding sole translation without imposing four
                     # redundant six-dimensional hard constraints.
                     foot_keys = [key for key in stance_contacts
-                                 if key.split("_", 1)[0] == foot]
+                                if key.split("_", 1)[0] == foot]
                     sole_pos_error = np.mean(
                         [stance_contacts[key][0] - stance_targets[key]
-                         for key in foot_keys],
+                        for key in foot_keys],
                         axis=0,
                     )
                     afoot6 = -Jdot_qdot - 36.0 * (Jfoot6 @ data.qvel)
@@ -725,8 +888,19 @@ class InverseDynamicsQPRealizer:
                 # corresponds to F_des=m*g_up.
                 total_mass = float(np.sum(model.body_mass))
                 moment_des = (np.zeros(3) if centroidal_moment_des is None
-                              else np.asarray(centroidal_moment_des, dtype=float))
+                            else np.asarray(centroidal_moment_des, dtype=float))
+                if centroidal_moment_residual_des is not None:
+                    moment_des = moment_des + np.asarray(
+                        centroidal_moment_residual_des, dtype=float
+                    ).reshape(3)
+                    self.last_yaw_output_kind = "moment"
+                if yaw_moment_des is not None:
+                    moment_des = moment_des.copy()
+                    moment_des[2] += float(yaw_moment_des)
+                    self.last_yaw_moment_target = float(moment_des[2])
+                    self.last_yaw_output_kind = "moment"
                 wrench_des = np.r_[total_mass * (np.asarray(com_acc_des) + G), moment_des]
+                self.last_centroidal_moment_target = moment_des.copy()
                 C_wrench = np.zeros((6, n))
                 C_wrench[:, self.nv + self.nu:] = wrench_map
                 self._add_ls(P, q, C_wrench, wrench_des, self.wrench_weight)
@@ -738,8 +912,29 @@ class InverseDynamicsQPRealizer:
                     self._com_dq_du = self._com_dq_du + (
                         -self.wrench_weight * total_mass * C_wrench[:2, :].T
                     )
+                if yaw_moment_des is not None:
+                    self._yaw_dq_du = -self.wrench_weight * C_wrench[5:6, :].T
+                    if yaw_moment_tracking_weight > 0.0:
+                        # Preserve the six-dimensional wrench term but add a
+                        # yaw-only allocation priority.  This is deliberately
+                        # opt-in: its contact-force trade-off is a gait
+                        # redesign, not part of the validated baseline.
+                        self._add_ls(
+                            P, q, C_wrench[5:6], moment_des[2:3],
+                            float(yaw_moment_tracking_weight),
+                        )
+                        self._yaw_dq_du = self._yaw_dq_du - (
+                            float(yaw_moment_tracking_weight) * C_wrench[5:6, :].T
+                        )
+                if centroidal_moment_residual_des is not None:
+                    self._moment_dq_du = -self.wrench_weight * C_wrench[3:6, :].T
         else:
             Jc = np.zeros((0, self.nv))
+
+        if self._com_dq_du is not None and self._moment_dq_du is not None:
+            self._body_dq_du = np.hstack((self._com_dq_du, self._moment_dq_du))
+        elif self._com_dq_du is not None and self._yaw_dq_du is not None:
+            self._body_dq_du = np.hstack((self._com_dq_du, self._yaw_dq_du))
 
         # Swing-foot Cartesian task (single support): track a lift-and-place
         # trajectory for the non-stance foot as an acceleration objective.
@@ -784,8 +979,13 @@ class InverseDynamicsQPRealizer:
                     continue
                 qdd_lb[dof] = 2.0 * (lo + eps - predicted_no_acc) / dt**2
                 qdd_ub[dof] = 2.0 * (hi - eps - predicted_no_acc) / dt**2
-        result = self._solve_qp(M, data.qfrc_bias.copy(), Jc, P, q, nlam,
-                                Aeq_extra, beq_extra, qdd_lb, qdd_ub)
+        # The physical plant may be subject to an external hand force.  The
+        # controller receives only its feedforward estimate; observer-only
+        # operation leaves this value at zero.  Moving J_t^T F_hat to the left
+        # side makes the QP dynamics explicit about which load it models.
+        modeled_bias = data.qfrc_bias.copy() - hand_jac.T @ external_hand_force_ff
+        result = self._solve_qp(M, modeled_bias, Jc, P, q, nlam,
+                                Aeq_extra, beq_extra, qdd_lb, qdd_ub, lam_z_ub)
         self.last_qdd_lower = np.full(self.nv, -120.0)
         self.last_qdd_upper = np.full(self.nv, 120.0)
         if qdd_lb is not None:
@@ -800,6 +1000,7 @@ class InverseDynamicsQPRealizer:
             data.ctrl[self.ctrl_id] = tau
             self.last_eq_residual = np.inf
             self.last_body_acc_residual = np.inf
+            self.last_task_acc_tracking_slack_norm = np.inf
             self.last_task_acc_residual = np.inf
             self.last_contact_force = np.zeros(nlam)
             self.last_wrench_slack = np.full(6, np.inf)
@@ -817,14 +1018,20 @@ class InverseDynamicsQPRealizer:
         saturation = np.maximum(tau_qp - self.torque_max, 0.0) + np.maximum(self.torque_min - tau_qp, 0.0)
         tau = np.clip(tau_qp, self.torque_min, self.torque_max)
         lam = z[self.nv + self.nu:] if nlam else np.zeros(0)
-        dyn = M @ qdd + data.qfrc_bias - self.Btau @ tau
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            dyn = M @ qdd + data.qfrc_bias - self.Btau @ tau
         if nlam:
-            dyn -= Jc.T @ lam
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                dyn -= Jc.T @ lam
+            dyn -= hand_jac.T @ external_hand_force_ff
+        if not np.all(np.isfinite(dyn)):
+            raise FloatingPointError("non-finite inverse-dynamics residual")
         self.last_eq_residual = float(np.linalg.norm(dyn))
         # True body/task realization residuals: realized minus requested acceleration
         # (the soft-objective residuals of the CoM and hand acceleration objectives).
         self.last_task_slack = hand_jac @ qdd - task_acc_des
-        self.last_task_acc_residual = float(np.linalg.norm(self.last_task_slack))
+        self.last_task_acc_tracking_slack_norm = float(np.linalg.norm(self.last_task_slack))
+        self.last_task_acc_residual = self.last_task_acc_tracking_slack_norm
         if com_acc_des is not None:
             Jcom_r = np.zeros((3, self.nv))
             mujoco.mj_jacSubtreeCom(model, data, Jcom_r, self.root_body)
@@ -833,7 +1040,11 @@ class InverseDynamicsQPRealizer:
             self.last_body_acc_residual = float("nan")
         self.last_contact_force = lam.copy()
         self.last_wrench_slack = (wrench_map @ lam - wrench_des
-                                  if wrench_des is not None else np.full(6, np.nan))
+                                if wrench_des is not None else np.full(6, np.nan))
+        self._last_wrench_map = wrench_map.copy()
+        if wrench_des is not None:
+            self.last_centroidal_moment = (wrench_map[3:] @ lam).copy()
+            self.last_yaw_moment = float(wrench_map[5] @ lam)
         if foot_eq_rows:
             Cc = np.vstack(foot_eq_rows)[:, :self.nv]
             ac = np.concatenate(foot_eq_targets)
@@ -842,7 +1053,6 @@ class InverseDynamicsQPRealizer:
             self.last_contact_acc_residual = float("nan")
         data.ctrl[self.ctrl_id] = tau
         return tau, tau_qp, saturation
-
 
 def make_push(seed: int, enabled: bool) -> PushSpec:
     if not enabled:
@@ -853,7 +1063,6 @@ def make_push(seed: int, enabled: bool) -> PushSpec:
     mag = float(rng.uniform(55.0, 95.0))
     angle = float(rng.uniform(-math.pi, math.pi))
     return PushSpec(start=start, duration=duration, force=mag * np.array([math.cos(angle), math.sin(angle), 0.0]))
-
 
 def run_trial(
     seed: int,
@@ -872,7 +1081,7 @@ def run_trial(
         jid = joint_id(model, joint_name)
         data.qpos[model.jnt_qposadr[jid]] = value
         data.qvel[model.jnt_dofadr[jid]] = 0.0
-    mujoco.mj_forward(model, data)
+        mujoco.mj_forward(model, data)
 
     command_layer = G1CommandLayer()
     realizer = InverseDynamicsQPRealizer(model, exact_realizer=exact_realizer)
@@ -935,11 +1144,11 @@ def run_trial(
         step_len = 0.05 if scenario == "walk" else 0.0
         quasi_static_switch = exact_realizer and scenario == "contact_switch"
         dcm_plan = DCMWalk(left0, right0, step_len, n_steps=12, z_c=z_c,
-                           t_step=0.60 if quasi_static_switch else 0.36,
-                           t_ds=0.20 if quasi_static_switch else 0.12,
-                           t_settle=0.8)
+                        t_step=0.60 if quasi_static_switch else 0.36,
+                        t_ds=0.20 if quasi_static_switch else 0.12,
+                        t_settle=0.8)
         walk_body_mpc = NormalizedMPC(dim=2, dt=COMMAND_DT, horizon=35,
-                                      q_pos=90.0, q_vel=16.0, r=0.05, u_max=np.array([6.0, 6.0]))
+                                    q_pos=90.0, q_vel=16.0, r=0.05, u_max=np.array([6.0, 6.0]))
 
     d_body = np.zeros(2)
     d_task = np.zeros(3)
@@ -972,7 +1181,7 @@ def run_trial(
         "tau_limit_utilization": np.zeros(steps),
         "dynamics_equality_residual": np.zeros(steps),
         "body_acc_residual": np.zeros(steps),
-        "task_acc_residual": np.zeros(steps),
+        "task_acc_tracking_slack": np.zeros(steps),
         "realizer_fallback": np.zeros(steps, dtype=int),
         "contact_force_norm": np.zeros(steps),
         "wrench_slack": np.zeros((steps, 6)),
@@ -1031,7 +1240,7 @@ def run_trial(
                 com_ref_acc = dcm_plan.w * (xi_dot - com_ref_vel_xy)
                 com_ref_xy = com_ref_xy + com_ref_vel_xy * COMMAND_DT
                 x_body = np.r_[com[:2] - com_ref_xy,
-                               com_velocity(model, data, realizer.root_body)[:2] - com_ref_vel_xy]
+                            com_velocity(model, data, realizer.root_body)[:2] - com_ref_vel_xy]
                 u_body = walk_body_mpc.solve(x_body, d_body)
                 d_body, innovation_body = body_obs.step(com[:2] - com_ref_xy, u_body)
                 x_task = np.r_[hand - hand_ref, hand_vel - hand_v_ref]
@@ -1046,10 +1255,10 @@ def run_trial(
                     lift = 0.025 if (exact_realizer and scenario == "contact_switch") else 0.05
                     zt = ground_z_walk + lift * np.sin(np.pi * s)
                     swing_cmd = dict(sid=sid, pos_des=np.array([xy[0], xy[1], zt]),
-                                     vel_des=np.zeros(3),
-                                     kp=180.0 if exact_realizer else 280.0,
-                                     kd=25.0 if exact_realizer else 32.0,
-                                     weight=10.0 if exact_realizer else 14.0)
+                                    vel_des=np.zeros(3),
+                                    kp=180.0 if exact_realizer else 280.0,
+                                    kd=25.0 if exact_realizer else 32.0,
+                                    weight=10.0 if exact_realizer else 14.0)
                 else:
                     swing_cmd = None
         else:
@@ -1078,7 +1287,7 @@ def run_trial(
 
             if k % command_period == 0:
                 x_body = np.r_[com[:2] - com_ref[:2],
-                               com_velocity(model, data, realizer.root_body)[:2] - traj.velocity]
+                            com_velocity(model, data, realizer.root_body)[:2] - traj.velocity]
                 u_body = body_mpc.solve(x_body, d_body)
                 d_body, innovation_body = body_obs.step(com[:2] - com_ref[:2], u_body)
                 x_task = np.r_[hand - hand_ref, hand_vel - hand_v_ref]
@@ -1152,7 +1361,7 @@ def run_trial(
         log["tau_limit_utilization"][k] = float(np.max(np.abs(tau) / tau_limit))
         log["dynamics_equality_residual"][k] = realizer.last_eq_residual
         log["body_acc_residual"][k] = realizer.last_body_acc_residual
-        log["task_acc_residual"][k] = realizer.last_task_acc_residual
+        log["task_acc_tracking_slack"][k] = realizer.last_task_acc_tracking_slack_norm
         log["realizer_fallback"][k] = int(realizer.last_fallback)
         log["contact_force_norm"][k] = float(np.linalg.norm(realizer.last_contact_force))
         log["wrench_slack"][k] = realizer.last_wrench_slack
@@ -1172,9 +1381,8 @@ def run_trial(
             break
 
     summary = summarize_trial(log, seed, scenario, duration, distance, push,
-                              contact_events, model_path, exact_realizer)
+                            contact_events, model_path, exact_realizer)
     return log, summary
-
 
 def summarize_trial(log, seed, scenario, requested_duration, distance, push,
                     contact_events, model_path, exact_realizer=False):
@@ -1188,7 +1396,8 @@ def summarize_trial(log, seed, scenario, requested_duration, distance, push,
     residual = log["dynamics_equality_residual"][:end + 1]
     finite_residual = residual[np.isfinite(residual)]
     body_res = log["body_acc_residual"][:end + 1]; body_res = body_res[np.isfinite(body_res)]
-    task_res = log["task_acc_residual"][:end + 1]; task_res = task_res[np.isfinite(task_res)]
+    task_res = log["task_acc_tracking_slack"][:end + 1];
+    task_res = task_res[np.isfinite(task_res)]
     wrench_res = np.linalg.norm(log["wrench_slack"][:end + 1], axis=1)
     wrench_res = wrench_res[np.isfinite(wrench_res)]
     contact_res = log["contact_acc_residual"][:end + 1]
@@ -1222,13 +1431,13 @@ def summarize_trial(log, seed, scenario, requested_duration, distance, push,
         "max_realizer_residual": finite_or_none(np.max(finite_residual)) if finite_residual.size else None,
         "max_dynamics_equality_residual": finite_or_none(np.max(finite_residual)) if finite_residual.size else None,
         "max_body_acc_residual": finite_or_none(np.max(body_res)) if body_res.size else None,
-        "max_task_acc_residual": finite_or_none(np.max(task_res)) if task_res.size else None,
+        "max_task_acc_tracking_slack": finite_or_none(np.max(task_res)) if task_res.size else None,
         "max_wrench_slack_norm": finite_or_none(np.max(wrench_res)) if wrench_res.size else None,
         "max_contact_acc_residual": finite_or_none(np.max(contact_res)) if contact_res.size else None,
         "num_realizer_fallbacks": int(np.sum(log["realizer_fallback"][:end + 1])),
         "max_contact_force_norm_n": float(np.max(log["contact_force_norm"][:end + 1])),
         "min_friction_margin": finite_or_none(np.min(log["friction_margin"][:end + 1])),
-        "hand_rms_error_mm": float(1000.0 * np.sqrt(np.mean(np.sum((log["hand"][:end + 1] - log["hand_ref"][:end + 1]) ** 2, axis=1)))),
+        "hand_rms_error_mm": float(1000.0 * np.sqrt(np.mean(np.sum((log["hand"][ :end + 1] - log["hand_ref"][ :end + 1]) ** 2, axis=1)))),
         "fell": fell,
         "passes_torque_realizer_smoke": bool(
             (not fell) and t[end] > 0.95 * t[-1]
@@ -1285,7 +1494,6 @@ def save_plot(log, summary, out_png):
     fig.savefig(out_png, dpi=180)
     plt.close(fig)
 
-
 def aggregate(summaries):
     return {
         "num_trials": len(summaries),
@@ -1298,11 +1506,9 @@ def aggregate(summaries):
         "trials": summaries,
     }
 
-
 def finite_or_none(value: float):
     value = float(value)
     return value if np.isfinite(value) else None
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -1321,7 +1527,7 @@ def main():
         seed = args.seed + i
         push_enabled = args.push or args.scenario == "stand_push"
         log, summary = run_trial(seed, args.duration, args.scenario, args.distance,
-                                 push_enabled, args.exact_realizer)
+                                push_enabled, args.exact_realizer)
         mode = "_exact" if args.exact_realizer else ""
         prefix = f"g1_torque_{args.scenario}{mode}_seed{seed}"
         np.savez_compressed(RESULTS / f"{prefix}_log.npz", **log)
@@ -1338,7 +1544,6 @@ def main():
         json.dump(agg, f, indent=2)
     print(json.dumps(agg, indent=2))
     print(f"saved: {out}")
-
 
 if __name__ == "__main__":
     main()

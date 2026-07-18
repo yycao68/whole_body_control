@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.22)  14 JUL 2026 20:21
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.22)  18 JUL 2026 11:22
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -253,50 +253,83 @@ Package: array 2025/09/25 v2.6n Tabular extension package (FMi)
 \backup@length=\skip59
 \ar@cellbox=\box58
 )
+(/usr/local/texlive/2026/texmf-dist/tex/latex/booktabs/booktabs.sty
+Package: booktabs 2020/01/12 v1.61803398 Publication quality tables
+\heavyrulewidth=\dimen185
+\lightrulewidth=\dimen186
+\cmidrulewidth=\dimen187
+\belowrulesep=\dimen188
+\belowbottomsep=\dimen189
+\aboverulesep=\dimen190
+\abovetopsep=\dimen191
+\cmidrulesep=\dimen192
+\cmidrulekern=\dimen193
+\defaultaddspace=\dimen194
+\@cmidla=\count302
+\@cmidlb=\count303
+\@aboverulesep=\dimen195
+\@belowrulesep=\dimen196
+\@thisruleclass=\count304
+\@lastruleclass=\count305
+\@thisrulewidth=\dimen197
+)
+(/usr/local/texlive/2026/texmf-dist/tex/latex/tools/calc.sty
+Package: calc 2025/03/01 v4.3b Infix arithmetic (KKT,FJ)
+\calc@Acount=\count306
+\calc@Bcount=\count307
+\calc@Adimen=\dimen198
+\calc@Bdimen=\dimen199
+\calc@Askip=\skip60
+\calc@Bskip=\skip61
+LaTeX Info: Redefining \setlength on input line 86.
+LaTeX Info: Redefining \addtolength on input line 87.
+\calc@Ccount=\count308
+\calc@Cskip=\skip62
+)
 (/usr/local/texlive/2026/texmf-dist/tex/latex/url/url.sty
 \Urlmuskip=\muskip18
 Package: url 2013/09/16  ver 3.4  Verb mode for urls, etc.
 )
-\c@theorem=\count302
-\c@proposition=\count303
-\c@definition=\count304
-\c@assumption=\count305
+\c@theorem=\count309
+\c@proposition=\count310
+\c@definition=\count311
+\c@assumption=\count312
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def
 File: l3backend-pdftex.def 2025-10-09 L3 backend support: PDF output (pdfTeX)
-\l__color_backend_stack_int=\count306
+\l__color_backend_stack_int=\count313
 )
 (./wbc_v3.aux)
 \openout1 = `wbc_v3.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 19.
-LaTeX Font Info:    ... okay on input line 19.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 19.
-LaTeX Font Info:    ... okay on input line 19.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 19.
-LaTeX Font Info:    ... okay on input line 19.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 19.
-LaTeX Font Info:    ... okay on input line 19.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 19.
-LaTeX Font Info:    ... okay on input line 19.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 19.
-LaTeX Font Info:    ... okay on input line 19.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 19.
-LaTeX Font Info:    ... okay on input line 19.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 21.
+LaTeX Font Info:    ... okay on input line 21.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 21.
+LaTeX Font Info:    ... okay on input line 21.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 21.
+LaTeX Font Info:    ... okay on input line 21.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 21.
+LaTeX Font Info:    ... okay on input line 21.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 21.
+LaTeX Font Info:    ... okay on input line 21.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 21.
+LaTeX Font Info:    ... okay on input line 21.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 21.
+LaTeX Font Info:    ... okay on input line 21.
 
 -- Lines per column: 58 (exact).
 (/usr/local/texlive/2026/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
 [Loading MPS to PDF converter (version 2006.09.02).]
-\scratchcounter=\count307
-\scratchdimen=\dimen185
+\scratchcounter=\count314
+\scratchdimen=\dimen256
 \scratchbox=\box59
-\nofMPsegments=\count308
-\nofMParguments=\count309
+\nofMPsegments=\count315
+\nofMParguments=\count316
 \everyMPshowfont=\toks33
-\MPscratchCnt=\count310
-\MPscratchDim=\dimen186
-\MPnumerator=\count311
-\makeMPintoPDFobject=\count312
+\MPscratchCnt=\count317
+\MPscratchDim=\dimen257
+\MPnumerator=\count318
+\makeMPintoPDFobject=\count319
 \everyMPtoPDFconversion=\toks34
 ) (/usr/local/texlive/2026/texmf-dist/tex/latex/epstopdf-pkg/epstopdf-base.sty
 Package: epstopdf-base 2020-01-24 v2.11 Base part for package epstopdf
@@ -307,21 +340,21 @@ Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
 File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Liv
 e
 ))
-LaTeX Font Info:    Trying to load font information for U+msa on input line 28.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 30.
 
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/amsfonts/umsa.fd
 File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 28.
+LaTeX Font Info:    Trying to load font information for U+msb on input line 30.
 
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/amsfonts/umsb.fd
 File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 )
-Underfull \hbox (badness 1769) in paragraph at lines 27--29
-[]\T1/ptm/b/it/9 Abstract\T1/ptm/b/n/9 ---Floating-base loco-manipulation is us
-u-ally split
+Underfull \hbox (badness 1460) in paragraph at lines 29--31
+[]\T1/ptm/b/it/9 Abstract\T1/ptm/b/n/9 ---Floating-base whole-body con-trol is 
+of-ten split
  []
 
 [1{/usr/local/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/usr/l
@@ -329,80 +362,135 @@ ocal/texlive/2026/texmf-dist/fonts/enc/dvips/base/8r.enc}
 
 
 ]
-<figures/multirate_architecture.png, id=20, 809.78535pt x 437.2335pt>
+<figures/multirate_architecture.png, id=19, 809.78535pt x 437.2335pt>
 File: figures/multirate_architecture.png Graphic file (type png)
 <use figures/multirate_architecture.png>
 Package pdftex.def Info: figures/multirate_architecture.png  used on input line
- 80.
-(pdftex.def)             Requested size: 505.6778pt x 273.03008pt.
+ 86.
+(pdftex.def)             Requested size: 464.39685pt x 250.74014pt.
  [2]
-Underfull \vbox (badness 1281) has occurred while \output is active []
+Underfull \vbox (badness 1215) has occurred while \output is active []
 
 <figures/prediction_realization_concept.png, id=27, 556.05388pt x 209.583pt>
 File: figures/prediction_realization_concept.png Graphic file (type png)
 <use figures/prediction_realization_concept.png>
 Package pdftex.def Info: figures/prediction_realization_concept.png  used on in
-put line 130.
+put line 141.
 (pdftex.def)             Requested size: 252.0pt x 94.97984pt.
- [3 <./figures/multirate_architecture.png> <./figures/prediction_realization_co
-ncept.png>]
-[4] [5]
-Underfull \hbox (badness 10000) in paragraph at lines 388--389
+ [3 <./figures/multirate_architecture.png>] [4 <./figures/prediction_realizatio
+n_concept.png>]
+Overfull \hbox (96.74733pt too wide) detected at line 303
+[] [] \OT1/cmr/m/n/10 = [] \OML/cmm/m/it/10 ;  z[]\OT1/cmr/m/n/10 (\OML/cmm/m/i
+t/10 u\OT1/cmr/m/n/10 ) = \OML/cmm/m/it/10 z[] \OT1/cmr/m/n/10 + \OML/cmm/m/it/
+10 K^^Nu;  ^^W[]\OT1/cmr/m/n/10 (\OML/cmm/m/it/10 u\OT1/cmr/m/n/10 ) = \OML/cmm
+/m/it/10 ^^W[] \OT1/cmr/m/n/10 + \OML/cmm/m/it/10 L[]^^Nu:
+ []
+
+[5]
+Overfull \hbox (59.06856pt too wide) detected at line 407
+[] \OT1/cmr/m/n/10 = \OML/cmm/m/it/10 F[] \OMS/cmsy/m/n/10 ^^@ []\OML/cmm/m/it/
+10 ;  d[] \OT1/cmr/m/n/10 = ^^C[]([] + \OML/cmm/m/it/10 r[]\OT1/cmr/m/n/10 )\OM
+L/cmm/m/it/10 ;  r[] \OT1/cmr/m/n/10 = ^^C[](\OML/cmm/m/it/10 F[] \OMS/cmsy/m/n
+/10 ^^@ \OML/cmm/m/it/10 F[]\OT1/cmr/m/n/10 )\OML/cmm/m/it/10 :
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 432--433
 []\T1/ptm/m/n/10 the canon-i-cal three-dimensional exact-ZOH double-
  []
 
-[6] [7] [8] [9] [10]
-Underfull \hbox (badness 2435) in paragraph at lines 607--608
+[6]
+Overfull \hbox (55.52435pt too wide) detected at line 501
+[] \OT1/cmr/m/n/10 = []  [] = \OML/cmm/m/it/10 F[] \OMS/cmsy/m/n/10 ^^@ []\OML/
+cmm/m/it/10 :
+ []
+
+[7]
+Underfull \hbox (badness 5652) in paragraph at lines 573--574
+[]\T1/ptm/m/n/10 Feasibility of in-de-pen-dently com-puted coordinate-ray
+ []
+
+[8]
+Overfull \hbox (91.63783pt too wide) detected at line 609
+\OML/cmm/m/it/10 z\OT1/cmr/m/n/10 (\OML/cmm/m/it/10 u\OT1/cmr/m/n/10 ) = \OML/c
+mm/m/it/10 z[] \OT1/cmr/m/n/10 + \OML/cmm/m/it/10 K^^Nu;  ^^W[]\OT1/cmr/m/n/10 
+(\OML/cmm/m/it/10 u\OT1/cmr/m/n/10 ) = \OML/cmm/m/it/10 ^^W[] \OT1/cmr/m/n/10 +
+ \OML/cmm/m/it/10 L[]^^Nu;  [] [] \OT1/cmr/m/n/10 = [] \OML/cmm/m/it/10 ;
+ []
+
+<figures/e5_admissible_set.png, id=52, 361.35pt x 332.08064pt>
+File: figures/e5_admissible_set.png Graphic file (type png)
+<use figures/e5_admissible_set.png>
+Package pdftex.def Info: figures/e5_admissible_set.png  used on input line 697.
+
+(pdftex.def)             Requested size: 474.71906pt x 436.27028pt.
+[9]
+<figures/e6_task_port_timeseries.png, id=56, 448.074pt x 245.718pt>
+File: figures/e6_task_port_timeseries.png Graphic file (type png)
+<use figures/e6_task_port_timeseries.png>
+Package pdftex.def Info: figures/e6_task_port_timeseries.png  used on input lin
+e 791.
+(pdftex.def)             Requested size: 252.0pt x 138.19353pt.
+ [10]
+Underfull \vbox (badness 10000) has occurred while \output is active []
+
+ [11 <./figures/e5_admissible_set.png>]
+Underfull \hbox (badness 2435) in paragraph at lines 843--844
 []\T1/ptm/m/n/8 Y. Cao and J. Tang, ``To-ward in-ter-ac-tion dy-nam-ics: A pre-
 dic-
  []
 
 
-Underfull \hbox (badness 1389) in paragraph at lines 607--608
+Underfull \hbox (badness 1389) in paragraph at lines 843--844
 \T1/ptm/m/n/8 tive frame-work for safe phys-i-cal human-robot in-ter-ac-tion,''
  2026,
  []
 
-[11] (./wbc_v3.aux)
+[12 <./figures/e6_task_port_timeseries.png>] [13
+
+] (./wbc_v3.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
  ) 
 Here is how much of TeX's memory you used:
- 4033 strings out of 467525
- 62067 string characters out of 5418982
- 498416 words of memory out of 5000000
- 32897 multiletter control sequences out of 15000+600000
- 749223 words of font info for 166 fonts, out of 8000000 for 9000
+ 4226 strings out of 467525
+ 65445 string characters out of 5418982
+ 504982 words of memory out of 5000000
+ 33080 multiletter control sequences out of 15000+600000
+ 750134 words of font info for 169 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 57i,9n,65p,1805b,260s stack positions out of 10000i,1000n,20000p,200000b,200000s
-</usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb
-></usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb>
-</usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb><
-/usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></u
-sr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi6.pfb></usr
-/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></usr/l
-ocal/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></usr/loc
-al/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi9.pfb></usr/local
-/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/local/t
-exlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb></usr/local/texl
-ive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/local/texlive
-/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/local/texlive/20
-26/texmf-dist/fonts/type1/public/amsfonts/cm/cmr9.pfb></usr/local/texlive/2026/
-texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/local/texlive/2026/t
-exmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/local/texlive/2026/tex
-mf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></usr/local/texlive/2026/texmf
--dist/fonts/type1/public/amsfonts/cm/cmsy9.pfb></usr/local/texlive/2026/texmf-d
-ist/fonts/type1/public/amsfonts/symbols/msam10.pfb></usr/local/texlive/2026/tex
-mf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/local/texlive/2026/texmf-dist/fo
-nts/type1/urw/times/utmbi8a.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1
-/urw/times/utmr8a.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1/urw/times
-/utmri8a.pfb>
-Output written on wbc_v3.pdf (11 pages, 544354 bytes).
+ 57i,13n,65p,1151b,301s stack positions out of 10000i,1000n,20000p,200000b,200000s
+</usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx9.pfb>
+</usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb><
+/usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></
+usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></us
+r/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi6.pfb></usr/
+local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></usr/lo
+cal/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></usr/loca
+l/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi9.pfb></usr/local/
+texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/local/te
+xlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb></usr/local/texli
+ve/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb></usr/local/texlive/
+2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/local/texlive/202
+6/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/local/texlive/2026/t
+exmf-dist/fonts/type1/public/amsfonts/cm/cmr9.pfb></usr/local/texlive/2026/texm
+f-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/local/texlive/2026/texmf
+-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr/local/texlive/2026/texmf-d
+ist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/local/texlive/2026/texmf-dis
+t/fonts/type1/public/amsfonts/cm/cmsy8.pfb></usr/local/texlive/2026/texmf-dist/
+fonts/type1/public/amsfonts/cm/cmsy9.pfb></usr/local/texlive/2026/texmf-dist/fo
+nts/type1/public/amsfonts/symbols/msam10.pfb></usr/local/texlive/2026/texmf-dis
+t/fonts/type1/public/amsfonts/symbols/msbm10.pfb></usr/local/texlive/2026/texmf
+-dist/fonts/type1/urw/times/utmb8a.pfb></usr/local/texlive/2026/texmf-dist/font
+s/type1/urw/times/utmbi8a.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1/u
+rw/times/utmr8a.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1/urw/times/u
+tmri8a.pfb>
+Output written on wbc_v3.pdf (13 pages, 678576 bytes).
 PDF statistics:
- 156 PDF objects out of 1000 (max. 8388607)
- 94 compressed objects within 1 object stream
+ 183 PDF objects out of 1000 (max. 8388607)
+ 108 compressed objects within 2 object streams
  0 named destinations out of 1000 (max. 500000)
- 11 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 21 words of extra memory for PDF output out of 10000 (max. 10000000)
 

@@ -112,6 +112,12 @@ class NormalizedMPC:
         upper = _stages(u_upper, "u_upper")
         if np.any(lower > upper):
             raise ValueError("u_lower must not exceed u_upper")
+        # A box update is an explicit constraint-mode change.  Without this,
+        # a prior authority polytope silently remains active because ``solve``
+        # gives it precedence, which is unsafe when a fresh local map becomes
+        # invalid and the caller deliberately requests a conservative box.
+        self._H_poly = None
+        self._h_poly = None
         self._u_lower = lower
         self._u_upper = upper
         if self._solver is None:
@@ -196,8 +202,14 @@ class NormalizedMPC:
         for i in range(N):
             Rbar[i * n_u:(i + 1) * n_u, i * n_u:(i + 1) * n_u] = self.R
 
-        H = Gamma.T @ Qbar @ Gamma + Rbar
-        K_lift = np.linalg.solve(H + 1e-10 * np.eye(H.shape[0]), Gamma.T @ Qbar @ Phi)
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            H = Gamma.T @ Qbar @ Gamma + Rbar
+            rhs = Gamma.T @ Qbar @ Phi
+        if not (np.all(np.isfinite(H)) and np.all(np.isfinite(rhs))):
+            raise FloatingPointError("non-finite normalized MPC lifted matrices")
+        K_lift = np.linalg.solve(H + 1e-10 * np.eye(H.shape[0]), rhs)
+        if not np.all(np.isfinite(K_lift)):
+            raise FloatingPointError("non-finite normalized MPC feedback gain")
 
         self.Phi = Phi
         self.Gamma = Gamma
@@ -215,7 +227,10 @@ class NormalizedMPC:
         if self._H_poly is not None:
             # Stagewise polytope on the physical command U: H u_j <= h.  With the
             # input-centered variable V = U + d_hat this is H v_j <= h + H d_hat.
-            gradient = self.Gamma.T @ self.Qbar @ (self.Phi @ x)
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                gradient = self.Gamma.T @ self.Qbar @ (self.Phi @ x)
+            if not np.all(np.isfinite(gradient)):
+                raise FloatingPointError("non-finite normalized MPC gradient")
             ub = np.tile(self._h_poly + self._H_poly @ d_hat, self.horizon)
             self._poly_solver.update(q=2.0 * gradient,
                                      l=-np.inf * np.ones(ub.size), u=ub)
@@ -252,7 +267,10 @@ class NormalizedMPC:
         dbar = np.tile(d_hat, self.horizon)
         lower = self._u_lower.reshape(-1)
         upper = self._u_upper.reshape(-1)
-        gradient = self.Gamma.T @ self.Qbar @ (self.Phi @ x)
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            gradient = self.Gamma.T @ self.Qbar @ (self.Phi @ x)
+        if not np.all(np.isfinite(gradient)):
+            raise FloatingPointError("non-finite normalized MPC gradient")
         self._solver.update(q=2.0 * gradient, l=dbar + lower, u=dbar + upper)
         result = self._solver.solve()
         if result.x is None or result.info.status_val not in (1, 2):
@@ -266,6 +284,174 @@ class NormalizedMPC:
             or np.any(self.last_u_sequence >= self._u_upper - tol)
         )
         return result.x[:self.dim] - d_hat
+
+
+@dataclass
+class YawMomentumMPC:
+    """MPC for yaw angle and centroidal yaw momentum with yaw moment input.
+
+    Its state is ``[psi, L_z]`` and its exact-ZOH model is
+    ``psi+ = psi + dt/I_z L_z + dt^2/(2 I_z) M_z`` and
+    ``L_z+ = L_z + dt M_z``.  It therefore requests a physically meaningful
+    contact-wrench moment rather than an independently realizable yaw
+    acceleration.
+    """
+
+    dt: float
+    horizon: int
+    yaw_inertia: float
+    q_yaw: float = 35.0
+    q_momentum: float = 2.0
+    r_moment: float = 0.02
+    moment_limit: float = 60.0
+
+    def __post_init__(self) -> None:
+        if self.dt <= 0.0 or self.horizon < 1 or self.yaw_inertia <= 0.0:
+            raise ValueError("dt, horizon, and yaw_inertia must be positive")
+        if self.moment_limit <= 0.0:
+            raise ValueError("moment_limit must be positive")
+        self._mpc = NormalizedMPC(
+            dim=1, dt=self.dt, horizon=self.horizon,
+            q_pos=self.q_yaw, q_vel=self.q_momentum, r=self.r_moment,
+        )
+        self._mpc.A = np.array([[1.0, self.dt / self.yaw_inertia], [0.0, 1.0]])
+        self._mpc.B = np.array([[0.5 * self.dt**2 / self.yaw_inertia], [self.dt]])
+        self._mpc.Q = np.diag([self.q_yaw, self.q_momentum])
+        self._mpc.Qf = self._mpc.Q.copy()
+        self._mpc.R = np.array([[self.r_moment]])
+        self._mpc._build_lifted_matrices()
+        self._mpc.update_input_box(-self.moment_limit, self.moment_limit)
+
+    @property
+    def last_bound_active(self) -> bool:
+        return self._mpc.last_bound_active
+
+    def update_moment_bounds(self, lower: float, upper: float) -> None:
+        self._mpc.update_input_box(float(lower), float(upper))
+
+    def solve(self, yaw: float, yaw_momentum: float) -> float:
+        return float(self._mpc.solve(np.array([yaw, yaw_momentum]))[0])
+
+
+@dataclass
+class MixedBodyMPC:
+    """Joint planar-CoM/yaw-momentum MPC with a three-input authority set.
+
+    The state uses the normalized ordering
+    ``[e_x, e_y, psi, v_x, v_y, L_z]`` and command
+    ``[a_x, a_y, M_z]``.  Planar channels are double integrators, while yaw
+    obeys the momentum dynamics used by :class:`YawMomentumMPC`.  A supplied
+    3-D polytope is imposed jointly at every horizon stage, so a yaw moment is
+    never selected after fixing a planar command that leaves it infeasible.
+    """
+
+    dt: float
+    horizon: int
+    yaw_inertia: float
+    q_planar_pos: float = 70.0
+    q_planar_vel: float = 2.0
+    q_yaw: float = 35.0
+    q_momentum: float = 2.0
+    r_planar: float = 0.02
+    r_moment: float = 0.02
+
+    def __post_init__(self) -> None:
+        if self.dt <= 0.0 or self.horizon < 1 or self.yaw_inertia <= 0.0:
+            raise ValueError("dt, horizon, and yaw_inertia must be positive")
+        self._mpc = NormalizedMPC(
+            dim=3, dt=self.dt, horizon=self.horizon,
+            q_pos=self.q_planar_pos, q_vel=self.q_planar_vel, r=self.r_planar,
+        )
+        self._mpc.A[2, 5] = self.dt / self.yaw_inertia
+        self._mpc.B[2, 2] = 0.5 * self.dt**2 / self.yaw_inertia
+        self._mpc.B[5, 2] = self.dt
+        self._mpc.Q = np.diag([
+            self.q_planar_pos, self.q_planar_pos, self.q_yaw,
+            self.q_planar_vel, self.q_planar_vel, self.q_momentum,
+        ])
+        self._mpc.Qf = self._mpc.Q.copy()
+        self._mpc.R = np.diag([self.r_planar, self.r_planar, self.r_moment])
+        self._mpc._build_lifted_matrices()
+
+    @property
+    def last_polytope_failed(self) -> bool:
+        return self._mpc.last_polytope_failed
+
+    def update_input_polytope(self, H: np.ndarray, h: np.ndarray) -> None:
+        self._mpc.update_input_polytope(H, h)
+
+    def update_input_box(self, lower: np.ndarray, upper: np.ndarray) -> None:
+        self._mpc.update_input_box(lower, upper)
+
+    def solve(self, planar_error: np.ndarray, planar_velocity: np.ndarray,
+              yaw: float, yaw_momentum: float) -> np.ndarray:
+        state = np.r_[np.asarray(planar_error, dtype=float).reshape(2), float(yaw),
+                      np.asarray(planar_velocity, dtype=float).reshape(2),
+                      float(yaw_momentum)]
+        return self._mpc.solve(state)
+
+
+@dataclass
+class CentroidalBodyMPC:
+    """Joint planar-CoM and three-axis centroidal-momentum MPC.
+
+    State ordering is ``[e_x,e_y,rpy_x,rpy_y,rpy_z,v_x,v_y,L_x,L_y,L_z]``;
+    input ordering is ``[a_x,a_y,M_x,M_y,M_z]``.  The angular model is the
+    local rigid-body approximation $\dot rpy \approx I^{-1}L$ and
+    $\dot L=M$.  It is intended for a short, contact-fixed horizon only.
+    """
+
+    dt: float
+    horizon: int
+    angular_inertia: np.ndarray
+    q_planar_pos: float = 70.0
+    q_planar_vel: float = 2.0
+    q_attitude: float = 50.0
+    q_momentum: float = 2.0
+    r_planar: float = 0.02
+    r_moment: float = 0.02
+
+    def __post_init__(self) -> None:
+        inertia = np.asarray(self.angular_inertia, dtype=float).reshape(3)
+        if self.dt <= 0.0 or self.horizon < 1 or np.any(~np.isfinite(inertia)) or np.any(inertia <= 0.0):
+            raise ValueError("dt, horizon, and positive finite angular_inertia are required")
+        self.angular_inertia = inertia
+        self._mpc = NormalizedMPC(
+            dim=5, dt=self.dt, horizon=self.horizon,
+            q_pos=self.q_planar_pos, q_vel=self.q_planar_vel, r=self.r_planar,
+        )
+        inv_inertia = 1.0 / inertia
+        self._mpc.A[2:5, 7:10] = self.dt * np.diag(inv_inertia)
+        self._mpc.B[2:5, 2:5] = 0.5 * self.dt**2 * np.diag(inv_inertia)
+        self._mpc.B[7:10, 2:5] = self.dt * np.eye(3)
+        self._mpc.Q = np.diag([
+            self.q_planar_pos, self.q_planar_pos,
+            self.q_attitude, self.q_attitude, self.q_attitude,
+            self.q_planar_vel, self.q_planar_vel,
+            self.q_momentum, self.q_momentum, self.q_momentum,
+        ])
+        self._mpc.Qf = self._mpc.Q.copy()
+        self._mpc.R = np.diag([
+            self.r_planar, self.r_planar,
+            self.r_moment, self.r_moment, self.r_moment,
+        ])
+        self._mpc._build_lifted_matrices()
+
+    def update_input_polytope(self, H: np.ndarray, h: np.ndarray) -> None:
+        self._mpc.update_input_polytope(H, h)
+
+    def update_input_box(self, lower: np.ndarray, upper: np.ndarray) -> None:
+        self._mpc.update_input_box(lower, upper)
+
+    def solve(self, planar_error: np.ndarray, planar_velocity: np.ndarray,
+              rpy: np.ndarray, angular_momentum: np.ndarray) -> np.ndarray:
+        state = np.r_[
+            np.asarray(planar_error, dtype=float).reshape(2),
+            np.asarray(rpy, dtype=float).reshape(3),
+            np.asarray(planar_velocity, dtype=float).reshape(2),
+            np.asarray(angular_momentum, dtype=float).reshape(3),
+        ]
+        return self._mpc.solve(state)
 
 
 class RandomWalkDisturbanceObserver:
@@ -288,24 +474,52 @@ class RandomWalkDisturbanceObserver:
         self.R = r_y * np.eye(n)
         self.z = np.zeros(3 * n)
         self.P = np.eye(3 * n)
+        self.last_S = np.eye(n)          # innovation covariance of the last step()
+        self.last_eta = 0.0              # normalized innovation, Eq. (25): nu^T S^-1 nu
 
     def reset(self):
         self.z[:] = 0.0
         self.P[:] = np.eye(3 * self.dim)
+        self.last_S = np.eye(self.dim)
+        self.last_eta = 0.0
 
     def step(self, y: np.ndarray, u: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         y = np.asarray(y, dtype=float).reshape(self.dim)
         u = np.asarray(u, dtype=float).reshape(self.dim)
+        if not (np.all(np.isfinite(y)) and np.all(np.isfinite(u))
+            and np.all(np.isfinite(self.z)) and np.all(np.isfinite(self.P))):
+            # A failed physics/controller stress trajectory must not poison the
+            # next observer update with NaNs or an overflowing covariance.  The
+            # caller's realization and state safety gates still decide whether
+            # to terminate; this guard only returns a neutral estimate.
+            self.reset()
+            return np.zeros(self.dim), np.zeros(self.dim)
 
         # Correct the current prior with y_k, then propagate with u_k to form
         # the prior for k+1.  This avoids comparing y_k against a state already
         # advanced by the newly computed u_k.
         innovation = y - self.C @ self.z
         S = self.C @ self.P @ self.C.T + self.R
-        K = self.P @ self.C.T @ np.linalg.inv(S)
+        if not np.all(np.isfinite(S)):
+            self.reset()
+            return np.zeros(self.dim), np.zeros(self.dim)
+        try:
+            K = self.P @ self.C.T @ np.linalg.inv(S)
+        except np.linalg.LinAlgError:
+            self.reset()
+            return np.zeros(self.dim), np.zeros(self.dim)
         self.z = self.z + K @ innovation
         self.P = (np.eye(self.P.shape[0]) - K @ self.C) @ self.P
         d_corrected = self.z[2 * self.dim:].copy()
         self.z = self.Aa @ self.z + self.Ba @ u
-        self.P = self.Aa @ self.P @ self.Aa.T + self.Q
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            self.P = self.Aa @ self.P @ self.Aa.T + self.Q
+        if not (np.all(np.isfinite(self.z)) and np.all(np.isfinite(self.P))):
+            self.reset()
+            return np.zeros(self.dim), np.zeros(self.dim)
+        # Exposed for the contact-event detector of Eq. (25); does not affect
+        # filtering or control, and costs no extra solve (S is already formed
+        # above for the Kalman gain).
+        self.last_S = S
+        self.last_eta = float(innovation @ np.linalg.solve(S, innovation))
         return d_corrected, innovation

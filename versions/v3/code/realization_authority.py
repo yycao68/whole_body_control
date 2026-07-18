@@ -2,10 +2,12 @@
 
 Two estimators live here, with very different roles.
 
-``AnalyticAuthorityMapper`` (the controller path).  The 1 kHz realization loop
-already solves one whole-body QP.  The residual command ``u`` enters that QP
+``AnalyticAuthorityMapper`` (the controller path).  The 200 Hz active-mode
+optimization node already solves one whole-body QP.  The 1 kHz servo holds its
+published torque. The residual command ``u`` enters that QP
 only through objective *linear* terms, and the QP Hessian does not depend on
-``u``; therefore, on the current active-set cell, the solution is affine,
+``u``; therefore, under regularity on the current active-set cell, the solution
+is affine,
 
     z(u) = z0 + K u,      K = dz/du   (one KKT solve, no extra QP solves)
 
@@ -21,21 +23,24 @@ command,
 
     H_k u <= h_k,
 
-which is exactly the set the canonical predictor should be constrained by.  The
-canonical pair (A, B) is untouched: contact mode and configuration change only
-(H_k, h_k).  Cost is one KKT solve (~0.15 ms), not 62 QP solves (~154 ms).
+Together with primal feasibility of every inactive QP row and sign feasibility
+of each active inequality multiplier, these rows form the fixed-active-set
+critical region.  The canonical pair (A, B) is untouched: contact mode and
+configuration change only (H_k, h_k).  Cost is one KKT solve (~0.15 ms), not
+62 QP solves (~154 ms).
 
 The affine map is exact only on the *current active-set cell*.  Once a
 constraint activates, the true QP redistributes and the map bends, so H_k u <=
 h_k is a local model and NOT a certificate.  The instantaneous realizer remains
-the final hard safety layer, and the mapping's optimism/conservatism is
-quantified offline against the exact estimator below.
+the final modeled-constraint layer, and the mapping's optimism/conservatism is
+quantified offline against the repeated-QP numerical reference below.
 
-``ExactResidualBisectionEstimator`` (offline ground truth).  Repeatedly re-solves
-the hard-constrained realizer and bisects the signed coordinate rays on the
-realized-vs-requested acceleration residual.  Accurate but ~62 QP solves and
-O(100 ms); it is a *measurement procedure*, not part of the feedback loop.  Its
-job is to grade the analytic mapping (false-positive / false-negative rates).
+``ExactResidualBisectionEstimator`` (offline repeated-QP numerical reference).
+Repeatedly re-solves the modeled-constrained realizer and bisects sampled signed
+coordinate rays on the realized-vs-requested acceleration residual.  It is not
+an exact full-dimensional oracle or certificate.  At ~62 QP solves and O(100
+ms), it is a *measurement procedure*, not part of the feedback loop; its job is
+to grade the analytic mapping on the sampled rays.
 """
 
 from __future__ import annotations
@@ -55,7 +60,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class RealizationAuthority:
-    """Snapshot published by the 1 kHz loop; read by the slower predictors.
+    """Snapshot published by the active-mode QP node; read by the predictors.
 
     Consumers must check ``timestamp`` and ``contact_mode``: a stale snapshot,
     or one taken in a different contact mode, must be replaced by a conservative
@@ -172,6 +177,37 @@ class TaskAuthority:
             return False
         return bool(np.all(self.H_task @ np.asarray(u_t, float) <= self.h_task + tol))
 
+    def ray_extent(
+        self,
+        direction: np.ndarray,
+        *,
+        origin: np.ndarray | None = None,
+        maximum: float = 1.0,
+    ) -> float:
+        """Return the coupled-polytope reach on ``origin + s * direction``.
+
+        This is a directional query through the complete task polytope.  It is
+        intentionally distinct from ``axis_extent()``, whose independent
+        coordinate reaches do not define jointly feasible task commands.
+        """
+        d = np.asarray(direction, dtype=float).reshape(3)
+        o = np.zeros(3) if origin is None else np.asarray(origin, dtype=float).reshape(3)
+        if maximum <= 0.0 or not np.all(np.isfinite(d)) or not self.contains(o):
+            return 0.0
+        Hd = self.H_task @ d
+        rhs = self.h_task - self.H_task @ o
+        positive = Hd > 1e-12
+        if not np.any(positive):
+            return float(maximum)
+        return float(np.clip(np.min(rhs[positive] / Hd[positive]), 0.0, maximum))
+
+    def on_polytope_face(self, u_t: np.ndarray, tol: float = 1e-6) -> bool:
+        """Return whether a feasible task command is numerically on a face."""
+        if not self.contains(u_t, tol=tol):
+            return False
+        slack = self.h_task - self.H_task @ np.asarray(u_t, dtype=float).reshape(3)
+        return bool(np.min(slack) <= tol)
+
     def axis_extent(self, absolute_limit: float = 6.0):
         if not self.valid or self.H_task.size == 0:
             z = np.zeros(3)
@@ -188,12 +224,376 @@ class TaskAuthority:
         return lo, hi
 
 
+@dataclass(frozen=True)
+class AugmentedBodyAuthority:
+    """Local authority for $[u_x,u_y,u_\psi]$ in absolute coordinates.
+
+    This development-path object is deliberately separate from
+    ``RealizationAuthority`` so existing 2-D paper experiments are unchanged.
+    ``u_psi`` is a base yaw-acceleration request to the realizer's attitude
+    objective; it is not yet the paper's angular-momentum coordinate.
+    """
+
+    timestamp: float
+    contact_mode: tuple[str, ...]
+    H: np.ndarray
+    h: np.ndarray
+    valid: bool = True
+    status: str = "ok"
+
+    def contains(self, u: np.ndarray, tol: float = 1e-9) -> bool:
+        """Return whether an absolute three-dimensional command is in the map."""
+        if not self.valid or self.H.size == 0:
+            return False
+        return bool(np.all(self.H @ np.asarray(u, dtype=float).reshape(3) <= self.h + tol))
+
+    def ray_extent(
+        self,
+        direction: np.ndarray,
+        *,
+        origin: np.ndarray | None = None,
+        maximum: float = 1.0,
+    ) -> float:
+        """Return the coupled-polytope reach on ``origin + s * direction``.
+
+        This is a ray query, not an axis-aligned box construction.  In
+        particular, the result along a simultaneous three-axis direction can be
+        much smaller than the independent coordinate-ray reaches.
+        """
+        d = np.asarray(direction, dtype=float).reshape(3)
+        o = np.zeros(3) if origin is None else np.asarray(origin, dtype=float).reshape(3)
+        if maximum <= 0.0 or not np.all(np.isfinite(d)) or not self.contains(o):
+            return 0.0
+        Hd = self.H @ d
+        rhs = self.h - self.H @ o
+        positive = Hd > 1e-12
+        if not np.any(positive):
+            return float(maximum)
+        return float(np.clip(np.min(rhs[positive] / Hd[positive]), 0.0, maximum))
+
+    def box(self, absolute_limit: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Return independent coordinate-ray reaches for diagnostics only.
+
+        The returned lower/upper values do not define a jointly feasible box;
+        callers that need a feasible coupled command must enforce ``H u <= h``.
+        """
+        limit = np.asarray(absolute_limit, dtype=float).reshape(3)
+        if not self.valid or self.H.size == 0:
+            return np.zeros(3), np.zeros(3)
+        lo, hi = -limit.copy(), limit.copy()
+        for i in range(3):
+            for sign, target in ((1.0, hi), (-1.0, lo)):
+                direction = np.zeros(3); direction[i] = sign
+                Hd = self.H @ direction
+                pos = Hd > 1e-12
+                reach = limit[i] if not np.any(pos) else float(np.min(self.h[pos] / Hd[pos]))
+                target[i] = sign * float(np.clip(reach, 0.0, limit[i]))
+        return lo, hi
+
+
+class AugmentedBodyAuthorityMapper:
+    """Experimental local map from the current QP cell to planar-CoM plus yaw.
+
+    The map carries the same complete fixed-active-set primal and dual
+    critical-region rows as :class:`AnalyticAuthorityMapper`, but remains an
+    offline development object until it has passed the separate 3-D sampled
+    repeated-QP validation.  It must not be used to expand the paper's 2-D
+    control claim before that validation is complete.
+    """
+
+    def __init__(
+        self,
+        *,
+        torque_margin_fraction: float = 0.02,
+        friction_margin_fraction: float = 0.04,
+        normal_force_margin_n: float = 1.0,
+        realization_tolerance: float = 0.35,
+    ):
+        self.torque_margin_fraction = float(torque_margin_fraction)
+        self.friction_margin_fraction = float(friction_margin_fraction)
+        self.normal_force_margin_n = float(normal_force_margin_n)
+        self.realization_tolerance = float(realization_tolerance)
+
+    def snapshot_augmented(
+        self,
+        realizer: Any,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        *,
+        timestamp: float,
+        contact_mode: tuple[str, ...],
+        command_reference: np.ndarray,
+        yaw_tolerance: float = 1.0,
+        absolute_limit: np.ndarray = np.array([4.0, 4.0, 8.0]),
+    ) -> AugmentedBodyAuthority:
+        u_ref = np.asarray(command_reference, dtype=float).reshape(3)
+        limit = np.asarray(absolute_limit, dtype=float).reshape(3)
+        if (realizer.last_fallback or realizer._body_dq_du is None
+                or realizer._body_dq_du.shape[1] != 3
+                or not np.all(np.isfinite(u_ref))):
+            return AugmentedBodyAuthority(timestamp, contact_mode,
+                                          np.zeros((0, 3)), np.zeros(0), False,
+                                          "realizer fallback or missing body sensitivity")
+        sensitivity = realizer.input_sensitivity_with_duals(realizer._body_dq_du)
+        if sensitivity is None:
+            return AugmentedBodyAuthority(timestamp, contact_mode,
+                                          np.zeros((0, 3)), np.zeros(0), False,
+                                          "KKT sensitivity unavailable")
+        K, dnu, active, at_lower, at_upper = sensitivity
+        if not (np.all(np.isfinite(K)) and np.all(np.isfinite(dnu))):
+            return AugmentedBodyAuthority(timestamp, contact_mode,
+                                          np.zeros((0, 3)), np.zeros(0), False,
+                                          "KKT sensitivity unavailable")
+        nv, nu = realizer.nv, realizer.nu
+        z0 = realizer._qp_z
+        if z0 is None or not np.all(np.isfinite(z0)):
+            return AugmentedBodyAuthority(timestamp, contact_mode,
+                                          np.zeros((0, 3)), np.zeros(0), False,
+                                          "non-finite nominal QP point")
+        nlam = realizer.last_contact_force.size
+        tau, lam = z0[nv:nv + nu], z0[nv + nu:nv + nu + nlam]
+        Ktau, Klam = K[nv:nv + nu], K[nv + nu:nv + nu + nlam]
+        rows: list[np.ndarray] = []
+        bounds: list[float] = []
+
+        # Keep the local affine sensitivity inside the QP active-set cell.  The
+        # physical-margin rows below are insufficient by themselves: an inactive
+        # QP row may become infeasible, or an active inequality dual may change
+        # sign, before a torque/contact margin is reached.
+        A_qp, l_qp, u_qp, y_qp = (
+            realizer._qp_A, realizer._qp_l, realizer._qp_u, realizer._qp_y,
+        )
+        if not (
+            A_qp is not None and l_qp is not None and u_qp is not None
+            and y_qp is not None and A_qp.shape[1] == K.shape[0]
+            and np.all(np.isfinite(A_qp)) and np.all(np.isfinite(y_qp))
+        ):
+            return AugmentedBodyAuthority(timestamp, contact_mode,
+                                          np.zeros((0, 3)), np.zeros(0), False,
+                                          "QP rows unavailable for critical-region mapping")
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            Az0 = A_qp @ z0
+        if not np.all(np.isfinite(Az0)):
+            return AugmentedBodyAuthority(timestamp, contact_mode,
+                                          np.zeros((0, 3)), np.zeros(0), False,
+                                          "non-finite nominal QP row value")
+        equality = np.isclose(l_qp, u_qp)
+        for i in np.flatnonzero(~active):
+            row_gain = A_qp[i] @ K
+            if np.isfinite(u_qp[i]):
+                rows.append(row_gain)
+                bounds.append(float(u_qp[i] - Az0[i]))
+            if np.isfinite(l_qp[i]):
+                rows.append(-row_gain)
+                bounds.append(float(Az0[i] - l_qp[i]))
+        active_indices = np.flatnonzero(active)
+        for local_index, qp_index in enumerate(active_indices):
+            if equality[qp_index]:
+                continue
+            if at_upper[qp_index]:
+                rows.append(-dnu[local_index])
+                bounds.append(float(y_qp[qp_index]))
+            elif at_lower[qp_index]:
+                rows.append(dnu[local_index])
+                bounds.append(float(-y_qp[qp_index]))
+            else:
+                return AugmentedBodyAuthority(timestamp, contact_mode,
+                                              np.zeros((0, 3)), np.zeros(0), False,
+                                              "active inequality has no finite bound side")
+        critical_row_count = len(rows)
+
+        span = realizer.torque_max - realizer.torque_min
+        tau_lo = realizer.torque_min + self.torque_margin_fraction * span
+        tau_hi = realizer.torque_max - self.torque_margin_fraction * span
+        for j in range(nu):
+            rows.extend((Ktau[j], -Ktau[j]))
+            bounds.extend((tau_hi[j] - tau[j], tau[j] - tau_lo[j]))
+        mu = realizer.mu * (1.0 - self.friction_margin_fraction)
+        for c in range(nlam // 3):
+            base = 3 * c
+            for axis in (0, 1):
+                rows.extend((Klam[base + axis] - mu * Klam[base + 2],
+                             -Klam[base + axis] - mu * Klam[base + 2]))
+                bounds.extend((mu * lam[base + 2] - lam[base + axis],
+                               mu * lam[base + 2] + lam[base + axis]))
+            rows.append(-Klam[base + 2])
+            bounds.append(lam[base + 2] - self.normal_force_margin_n)
+        Jcom = np.zeros((3, nv))
+        mujoco.mj_jacSubtreeCom(model, data, Jcom, realizer.root_body)
+        planar_residual = Jcom[:2] @ realizer.last_qdd - np.asarray(realizer.last_com_acc_des)[:2]
+        planar_gain = Jcom[:2] @ K[:nv] - np.eye(3)[:2]
+        if realizer.last_yaw_output_kind == "moment":
+            wrench_map = realizer._last_wrench_map
+            if wrench_map is None or wrench_map.shape[1] != nlam:
+                return AugmentedBodyAuthority(timestamp, contact_mode,
+                                              np.zeros((0, 3)), np.zeros(0), False,
+                                              "yaw wrench sensitivity unavailable")
+            residual = np.r_[planar_residual,
+                             realizer.last_yaw_moment - realizer.last_yaw_moment_target]
+            gain = np.vstack((planar_gain,
+                              wrench_map[5] @ K[nv + nu:] - np.eye(3)[2]))
+        else:
+            residual = np.r_[planar_residual,
+                             realizer.last_qdd[5] - float(realizer.last_yaw_acc_target)]
+            gain = np.vstack((planar_gain, K[5] - np.eye(3)[2]))
+        tolerance = np.array([self.realization_tolerance, self.realization_tolerance,
+                              float(yaw_tolerance)])
+        if np.any(np.abs(residual) > tolerance):
+            return AugmentedBodyAuthority(timestamp, contact_mode,
+                                          np.zeros((0, 3)), np.zeros(0), False,
+                                          "nominal augmented residual exceeds tolerance")
+        for i in range(3):
+            rows.extend((gain[i], -gain[i]))
+            bounds.extend((tolerance[i] - residual[i], tolerance[i] + residual[i]))
+        for i in range(3):
+            e = np.zeros(3); e[i] = 1.0
+            rows.extend((e, -e)); bounds.extend((limit[i], limit[i]))
+        H = np.vstack(rows)
+        local_h = np.asarray(bounds, dtype=float)
+        if np.any(local_h[:critical_row_count] < -1e-6):
+            return AugmentedBodyAuthority(timestamp, contact_mode,
+                                          np.zeros((0, 3)), np.zeros(0), False,
+                                          "nominal point violates a critical-region row")
+        if np.any(local_h < -1e-6):
+            return AugmentedBodyAuthority(timestamp, contact_mode,
+                                          np.zeros((0, 3)), np.zeros(0), False,
+                                          "tightened nominal torque/contact margin exhausted")
+        local_h = np.maximum(local_h, 0.0)
+        # Increment-to-absolute translation: H (u-u_ref) <= h becomes H u <= h+H u_ref.
+        h = local_h + H @ u_ref
+        return AugmentedBodyAuthority(timestamp, contact_mode, H, h, True, "ok")
+
+
+@dataclass(frozen=True)
+class CentroidalBodyAuthority:
+    """Local authority for ``[u_x, u_y, M_x, M_y, M_z]``.
+
+    This experimental object deliberately remains separate from the paper's
+    two-dimensional body authority and the yaw-only development map.
+    """
+
+    timestamp: float
+    contact_mode: tuple[str, ...]
+    H: np.ndarray
+    h: np.ndarray
+    valid: bool = True
+    status: str = "ok"
+
+
+class CentroidalBodyAuthorityMapper:
+    """Map the current QP cell into planar-CoM plus 3-axis moment authority."""
+
+    def __init__(
+        self,
+        *,
+        torque_margin_fraction: float = 0.02,
+        friction_margin_fraction: float = 0.04,
+        normal_force_margin_n: float = 1.0,
+        realization_tolerance: float = 0.35,
+        moment_tolerance_nm: float = 1.0,
+    ):
+        self.torque_margin_fraction = float(torque_margin_fraction)
+        self.friction_margin_fraction = float(friction_margin_fraction)
+        self.normal_force_margin_n = float(normal_force_margin_n)
+        self.realization_tolerance = float(realization_tolerance)
+        self.moment_tolerance_nm = float(moment_tolerance_nm)
+
+    def snapshot(
+        self,
+        realizer: Any,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        *,
+        timestamp: float,
+        contact_mode: tuple[str, ...],
+        command_reference: np.ndarray,
+        absolute_limit: np.ndarray = np.array([4.0, 4.0, 40.0, 40.0, 20.0]),
+    ) -> CentroidalBodyAuthority:
+        u_ref = np.asarray(command_reference, dtype=float).reshape(5)
+        limit = np.asarray(absolute_limit, dtype=float).reshape(5)
+        if (realizer.last_fallback or realizer._body_dq_du is None
+                or realizer._body_dq_du.shape[1] != 5):
+            return CentroidalBodyAuthority(timestamp, contact_mode,
+                                           np.zeros((0, 5)), np.zeros(0), False,
+                                           "five-dimensional sensitivity unavailable")
+        K = realizer.input_sensitivity(realizer._body_dq_du)
+        if K is None or not np.all(np.isfinite(K)):
+            return CentroidalBodyAuthority(timestamp, contact_mode,
+                                           np.zeros((0, 5)), np.zeros(0), False,
+                                           "KKT sensitivity unavailable")
+        nv, nu = realizer.nv, realizer.nu
+        z0 = realizer._qp_z
+        nlam = realizer.last_contact_force.size
+        wrench_map = realizer._last_wrench_map
+        if wrench_map is None or wrench_map.shape[1] != nlam:
+            return CentroidalBodyAuthority(timestamp, contact_mode,
+                                           np.zeros((0, 5)), np.zeros(0), False,
+                                           "centroidal wrench map unavailable")
+        tau = z0[nv:nv + nu]
+        lam = z0[nv + nu:nv + nu + nlam]
+        Ktau = K[nv:nv + nu]
+        Klam = K[nv + nu:nv + nu + nlam]
+        rows: list[np.ndarray] = []
+        bounds: list[float] = []
+        span = realizer.torque_max - realizer.torque_min
+        tau_lo = realizer.torque_min + self.torque_margin_fraction * span
+        tau_hi = realizer.torque_max - self.torque_margin_fraction * span
+        for j in range(nu):
+            rows.extend((Ktau[j], -Ktau[j]))
+            bounds.extend((tau_hi[j] - tau[j], tau[j] - tau_lo[j]))
+        mu = realizer.mu * (1.0 - self.friction_margin_fraction)
+        for c in range(nlam // 3):
+            base = 3 * c
+            for axis in (0, 1):
+                rows.extend((Klam[base + axis] - mu * Klam[base + 2],
+                             -Klam[base + axis] - mu * Klam[base + 2]))
+                bounds.extend((mu * lam[base + 2] - lam[base + axis],
+                               mu * lam[base + 2] + lam[base + axis]))
+            rows.append(-Klam[base + 2])
+            bounds.append(lam[base + 2] - self.normal_force_margin_n)
+        Jcom = np.zeros((3, nv))
+        mujoco.mj_jacSubtreeCom(model, data, Jcom, realizer.root_body)
+        residual = np.r_[
+            Jcom[:2] @ realizer.last_qdd - np.asarray(realizer.last_com_acc_des)[:2],
+            realizer.last_centroidal_moment - realizer.last_centroidal_moment_target,
+        ]
+        gain = np.vstack((
+            Jcom[:2] @ K[:nv] - np.eye(5)[:2],
+            wrench_map[3:] @ K[nv + nu:] - np.eye(5)[2:],
+        ))
+        tolerance = np.r_[
+            np.full(2, self.realization_tolerance),
+            np.full(3, self.moment_tolerance_nm),
+        ]
+        if np.any(np.abs(residual) > tolerance):
+            return CentroidalBodyAuthority(timestamp, contact_mode,
+                                           np.zeros((0, 5)), np.zeros(0), False,
+                                           "nominal centroidal residual exceeds tolerance")
+        for i in range(5):
+            rows.extend((gain[i], -gain[i]))
+            bounds.extend((tolerance[i] - residual[i], tolerance[i] + residual[i]))
+        for i in range(5):
+            e = np.zeros(5); e[i] = 1.0
+            rows.extend((e, -e)); bounds.extend((limit[i], limit[i]))
+        H = np.vstack(rows)
+        local_bounds = np.asarray(bounds, dtype=float)
+        if np.any(local_bounds < -1e-8):
+            return CentroidalBodyAuthority(timestamp, contact_mode,
+                                           np.zeros((0, 5)), np.zeros(0), False,
+                                           "tightened nominal torque/contact margin exhausted")
+        h = np.maximum(local_bounds, 0.0) + H @ u_ref
+        return CentroidalBodyAuthority(timestamp, contact_mode, H, h, True, "ok")
+
+
 class AnalyticAuthorityMapper:
-    """Build H_k u <= h_k from the realizer's own KKT sensitivity.
+    """Build a local authority polytope from the realizer's KKT sensitivity.
 
     Margins are fractional tightenings that absorb the local-cell approximation,
     inter-sample state motion, and estimation error.  They make the mapping
-    conservative but not certified; the realizer stays the hard layer.
+    conservative but not certified.  The map includes complete critical-region
+    conditions, plus selected physical-margin and realization-tolerance rows;
+    the instantaneous modeled QP remains the final constraint-enforcement
+    layer under its feasibility, model, and contact assumptions.
     """
 
     def __init__(
@@ -204,12 +604,19 @@ class AnalyticAuthorityMapper:
         normal_force_margin_n: float = 1.0,
         absolute_limit: float = 4.0,
         realization_tolerance: float = 0.35,
+        per_foot_normal_force_margin: bool = False,
     ):
         self.torque_margin_fraction = float(torque_margin_fraction)
         self.friction_margin_fraction = float(friction_margin_fraction)
         self.normal_force_margin_n = float(normal_force_margin_n)
         self.absolute_limit = float(absolute_limit)
         self.realization_tolerance = float(realization_tolerance)
+        # Opt-in only (default False): published Table I/II numbers were
+        # generated, and remain byte-identical to publication, with the
+        # original per-corner normal-force floor.  See Stage L4 in
+        # LOCOMOTION_REPORT_PLAN.md for why the per-foot aggregation exists
+        # and where it is enabled.
+        self.per_foot_normal_force_margin = bool(per_foot_normal_force_margin)
 
     def snapshot(
         self,
@@ -219,10 +626,23 @@ class AnalyticAuthorityMapper:
         *,
         timestamp: float,
         contact_mode: tuple[str, ...],
+        command_reference: np.ndarray | None = None,
     ) -> RealizationAuthority:
-        """Called right after realizer.command() in the 1 kHz loop."""
+        """Publish a local model in absolute residual-command coordinates.
+
+        The KKT solution is linearized about the command used by the immediately
+        preceding realizer solve.  ``command_reference`` is that planar residual
+        command.  The local inequalities initially describe an increment
+        ``delta_u``; translating them to ``u = command_reference + delta_u`` is
+        essential before passing them to an MPC that optimizes absolute commands.
+        """
         nv, nu = realizer.nv, realizer.nu
         empty = np.zeros((0, 2))
+        u_ref = np.zeros(2) if command_reference is None else np.asarray(
+            command_reference, dtype=float
+        ).reshape(2)
+        if not np.all(np.isfinite(u_ref)):
+            raise ValueError("command_reference must be finite")
 
         def _invalid(status: str) -> RealizationAuthority:
             return RealizationAuthority(
@@ -240,9 +660,12 @@ class AnalyticAuthorityMapper:
         if realizer._com_clipped:
             return _invalid("CoM request on the clip; affine map invalid")
 
-        K = realizer.input_sensitivity(realizer._com_dq_du)
-        if K is None or not np.all(np.isfinite(K)):
+        sensitivity = realizer.input_sensitivity_with_duals(realizer._com_dq_du)
+        if sensitivity is None:
             return _invalid("KKT sensitivity unavailable")
+        K, dnu, active, at_lower, at_upper = sensitivity
+        if not (np.all(np.isfinite(K)) and np.all(np.isfinite(dnu))):
+            return _invalid("non-finite KKT sensitivity")
 
         z0 = realizer._qp_z
         nlam = realizer.last_contact_force.size
@@ -254,6 +677,63 @@ class AnalyticAuthorityMapper:
         rows: list[np.ndarray] = []
         bounds: list[float] = []
 
+        # --- complete primal/dual critical-region conditions.
+        #
+        # The affine KKT map is exact only while its active set remains valid.
+        # Mapping selected torque/contact margins alone is insufficient: an
+        # otherwise-unmapped inactive row can become infeasible, or an active
+        # inequality multiplier can change sign.  Include both conditions in
+        # the increment coordinates used by the KKT solve:
+        #
+        #   l_i <= A_i (z0 + K delta_u) <= u_i  for inactive rows,
+        #   y_i(delta_u) >= 0                  for active upper rows,
+        #   y_i(delta_u) <= 0                  for active lower rows.
+        #
+        # Equalities are active by construction and impose no multiplier-sign
+        # condition.  OSQP's signed dual convention is retained here.
+        A_qp, l_qp, u_qp, y_qp = (
+            realizer._qp_A, realizer._qp_l, realizer._qp_u, realizer._qp_y,
+        )
+        if not (
+            A_qp is not None and l_qp is not None and u_qp is not None
+            and y_qp is not None and A_qp.shape[1] == K.shape[0]
+        ):
+            return _invalid("QP rows unavailable for critical-region mapping")
+        if not (
+            np.all(np.isfinite(z0)) and np.all(np.isfinite(A_qp))
+            and np.all(np.isfinite(y_qp))
+        ):
+            return _invalid("non-finite nominal QP data")
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            Az0 = A_qp @ z0
+        if not np.all(np.isfinite(Az0)):
+            return _invalid("non-finite nominal QP row value")
+        equality = np.isclose(l_qp, u_qp)
+        inactive = ~active
+        for i in np.flatnonzero(inactive):
+            row_gain = A_qp[i] @ K
+            if np.isfinite(u_qp[i]):
+                rows.append(row_gain)
+                bounds.append(float(u_qp[i] - Az0[i]))
+            if np.isfinite(l_qp[i]):
+                rows.append(-row_gain)
+                bounds.append(float(Az0[i] - l_qp[i]))
+        active_indices = np.flatnonzero(active)
+        for local_index, qp_index in enumerate(active_indices):
+            if equality[qp_index]:
+                continue
+            if at_upper[qp_index]:
+                # y_i + dy_i/d(delta_u) delta_u >= 0.
+                rows.append(-dnu[local_index])
+                bounds.append(float(y_qp[qp_index]))
+            elif at_lower[qp_index]:
+                # y_i + dy_i/d(delta_u) delta_u <= 0.
+                rows.append(dnu[local_index])
+                bounds.append(float(-y_qp[qp_index]))
+            else:
+                return _invalid("active inequality has no finite bound side")
+        critical_row_count = len(rows)
+
         # --- actuator torque bounds:  tau_min <= tau_ff + K_tau u <= tau_max
         span = realizer.torque_max - realizer.torque_min
         tau_lo = realizer.torque_min + self.torque_margin_fraction * span
@@ -262,9 +742,11 @@ class AnalyticAuthorityMapper:
             rows.append(K_tau[j]);      bounds.append(tau_hi[j] - tau_ff[j])
             rows.append(-K_tau[j]);     bounds.append(tau_ff[j] - tau_lo[j])
 
-        # --- friction pyramid and unilateral normal force on each contact
+        # --- friction pyramid on each contact (still evaluated per corner:
+        # tangential slip is a genuine per-contact-point physical limit).
         mu = realizer.mu * (1.0 - self.friction_margin_fraction)
-        for c in range(nlam // 3):
+        n_corners = nlam // 3
+        for c in range(n_corners):
             b = 3 * c
             fz_ff, Kz = lam_ff[b + 2], K_lam[b + 2]
             for t in (0, 1):
@@ -272,9 +754,48 @@ class AnalyticAuthorityMapper:
                 #  ft - mu fz <= 0   and   -ft - mu fz <= 0
                 rows.append(Kt - mu * Kz);   bounds.append(mu * fz_ff - ft_ff)
                 rows.append(-Kt - mu * Kz);  bounds.append(mu * fz_ff + ft_ff)
-            #  fz >= fz_min   ->   -Kz u <= fz_ff - fz_min
-            rows.append(-Kz)
-            bounds.append(fz_ff - self.normal_force_margin_n)
+
+        # --- unilateral normal-force floor.
+        #
+        # Default (``per_foot_normal_force_margin=False``, unchanged from
+        # publication): the floor is enforced per corner, exactly as
+        # published.
+        #
+        # Opt-in (``per_foot_normal_force_margin=True``): the floor is
+        # aggregated PER FOOT instead.  A rigid foot modeled as several
+        # discrete corner contacts (see FOOT_CONTACT_OFFSETS) is statically
+        # indeterminate: at a real, actively weight-shifting stance one
+        # corner routinely carries near-zero load even though the foot as a
+        # whole is nowhere close to lifting off.  A per-corner floor
+        # over-tightens on exactly that expected, physical load imbalance and
+        # can reject an otherwise perfectly good nominal point (see
+        # LOCOMOTION_REPORT_PLAN.md Stage L4).  The margin that is physically
+        # meaningful is on each foot's total vertical load, so corners are
+        # summed per foot before the margin is applied.  Either way, the hard
+        # fz >= 0 unilateral bound remains enforced per corner by the QP
+        # itself (``lb[base + 2] = 0.0`` in ``_solve_qp``) and is untouched by
+        # this option.
+        if self.per_foot_normal_force_margin:
+            n_feet = len(contact_mode) if contact_mode else 0
+            if n_feet and n_corners % n_feet == 0:
+                corners_per_foot = n_corners // n_feet
+            else:
+                # Corner count doesn't split evenly across contact_mode
+                # (should not happen for the current contact model): fall
+                # back to the per-corner grouping rather than guess.
+                corners_per_foot = 1
+                n_feet = n_corners
+        else:
+            corners_per_foot = 1
+            n_feet = n_corners
+        for foot_index in range(n_feet):
+            lo = foot_index * corners_per_foot
+            hi = lo + corners_per_foot
+            fz_total = sum(lam_ff[3 * c + 2] for c in range(lo, hi))
+            Kz_total = sum(K_lam[3 * c + 2] for c in range(lo, hi))
+            #  sum(fz) >= fz_min_foot  ->  -Kz_total u <= fz_total - fz_min_foot
+            rows.append(-Kz_total)
+            bounds.append(fz_total - self.normal_force_margin_n)
 
         # --- realization tolerance: the criterion the set is DEFINED by.
         # Mapping only the physical limits is not enough: the QP may satisfy every
@@ -308,6 +829,14 @@ class AnalyticAuthorityMapper:
         H = np.vstack(rows)
         h = np.asarray(bounds, dtype=float)
 
+        # A negative critical-region margin would mean that the reported nominal
+        # QP point and its active-set classification are inconsistent at the
+        # stated numerical tolerance.  Do not repair that inconsistency by
+        # clamping: reject the snapshot and use the caller's conservative
+        # fallback instead.
+        if np.any(h[:critical_row_count] < -1e-6):
+            return _invalid("nominal point violates a critical-region row")
+
         # Prune rows that CANNOT bind.  A row H_i u <= h_i is unreachable within
         # the command range if h_i exceeds the largest value H_i u can take over
         # ||u||_inf <= absolute_limit, i.e. if h_i > |H_i|_1 * u_max.  Most of the
@@ -321,28 +850,22 @@ class AnalyticAuthorityMapper:
         if keep.any():
             H, h = H[keep], h[keep]
 
-        # h_k < 0 handling.  Clamping such a row to H_i u <= 0 RELAXES the
-        # linearized margined row (u = 0 violated it), so the set is no longer
-        # conservative *by construction* against the margined limits.  It is
-        # nevertheless safe against the PHYSICAL limits, and it is worth being
-        # precise about why: the whole-body QP enforces tau in [tau_min,tau_max]
-        # and the friction pyramid as HARD constraints, so tau_ff and lambda_ff
-        # always satisfy the TRUE limits.  h_i < 0 can therefore only mean the
-        # *safety margin* (torque/friction/normal fractions above) has been eaten
-        # -- never that a true limit is violated.  Clamping says "do not push
-        # further this way", which keeps tau <= tau_ff <= tau_max.
-        #
-        # Two regimes are still distinguished, because they mean different things:
-        #   |h_i| <= EPS   numerical noise on an active row -> clamp silently
-        #   h_i  <  -EPS   the margin is genuinely consumed -> clamp, but report
-        #                  it so the caller can treat the snapshot as degraded
-        #                  rather than trusting it as a fresh margin estimate.
-        # Soundness here rests on the realizer's hard constraints, NOT on the
-        # mapper's construction; the mapper is not a certificate.
+        # h_k < 0 handling. A negative mapped physical-margin row means that the
+        # nominal point has already consumed the configured tightening. Replacing
+        # H_i delta_u <= h_i < 0 with H_i delta_u <= 0 would enlarge the mapped
+        # set, so do not publish a relaxed authority polytope. Reject the
+        # snapshot and let the controller use its explicitly configured fallback
+        # box. Tiny negative values are treated as numerical roundoff only.
         EPS_H = 1e-6
-        n_numerical = int(np.sum((h < 0.0) & (h >= -EPS_H)))
         n_margin_exhausted = int(np.sum(h < -EPS_H))
+        if n_margin_exhausted:
+            return _invalid(f"tightened physical margin exhausted ({n_margin_exhausted} rows)")
         h = np.maximum(h, 0.0)
+
+        # The KKT rows currently constrain delta_u.  Consumers optimize the
+        # absolute residual command u, so H (u - u_ref) <= h must be published
+        # as H u <= h + H u_ref.
+        h = h + H @ u_ref
 
         # Joint body+task sensitivity, so the task port can be given the capacity
         # the body did not spend.  u_t enters the QP through the hand-task
@@ -372,10 +895,8 @@ class AnalyticAuthorityMapper:
             normal_margin=np.array([
                 lam_ff[3 * c + 2] - self.normal_force_margin_n for c in range(nlam // 3)
             ]),
-            valid=True,
-            status=("ok" if n_margin_exhausted == 0
-                    else f"margin_exhausted ({n_margin_exhausted} rows; "
-                         f"{n_numerical} numerical)"),
+                valid=True,
+                status="ok",
             nominal_residual=residual0.copy(),
             residual_gain=residual_gain,
         )
@@ -388,6 +909,8 @@ class AnalyticAuthorityMapper:
         u_body: np.ndarray,
         *,
         task_tolerance: float = 0.5,
+        body_reference: np.ndarray | None = None,
+        task_reference: np.ndarray | None = None,
     ) -> TaskAuthority:
         """Task capacity remaining after the body allocation u_body.
 
@@ -403,12 +926,22 @@ class AnalyticAuthorityMapper:
         nv, nu = realizer.nv, realizer.nu
         nlam = realizer.last_contact_force.size
         ub = np.asarray(u_body, float).reshape(2)
+        ub_ref = np.zeros(2) if body_reference is None else np.asarray(
+            body_reference, dtype=float
+        ).reshape(2)
+        ut_ref = np.zeros(3) if task_reference is None else np.asarray(
+            task_reference, dtype=float
+        ).reshape(3)
+        if not (np.all(np.isfinite(ub_ref)) and np.all(np.isfinite(ut_ref))):
+            raise ValueError("authority command references must be finite")
 
         K_tau_b, K_tau_t = j["K_tau"][:, :2], j["K_tau"][:, 2:]
         K_lam_b, K_lam_t = j["K_lam"][:, :2], j["K_lam"][:, 2:]
-        # Feedforward already committed by the body command.
-        tau0 = j["tau_ff"] + K_tau_b @ ub
-        lam0 = j["lam_ff"] + K_lam_b @ ub
+        # The joint KKT model is centered at (ub_ref, ut_ref).  Commit the
+        # requested absolute body command through its increment from that point.
+        delta_ub = ub - ub_ref
+        tau0 = j["tau_ff"] + K_tau_b @ delta_ub
+        lam0 = j["lam_ff"] + K_lam_b @ delta_ub
 
         rows: list[np.ndarray] = []
         bnds: list[float] = []
@@ -445,7 +978,7 @@ class AnalyticAuthorityMapper:
             z3 = np.zeros((0, 3))
             return TaskAuthority(j["timestamp"], j["contact_mode"], z3, np.zeros(0),
                                  K_tau_t, K_lam_t, valid=False,
-                                 status="nominal task residual exceeds tolerance")
+                                 status="nominal task tracking slack exceeds tolerance")
         for i in range(3):
             rows.append(gain_t[i]);   bnds.append(task_tolerance - res_t0[i])
             rows.append(-gain_t[i]);  bnds.append(task_tolerance + res_t0[i])
@@ -457,11 +990,21 @@ class AnalyticAuthorityMapper:
         H = np.vstack(rows)
         h = np.asarray(bnds, float)
         n_exh = int(np.sum(h < -1e-6))
+        if n_exh:
+            z3 = np.zeros((0, 3))
+            return TaskAuthority(
+                j["timestamp"], j["contact_mode"], z3, np.zeros(0), K_tau_t, K_lam_t,
+                valid=False,
+                status=f"body allocation exhausts {n_exh} task-margin rows",
+            )
         h = np.maximum(h, 0.0)
+        # Rows above constrain delta_ut.  Translate to the absolute task command
+        # expected by the task MPC.
+        h = h + H @ ut_ref
         return TaskAuthority(
             j["timestamp"], j["contact_mode"], H, h, K_tau_t, K_lam_t,
             valid=True,
-            status="ok" if n_exh == 0 else f"margin_exhausted ({n_exh} rows)",
+            status="ok",
         )
 
 
@@ -489,7 +1032,8 @@ class ContinuationAuthorityEstimator:
     tolerance.  That crossing IS the authority boundary.
 
     Cost: one KKT solve per region traversed, and ZERO extra whole-body QP solves.
-    Contrast with the offline oracle, which needs ~62 QP solves.
+    Contrast with the offline repeated-QP numerical reference, which needs
+    roughly 62 QP solves.
     """
 
     def __init__(
@@ -521,13 +1065,19 @@ class ContinuationAuthorityEstimator:
         d = np.asarray(direction, float)
 
         equality = np.isclose(lo, hi)
-        Az = A @ z
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            Az = A @ z
+        if not np.all(np.isfinite(Az)):
+            return 0.0
         at_hi = np.isfinite(hi) & (np.abs(Az - hi) <= self.active_tol)
         at_lo = np.isfinite(lo) & (np.abs(Az - lo) <= self.active_tol)
         active = equality | ((at_hi | at_lo) & (np.abs(y) > self.active_tol))
 
         t = 0.0
-        r = Jout @ z[:nv] - nom             # residual at u = 0 (t = 0)
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            r = Jout @ z[:nv] - nom
+        if not np.all(np.isfinite(r)):
+            return 0.0
         tol = self.realization_tolerance
 
         for _ in range(self.max_regions):
@@ -544,7 +1094,10 @@ class ContinuationAuthorityEstimator:
             dnu = sol[n:]
 
             # --- residual crossing on this region (affine in s)
-            dr = Jout @ dz[:nv] - d
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                dr = Jout @ dz[:nv] - d
+            if not np.all(np.isfinite(dr)):
+                return t
             s_tol = np.inf
             for i in range(d.size):
                 if abs(dr[i]) > 1e-12:
@@ -554,8 +1107,11 @@ class ContinuationAuthorityEstimator:
                             s_tol = min(s_tol, s)
 
             # --- a currently-inactive row ENTERS the active set (vectorized)
-            rate = A @ dz
-            val = A @ z
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                rate = A @ dz
+                val = A @ z
+            if not (np.all(np.isfinite(rate)) and np.all(np.isfinite(val))):
+                return t
             inact = ~active
             s_hi = np.where(inact & (rate > 1e-10) & np.isfinite(hi),
                             (hi - val) / np.where(np.abs(rate) > 1e-12, rate, 1.0), np.inf)
@@ -655,7 +1211,7 @@ class ContinuationAuthorityEstimator:
         if np.max(np.abs(r0)) > task_tolerance:
             z = np.zeros(3)
             return AuthorityBox(z, z.copy(), z.copy(), z.copy(), "invalid", r0, False,
-                                "nominal task residual exceeds tolerance", 0, 0.0)
+                                "nominal task tracking slack exceeds tolerance", 0, 0.0)
         saved_tol = self.realization_tolerance
         self.realization_tolerance = float(task_tolerance)
         lower, upper = np.zeros(3), np.zeros(3)
@@ -675,7 +1231,7 @@ class ContinuationAuthorityEstimator:
 
 
 # --------------------------------------------------------------------------
-# Offline ground truth: exact residual bisection (NOT in the control path)
+# Offline repeated-QP numerical reference: residual bisection (NOT in control)
 # --------------------------------------------------------------------------
 
 
@@ -701,7 +1257,7 @@ class AuthorityBox:
 
 
 class ExactResidualBisectionEstimator:
-    """Offline reference: bisect the exact realizer's residual along each ray.
+    """Offline numerical reference: bisect modeled-QP residuals along rays.
 
     ~62 QP solves per query.  Used to grade AnalyticAuthorityMapper, never to
     run the robot.
@@ -825,7 +1381,7 @@ class ExactResidualBisectionEstimator:
                       else "realization-residual")
             return AuthorityBox(
                 lower, upper, center, radius, active, residual0.copy(),
-                bool(np.all(radius > 0.0)), "exact residual bisection",
+                bool(np.all(radius > 0.0)), "repeated-QP residual bisection",
                 len(cache), corner_scale,
             )
         finally:

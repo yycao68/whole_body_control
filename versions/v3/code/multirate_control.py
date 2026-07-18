@@ -19,12 +19,18 @@ The architecture, corrected. An earlier version put the whole-body QP inside a
               5. solve the task predictor          (on the capacity the body left)
               6. solve ONE whole-body realization QP
               7. publish tau* and the joint reference to the servo
-            Measured: ~2.8 ms of a 5 ms budget with the single-cell authority.
+            Measured: roughly 2--3 ms median of a 5 ms nominal period in the
+            Python prototype; this is not a hard-real-time guarantee.
 
-    ~50 Hz  AUTHORITY REFRESH (asynchronous, lower priority)
-              - the PWA continuation costs ~16 ms and does NOT fit 200 Hz.
-              - it is therefore refreshed off the critical path; the node uses
-                the most recent set, and falls back to a conservative fixed box
+    ~50 Hz  AUTHORITY REFRESH (rate-gated, NOT threaded in this prototype)
+                            - the PWA continuation costs roughly 11--14 ms and does NOT fit
+                                a synchronous 200 Hz critical path.
+              - this implementation only rate-LIMITS that work: when due, it
+                still runs synchronously inside the same node-update call and
+                blocks it for ~16 ms.  A deployment needs a genuinely separate
+                worker thread/process publishing the set lock-free; that is
+                NOT what this prototype does.  The node otherwise uses the
+                most recent set, and falls back to a conservative fixed box
                 if that set is stale or was taken in a different contact mode.
 
 The two predictors share one state read, one model update, and one set of
@@ -38,6 +44,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from typing import Callable
 
 import mujoco
 import numpy as np
@@ -53,7 +60,7 @@ from realization_authority import (
 class RateConfig:
     servo_dt: float = 0.001          # 1 kHz joint servo (ZOH + PD), no optimization
     node_dt: float = 0.005           # 200 Hz optimization node (predictors + WBC QP)
-    authority_dt: float = 0.020      # ~50 Hz asynchronous authority refresh
+    authority_dt: float = 0.020      # ~50 Hz authority refresh (rate-gated, synchronous in this prototype)
     max_snapshot_age: float = 0.040  # older than this -> conservative fallback
 
     # backward-compatible aliases
@@ -143,13 +150,25 @@ class JointServo:
         if self.kp > 0.0 and self.q_des is not None:
             q, qd = self.realizer.joint_state(data)
             tau = tau + self.kp * (self.q_des - q) + self.kd * (self.qd_des - qd)
+        # The impedance term can move the command outside the QP solution's
+        # torque bounds.  Enforce the actuator envelope again at servo rate.
+        # Hardware still needs independent drive limits and watchdogs; this is
+        # only the controller-side bound guard.
+        if not np.all(np.isfinite(tau)):
+            tau = np.zeros_like(self.tau_star)
+        tau = np.clip(tau, self.realizer.torque_min, self.realizer.torque_max)
         data.ctrl[self.realizer.ctrl_id] = tau
         self.n_holds += 1
         return tau
 
 
 class MultirateInteractionController:
-    """1 kHz realizer + asynchronous canonical predictors."""
+    """1 kHz realizer + rate-gated canonical predictors.
+
+    The continuation authority refresh below is rate-limited to
+    ``rates.authority_dt``, but when it runs it executes synchronously inside
+    this call -- it is NOT offloaded to another thread in this prototype.
+    """
 
     def __init__(
         self,
@@ -164,17 +183,28 @@ class MultirateInteractionController:
         fallback_box: np.ndarray = np.array([1.5, 2.0]),
         use_authority: bool = True,
         continuation: bool = False,
+        task_continuation: bool = False,
+        task_realization_tolerance: float = 0.5,
     ):
         self.realizer = realizer
         self.rates = rates or RateConfig()
         self.mapper = mapper or AnalyticAuthorityMapper()
         self.use_authority = bool(use_authority)
         # PWA continuation: exact authority, KKT-only, but ~14 ms -- so it is
-        # refreshed ASYNCHRONOUSLY at rates.authority_dt, not every 1 kHz cycle.
+        # rate-limited to rates.authority_dt, not every 1 kHz cycle -- but the
+        # call below still runs synchronously in this node update, not on a
+        # separate thread; see the class docstring.
         self.continuation = bool(continuation)
+        # Independent flag: the task port may use continuation while the body
+        # port uses the analytic map, or vice versa.  Both share one estimator
+        # instance (stateless between calls other than a solve counter).
+        self.task_continuation = bool(task_continuation)
+        self.task_realization_tolerance = float(task_realization_tolerance)
         self.cont = ContinuationAuthorityEstimator(max_regions=60)
         self._last_auth_t = -np.inf
+        self._last_task_auth_t = -np.inf
         self._cont_box = None
+        self._task_cont_box = None
         self.fallback_box = np.asarray(fallback_box, float)
 
         self.body_mpc = body_mpc or NormalizedMPC(
@@ -214,13 +244,13 @@ class MultirateInteractionController:
     def _apply_body_constraints(self, t: float, mode: tuple[str, ...]) -> str:
         """Constrain the body predictor by the latest snapshot, or fall back.
 
-        Never waits for the 1 kHz loop.  Returns which source was used.
+        Never waits for a fresh QP-node snapshot.  Returns which source was used.
         """
         if self.use_authority and self.continuation:
             cb = self._cont_box
             if (cb is not None and cb[2] == mode
                     and (t - cb[1]) <= self.rates.max_snapshot_age):
-                self.body_mpc.update_input_box(cb[0].lower, cb[0].upper)
+                self.body_mpc.update_input_box(cb[0].lower + cb[3], cb[0].upper + cb[3])
                 return "continuation_box"
             self.n_invalid_snapshots += 1
             self.body_mpc.update_input_box(-self.fallback_box, self.fallback_box)
@@ -263,13 +293,15 @@ class MultirateInteractionController:
         task_error: np.ndarray | None = None,
         swing_task: dict | None = None,
         attitude_weight: float = 60.0,
+        external_hand_force_ff: np.ndarray | None = None,
+        task_command_selector: Callable[[np.ndarray, TaskAuthority | None], np.ndarray] | None = None,
     ) -> dict:
         """One servo tick (1 kHz).  The optimization node runs on its own 200 Hz
         sub-schedule; between node updates the servo simply holds the last
         optimized command, which is the whole point of the rate separation."""
         R = self.rates
         info = {"body_source": None, "body_solved": False, "task_solved": False,
-                "node_ran": False}
+            "node_ran": False, "task_selector_applied": False}
 
         # ---- not a node tick: 1 kHz servo holds the last optimized command ----
         if t - self._last_node_t < R.node_dt - 1e-12:
@@ -301,7 +333,19 @@ class MultirateInteractionController:
         if self.task_mpc is not None and task_error is not None:
             t0 = time.perf_counter()
             src = "fallback_box"
-            if self.use_authority and self.task_snapshot is not None \
+            snapshot_used: TaskAuthority | None = None
+            if self.use_authority and self.task_continuation:
+                tcb = self._task_cont_box
+                if (tcb is not None and tcb[2] == stance
+                        and (t - tcb[1]) <= R.max_snapshot_age):
+                    self.task_mpc.update_input_box(tcb[0].lower + tcb[3],
+                                                   tcb[0].upper + tcb[3])
+                    src = "task_continuation_box"
+                else:
+                    self.task_mpc.update_input_box(-self.task_fallback_box,
+                                                   self.task_fallback_box)
+                    self.n_task_invalid += 1
+            elif self.use_authority and self.task_snapshot is not None \
                     and self.task_snapshot.valid \
                     and self.task_snapshot.contact_mode == stance \
                     and (t - self.task_snapshot.timestamp) <= R.max_snapshot_age:
@@ -309,18 +353,30 @@ class MultirateInteractionController:
                 self.task_mpc.update_input_polytope(self.task_snapshot.H_task,
                                                     self.task_snapshot.h_task)
                 src = "task_authority_polytope"
+                snapshot_used = self.task_snapshot
             else:
                 self.task_mpc.update_input_box(-self.task_fallback_box,
                                                self.task_fallback_box)
                 self.n_task_invalid += 1
             d_t, _ = self.task_obs.step(np.asarray(task_error, float)[:3], self.u_task)
             self.u_task = self.task_mpc.solve(np.asarray(task_error, float), d_t)
+            info["task_nominal_command"] = self.u_task.copy()
+            info["task_snapshot_used"] = snapshot_used
+            if task_command_selector is not None:
+                selected = np.asarray(
+                    task_command_selector(self.u_task.copy(), snapshot_used), dtype=float
+                ).reshape(3)
+                if not np.all(np.isfinite(selected)):
+                    raise ValueError("task_command_selector must return a finite shape-(3,) command")
+                self.u_task = selected
+                info["task_selector_applied"] = True
+            info["task_command"] = self.u_task.copy()
             self.timing.task_mpc_ms.append((time.perf_counter() - t0) * 1e3)
             self.n_task_solves += 1
             info["task_solved"] = True
             info["task_source"] = src
 
-        # ---- 1 kHz realization: exactly ONE whole-body QP --------------------
+        # ---- one active-mode whole-body realization QP at this node ----------
         com_acc_des = np.asarray(com_ref_acc, float).copy()
         com_acc_des[:2] += self.u_body            # last valid command; never waits
         task_acc_des = (np.zeros(3) if task_acc_ref is None
@@ -334,6 +390,7 @@ class MultirateInteractionController:
             stance_contacts, stance_targets, base_height_ref, rpy,
             com_acc_des=com_acc_des, swing_task=swing_task,
             attitude_weight=attitude_weight, centroidal_moment_des=np.zeros(3),
+            external_hand_force_ff=external_hand_force_ff,
         )
         self.timing.realizer_ms.append((time.perf_counter() - t0) * 1e3)
         self.timing.qp_solves_per_cycle.append(1)    # the whole point
@@ -344,19 +401,33 @@ class MultirateInteractionController:
             if t - self._last_auth_t >= R.authority_dt - 1e-12:
                 self._last_auth_t = t
                 box = self.cont.estimate(self.realizer, model, data)
-                self._cont_box = (box, t, stance) if box.valid else None
+                self._cont_box = (
+                    box, t, stance, self.u_body.copy()
+                ) if box.valid else None
             self.snapshot = None      # continuation supplies bounds, not a polytope
         elif self.use_authority:
             self.snapshot = self.mapper.snapshot(
                 self.realizer, model, data, timestamp=t, contact_mode=stance,
+                command_reference=self.u_body,
             )
-            if self.task_mpc is not None:
+            if self.task_mpc is not None and not self.task_continuation:
                 # Body-priority: the task set is conditioned on the body command
                 # that was actually issued this cycle.  Reuses the same joint KKT
                 # sensitivity, so it costs no extra QP or KKT solve.
                 self.task_snapshot = self.mapper.task_authority(
                     self.realizer, model, data, self.u_body,
+                    body_reference=self.u_body, task_reference=self.u_task,
                 )
+        if self.use_authority and self.task_continuation and self.task_mpc is not None:
+            if t - self._last_task_auth_t >= R.authority_dt - 1e-12:
+                self._last_task_auth_t = t
+                tbox = self.cont.estimate_task(
+                    self.realizer, model, data,
+                    task_tolerance=self.task_realization_tolerance,
+                )
+                self._task_cont_box = (
+                    tbox, t, stance, self.u_task.copy()
+                ) if tbox.valid else None
         self.timing.authority_ms.append((time.perf_counter() - t0) * 1e3)
 
         # ---- step 7: publish the optimized command to the 1 kHz servo ---------
