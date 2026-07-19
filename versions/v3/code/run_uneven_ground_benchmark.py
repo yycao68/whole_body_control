@@ -21,7 +21,7 @@ import mujoco
 import numpy as np
 
 from interaction_estimator import FilteredAccelerationResidualEstimator
-from normalized_mpc import NormalizedMPC, RandomWalkDisturbanceObserver
+from normalized_mpc import NormalizedMPC
 from reference_provider import DCMReferenceProvider
 from capture_point import CapturePointStabilizer, StabilizerParams
 from run_g1_root_assist_demo import (
@@ -72,6 +72,7 @@ class PushSpec:
     start_time_s: float | None = None
     profile: str = "half_sine"  # "half_sine" or smooth "flat_top"
     ramp_s: float = 0.10
+    dwell_s: float = 0.06   # measured contact phase must hold this long before onset
 
     def axis(self) -> int:
         return 1 if self.direction == "lateral" else 0
@@ -301,9 +302,6 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
         r=0.05, u_max=np.array([6.0, 6.0, 4.0, 15.0, 15.0]),
     )
     estimator = FilteredAccelerationResidualEstimator(task_dim, WBC_DT, bandwidth_hz=3.0)
-    effective_observer = RandomWalkDisturbanceObserver(
-        dim=task_dim, dt=WBC_DT, q_d=0.03, r_y=2.0e-4,
-    )
 
     n = int(round(duration / SIM_DT))
     log = {
@@ -353,6 +351,7 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
     # Phase-locked torso-wrench state (plant-only; hidden from the estimator).
     push_onset: float | None = None
     push_onset_contact: tuple[int, int] | None = None
+    push_match_since: float | None = None  # start of the current measured-phase run
     if push is not None:
         log["applied_force"] = np.zeros((n, 3))
 
@@ -470,7 +469,12 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
             est = estimator.step(error_velocity, correction, realized_error_acceleration)
             estimate_interaction = est.interaction
             estimate_realization = est.realization
-            estimate_effective, _ = effective_observer.step(error, correction)
+            # Same-estimator realization-feedback ablation: the full controller
+            # uses the combined residual (interaction + realization); the
+            # no-feedback controller uses the interaction component alone.  One
+            # estimator, one component removed, so the contrast isolates the
+            # realization-feedback term rather than an estimator change.
+            estimate_effective = est.effective
 
             if k - last_mpc_k >= round(mpc_solve_dt / SIM_DT):
                 last_mpc_k = k
@@ -573,10 +577,20 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
                     push_onset = t
                     push_onset_contact = (int(measured[0]), int(measured[1]))
                 elif push.start_time_s is None and t >= push.earliest_onset_s:
-                    planned_ds = sample.swing is None
-                    if (push.phase == "double_support") == planned_ds:
-                        push_onset = t
-                        push_onset_contact = (int(measured[0]), int(measured[1]))
+                    # Gate on MEASURED foot contact, not the plan: single support
+                    # means exactly one foot in measured contact, double support
+                    # means both.  Require the measured phase to hold for dwell_s
+                    # so the wrench lands inside the phase, not on a transition.
+                    n_contact = int(measured[0]) + int(measured[1])
+                    want = 2 if push.phase == "double_support" else 1
+                    if n_contact == want:
+                        if push_match_since is None:
+                            push_match_since = t
+                        if t - push_match_since >= push.dwell_s:
+                            push_onset = t
+                            push_onset_contact = (int(measured[0]), int(measured[1]))
+                    else:
+                        push_match_since = None
             if push_onset is not None:
                 data.xfrc_applied[torso, push.axis()] = push.force_at(t - push_onset)
             log["applied_force"][k] = data.xfrc_applied[torso, :3]
