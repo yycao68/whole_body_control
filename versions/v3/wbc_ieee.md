@@ -6,9 +6,9 @@
 
 ## Abstract
 
-Locomotion is disturbed both by terrain-mediated contact mismatch — uneven height, early or late touchdown, support-force redistribution — and by external body forces such as pushes. We argue that these are one problem: *interaction dynamics*. Rather than embedding terrain, contact, and force states into the predictive model, we represent their observable motion effect — together with constrained-realization error and model residual — as a single interaction residual $d_{\rm eff}$ acting on a **configuration-invariant** task model $\ddot e=v+d_{\rm eff}$, whose exact zero-order-hold matrices are provably fixed across gait phase, terrain, and push. This turns interaction into a predictive *state* on a robot-independent model rather than a property to be re-modeled per contact. A model-predictive controller (Interaction-Dynamics MPC, ID-MPC) then chooses the task-acceleration correction $v$; a Kalman-style random-walk estimator propagates the measured residual over the horizon; and a separate inverse-dynamics/contact QP realizes the command subject to the instantaneous robot and contact constraints. The controller replans no footsteps and embeds no full nonlinear dynamics in the horizon.
+Locomotion is disturbed both by terrain-mediated contact mismatch — uneven height, early or late touchdown, support-force redistribution — and by external body forces such as pushes. We argue that these are one problem: *interaction dynamics*. Rather than embedding terrain, contact, and force states into the predictive model, we represent their observable motion effect — together with constrained-realization error and model residual — as a single interaction residual $d_{\rm eff}$ acting on a task model $\ddot e=v+d_{\rm eff}$ whose exact zero-order-hold matrices are, for the normalized requested-task coordinates under one modeling assumption, provably fixed across gait phase, terrain, and push. This turns interaction into a predictive *state* on a fixed shared model rather than a property to be re-modeled per contact. A model-predictive controller (Interaction-Dynamics MPC, ID-MPC) then chooses the task-acceleration correction $v$; a low-pass estimator of the measured task-acceleration residual propagates it over the horizon; and a separate inverse-dynamics/contact QP realizes the command subject to the instantaneous robot and contact constraints. The controller replans no footsteps and embeds no full nonlinear dynamics in the horizon.
 
-We evaluate four controllers on a torque-actuated Unitree G1 simulation using the same walking reference and realizer — task impedance, nominal MPC, ID-MPC, and an ID-MPC without realization feedback — across two paired 160-trial studies. In an uneven-terrain study (flat, a 20 mm depression, a 20 mm obstacle, and a frozen rough surface), residual augmentation improves 10 ms CoM prediction by 4.7--5.7% on three terrains and reduces obstacle peak CoM error by 13.1% relative to nominal MPC, with flat-ground and the remaining terrain RMS essentially unchanged (within 3%). In an external-push study — phase-locked $90$ N, $150$ ms torso pushes hidden from the estimator, across two directions and two gait phases — ID-MPC lowers post-push peak CoM error in every condition, cuts the lateral single-support peak from 57.3 to 31.0 mm ($-46\%$), and is the only controller that re-enters a 12 mm error band; here the realization-feedback term is beneficial precisely because the whole-body constraints become active. The 100 Hz MPC meets its measured deadline, and the shared inverse-dynamics QP runs on a preserved 500 Hz simulated schedule whose wall-clock optimization is left to future work. Together the studies show that one canonical residual-acceleration model predicts and compensates two distinct interaction classes, with the clearest benefit under external pushes.
+We evaluate three controllers on a torque-actuated Unitree G1 simulation using the same walking reference and realizer — task impedance, nominal MPC, and ID-MPC — across two paired studies (four conditions $\times$ three controllers $\times$ ten seeds each). In an uneven-terrain study (flat, a 20 mm depression, a 20 mm obstacle, and a frozen rough surface), residual augmentation improves 10 ms CoM prediction by 4.4--5.5% on three terrains (and slightly worsens it on the obstacle) and reduces obstacle peak CoM error by 19.8% relative to nominal MPC, with flat-ground, depression, and rough RMS essentially unchanged (within 3%). In an external-push study — phase-locked $90$ N, $150$ ms torso pushes hidden from the estimator, gated on measured single- or double-support contact across two directions — ID-MPC lowers post-push peak CoM error in every condition (14--27% relative to nominal MPC), most in the vulnerable lateral single-support case (14.4 to 10.6 mm), and returns to a 12 mm error band far faster than the baselines; fall counts in the hardest condition are similar across the MPC controllers and are a secondary outcome. The 100 Hz MPC meets its measured deadline, and the shared inverse-dynamics QP runs on a preserved 500 Hz simulated schedule whose wall-clock optimization is left to future work. Together the studies show that one canonical residual-acceleration model predicts and compensates two distinct interaction classes, with the clearest benefit under external pushes.
 
 **Index Terms** - interaction dynamics, uneven-terrain locomotion, external-push rejection, humanoid robots, model predictive control, disturbance estimation, whole-body control.
 
@@ -42,12 +42,12 @@ The paper therefore asks:
 
 The contributions are:
 
-1. **Interaction as a predictive state on a robot-independent model.** We show (Theorem 1) that the selected body tasks share one exact-ZOH transition pair that is provably invariant across gait phase, terrain, and contact mode, and that terrain, contact timing, external force, and realization error all enter a single interaction residual $d_{\rm eff}$ rather than the model. A non-vacuity argument, confirmed by the experiments, establishes that this is a falsifiable modeling claim rather than a free relabelling.
-2. **Interaction estimation and prediction.** A Kalman-style augmented residual model converts emerging contact and proprioceptive mismatch into a horizon disturbance sequence, without claiming pre-contact knowledge of unseen terrain.
+1. **Interaction as a predictive state on a fixed shared model.** We show (Theorem 1) that for the normalized requested-task coordinates the selected body tasks share one exact-ZOH transition pair that is provably invariant across gait phase, terrain, and contact mode, and that terrain, contact timing, external force, and realization error all enter a single interaction residual $d_{\rm eff}$ rather than the model. A non-vacuity argument, confirmed by the experiments, establishes that this is a falsifiable modeling claim rather than a free relabelling.
+2. **Interaction estimation and prediction.** A low-pass estimator of the measured task-acceleration residual converts emerging contact and proprioceptive mismatch into a horizon disturbance sequence, without claiming pre-contact knowledge of unseen terrain.
 3. **Constrained interaction compensation.** An offset-free MPC selects smooth task-acceleration corrections while retaining the same prediction matrices across configuration and contact phase.
-4. **Controlled terrain and external-push evaluation.** Two paired 160-trial, four-controller benchmarks — an uneven-terrain study and a phase-locked torso-push study — use the same external reference and constrained realizer, report prediction, tracking, and recovery outcomes per condition, and separate the simulated control schedule from measured wall-clock feasibility.
+4. **Controlled terrain and external-push evaluation.** Two paired three-controller benchmarks — an uneven-terrain study and a phase-locked torso-push study, each four conditions $\times$ three controllers $\times$ ten seeds — use the same external reference and constrained realizer, gate the push on measured contact phase, report prediction, tracking, and recovery outcomes per condition, and separate the simulated control schedule from measured wall-clock feasibility.
 
-Figure 1 summarizes the multirate architecture. The external reference publishes nominal body, foot, and contact trajectories; the ID-MPC updates the acceleration correction at 100 Hz; the inverse-dynamics/contact QP is scheduled at 500 Hz; and torque is applied at the 1 kHz simulation rate. These are simulated update periods; Section X-H reports their wall-clock measurements.
+Figure 1 summarizes the multirate architecture. The external reference publishes nominal body, foot, and contact trajectories; the ID-MPC updates the acceleration correction at 100 Hz; the inverse-dynamics/contact QP is scheduled at 500 Hz; and torque is applied at the 1 kHz simulation rate. These are simulated update periods; Section IX-I reports their wall-clock measurements.
 
 ![Fig. 1. The multirate interaction-dynamics architecture.](figures/multirate_architecture.png)
 
@@ -61,9 +61,9 @@ Reduced-order locomotion MPC predicts center-of-mass and orientation motion whil
 
 Whole-body inverse dynamics and hierarchical QPs [4], [5], [7], [9] enforce instantaneous multibody dynamics, rigid contact, task priorities, and actuator limits. They are retained here unchanged as the high-rate realizer that maps a requested task acceleration to feasible joint torques and contact forces, not as a second predictive model. Operational-space impedance and admittance control [6], [11], [12] absorb interaction through compliant tracking deflection. The interaction layer proposed here differs in that it estimates the equivalent interaction acceleration and predicts its near-future effect, so a persistent interaction can be cancelled without a permanent tracking offset (Section VI).
 
-Full-order nonlinear MPC represents richer coupled dynamics at higher computational cost, and learning-based policies can provide strong empirical terrain robustness at the cost of model transparency and explicit constraint handling. Closest to our setting is unified whole-body MPC for locomotion and manipulation [10], which optimizes a single predictive model spanning both; we instead predict only the fixed interaction dynamics while the full contact-constrained dynamics act at the current sample as a feasibility projection. Across these lines, existing locomotion controllers improve locomotion primarily by replanning motion, adapting contact forces, or increasing model fidelity. Our objective is orthogonal: to expose *interaction itself* as the predictive state on a fixed, robot-independent model, and to insert this representation between an existing planner and an existing whole-body controller without replacing either.
+Full-order nonlinear MPC represents richer coupled dynamics at higher computational cost, and learning-based policies can provide strong empirical terrain robustness at the cost of model transparency and explicit constraint handling. Closest to our setting is unified whole-body MPC for locomotion and manipulation [10], which optimizes a single predictive model spanning both; we instead predict only the fixed interaction dynamics while the full contact-constrained dynamics act at the current sample as a feasibility projection. Across these lines, existing locomotion controllers improve locomotion primarily by replanning motion, adapting contact forces, or increasing model fidelity. Our objective is orthogonal: to expose *interaction itself* as the predictive state on a fixed shared model, and to insert this representation between an existing planner and an existing whole-body controller without replacing either.
 
-Offset-free tracking through an augmented constant-disturbance observer is a classical tool for rejecting persistent matched disturbances [16]. The normalized integrator interaction model, its offset-free regulation, and its impedance interpretation for fixed-base contact tasks were developed in [1]. This paper carries that construction onto a floating base during locomotion: the disturbance now aggregates terrain, contact-timing, realization, and model residuals in selected body-task coordinates, and it is evaluated against nominal-MPC and impedance baselines on uneven ground. The centroidal model [8], [17], whole-body inverse dynamics [9], and the integrating-disturbance observer [16] are prior tools; the contribution is their combination into a fixed-model interaction predictor for precise uneven-ground body tracking, with an honest four-controller evaluation on a Unitree G1 in MuJoCo [15].
+Offset-free tracking through an augmented constant-disturbance observer is a classical tool for rejecting persistent matched disturbances [16]. The normalized integrator interaction model, its offset-free regulation, and its impedance interpretation for fixed-base contact tasks were developed in [1]. This paper carries that construction onto a floating base during locomotion: the disturbance now aggregates terrain, contact-timing, realization, and model residuals in selected body-task coordinates, and it is evaluated against nominal-MPC and impedance baselines on uneven ground. The centroidal model [8], [17], whole-body inverse dynamics [9], and the integrating-disturbance observer [16] are prior tools; the contribution is their combination into a fixed-model interaction predictor for precise uneven-ground body tracking, with an honest three-controller evaluation on a Unitree G1 in MuJoCo [15].
 
 ---
 
@@ -88,7 +88,7 @@ where $q_b$ is the floating base, $q_j$ the actuated joints, $\lambda$ stacks co
 
 Let $y$ collect the selected locomotion-task coordinates — here CoM position and body roll/pitch — and let $e=y-y_d$ be their tracking error against the planned reference.
 
-**Assumption 1 (task-acceleration normalization).** On the operating set the selected task has an invertible, well-conditioned interaction inertia $M_p(q,\rho)$ and constrained dynamics $M_p\ddot y+\mu_p=F^{\rm act}+F^{\rm ext}$. The realizer's nominal feedforward cancels the modeled bias and injects the desired task acceleration plus a correction $v$, $F^{\rm act}=\mu_p+M_p(\ddot y_d+v)+\delta$, where $\delta$ is the unrealized part of the request and $F^{\rm ext}$ the external interaction wrench.
+**Assumption 1 (task-acceleration normalization).** On the operating set the selected task has an invertible, well-conditioned interaction inertia $M_p(q,\rho)$ and constrained dynamics $M_p\ddot y+\mu_p=F^{\rm act}+F^{\rm ext}$. The realizer's nominal feedforward cancels the modeled bias and injects the desired task acceleration plus a correction $v$, $F^{\rm act}=\mu_p+M_p(\ddot y_d+v)+\delta$, where $\delta$ is the realization discrepancy (the realized minus the requested generalized force) and $F^{\rm ext}$ the external interaction wrench.
 
 **Theorem 1 (contact-mode invariance of the requested model).** Let a controlled task have error coordinate $e$ of relative degree $r$, and let $\mathcal M$ be a set of contact modes for which Assumption 1 holds with the *same* requested coordinate. Then for every mode $\rho\in\mathcal M$ the realized error obeys the canonical model (1),
 
@@ -102,7 +102,7 @@ with interaction effect $d_{\rm int}=M_p^{-1}F^{\rm ext}$, realization effect $d
 
 *Proof.* Substituting the feedforward $F^{\rm act}=\mu_p+M_p(\ddot y_d+v)+\delta$ into the constrained dynamics $M_p\ddot y+\mu_p=F^{\rm act}+F^{\rm ext}$ cancels $\mu_p$, and left-multiplying by $M_p^{-1}$ gives $\ddot e=\ddot y-\ddot y_d=v+M_p^{-1}(F^{\rm ext}+\delta)=v+d_{\rm eff}$. The input-to-error map $v\mapsto\ddot e$ is therefore the identity **in every mode $\rho\in\mathcal M$**, independent of $M_p$, $\mu_p$, and $\rho$. Its exact-ZOH sampling is the order-$r$ integrator pair, whose entries are polynomials in $\Delta t$ only (for $r=2$, $A_d=\big[\begin{smallmatrix}I&\Delta t\,I\\0&I\end{smallmatrix}\big]$, $B_d=\big[\begin{smallmatrix}\frac12\Delta t^2I\\\Delta t\,I\end{smallmatrix}\big]$). No mode-dependent quantity can appear in $(A_d,B_d)$ because none appears in the map it discretizes; every such quantity is absorbed, *by construction*, into $F^{\rm act}$ — hence into the recovery map, the admissible set, and $d_{\rm eff}$. $\square$
 
-**Remark (the decomposition is falsifiable, not vacuous).** Isolating all robot and environment dependence in $d_{\rm eff}$ is a modeling *choice*, and it would be empty if $d_{\rm eff}$ could absorb any effect for free. It cannot: the task is regulated without steady-state error only when the cancelling request $v=-d_{\rm eff}$ is admissible and realizable by the constrained realizer (Sections VII and IX). When it is not — a force beyond the command authority, or a drop that saturates the realizer — the effect is not hidden in $d_{\rm eff}$ but surfaces as an un-rejected residual or a loss of balance. The claim is therefore testable, and Section X delineates exactly where it holds: a $30$ N sustained force within the command authority is rejected to a $4$ mm steady error, a $70$ N force exceeds that authority and is not (Section X-H), and a $40$ mm step-down saturates the realizer and destabilizes the controller (Section X-I). Invariance of $(A_d,B_d)$ buys a fixed predictor; it does not buy unconditional rejection.
+**Remark (the decomposition is falsifiable, not vacuous).** Isolating all robot and environment dependence in $d_{\rm eff}$ is a modeling *choice*, and it would be empty if $d_{\rm eff}$ could absorb any effect for free. It cannot: the task is regulated without steady-state error only when the cancelling request $v=-d_{\rm eff}$ is admissible and realizable by the constrained realizer (Sections VII and VIII). When it is not — a force beyond the command authority, or a drop that overwhelms the realizer — the effect is not hidden in $d_{\rm eff}$ but surfaces as an un-rejected residual or a loss of balance. The claim is therefore testable, and Section IX delineates exactly where it holds: a $30$ N sustained force within the command authority is rejected to a $4$ mm steady error, a $70$ N force exceeds that authority and is not (Section IX-G), and a $40$ mm step-down destabilizes the controller (Section IX-H). Invariance of $(A_d,B_d)$ buys a fixed predictor; it does not buy unconditional rejection.
 
 This is the organizing idea of the paper: robot and environment dependence is isolated in the estimated disturbance $d_{\rm eff}$, the task constraints, and the high-rate realization map, while the predictor keeps one fixed model across configuration and contact phase. The estimator (Section V) need not separate $d_{\rm int}$, $d_{\rm real}$, and $d_{\rm mod}$ to control their sum, although measured contact force gives an interpretable component. Figure 2 places this interaction-prediction block between the planner and the realizer.
 
@@ -123,7 +123,7 @@ m\ddot c=\sum_{i\in\mathcal C_\rho}f_i+mg+w_c ,
 \tag{5}
 $$
 
-where $w_c$ lumps the external and unmodeled load. For $e_c=c-c_d$ the planner-consistent desired resultant is $F_c^{\rm des}=m(\ddot c_d-g)+mv_c$; when the realized contact forces satisfy $\sum_i f_i=F_c^{\rm des}-\delta_c$,
+where $w_c$ lumps the external and unmodeled load. For $e_c=c-c_d$ the planner-consistent desired resultant is $F_c^{\rm des}=m(\ddot c_d-g)+mv_c$; writing the realized contact resultant as $\sum_i f_i=F_c^{\rm des}+\delta_c$ with the realization discrepancy $\delta_c$ (realized minus desired, as in Assumption 1),
 
 $$
 \ddot e_c=v_c+d_c,\qquad
@@ -155,18 +155,16 @@ The pair $(A_d,B_d)$ is the fixed double integrator; mass, inertia, contact geom
 
 ## V. Interaction Estimation and Prediction
 
-The disturbance $d_{\rm eff}$ is not commanded; it is estimated from what has already become observable. Each task channel augments its state with a random-walk disturbance and is tracked by a steady-state Kalman filter:
+The disturbance $d_{\rm eff}$ is not commanded; on the fixed model (7) it equals $\ddot e-v$, so it becomes observable as soon as the task-error acceleration is measured. We estimate it per channel by low-pass filtering the finite-differenced task-error acceleration minus the applied correction:
 
 $$
-\begin{bmatrix}x_{k+1}\\d_{k+1}\end{bmatrix}
-=\begin{bmatrix}A_d&B_d\\0&I\end{bmatrix}
-\begin{bmatrix}x_k\\d_k\end{bmatrix}
-+\begin{bmatrix}B_d\\0\end{bmatrix}v_k
-+\begin{bmatrix}0\\I\end{bmatrix}w_k ,
+\hat d_{{\rm eff},k}=(1-\alpha)\,\hat d_{{\rm eff},k-1}
++\alpha\big(\hat{\ddot e}_k-v_k\big),\qquad
+\hat{\ddot e}_k=\frac{\dot e_k-\dot e_{k-1}}{\Delta t_{\rm w}} ,
 \tag{9}
 $$
 
-with random-walk process noise $w_k$ and the measured task error as output. The estimate $\hat d_{k|k}$ aggregates the matched interaction, realization, and model effects; the filter is an *effect* estimator, not a source identifier, and measured contact force enters only as an interpretable diagnostic. A matched realization residual is therefore indistinguishable from an external interaction at the same channel and is absorbed into $\hat d_{\rm eff}$.
+with cutoff $\alpha=1-e^{-2\pi f_{\rm bw}\Delta t_{\rm w}}$ ($f_{\rm bw}=3$ Hz at the $2$ ms realizer step); the low-pass is used because a finite-difference acceleration is noisy even in simulation. Because $\hat{\ddot e}-v$ is exactly the measured minus the commanded task acceleration, the estimate aggregates the matched interaction, realization, and model effects into a single effect without needing to separate them; the filter is an *effect* estimator, not a source identifier, and measured contact force enters only as an interpretable diagnostic. A matched realization residual is therefore indistinguishable from an external interaction at the same channel and is absorbed into $\hat d_{\rm eff}$.
 
 Over the MPC horizon the residual is propagated as a constant,
 
@@ -175,7 +173,7 @@ $$
 \tag{10}
 $$
 
-This is deliberately not a terrain preview: it extrapolates the currently observed mismatch forward rather than forecasting unseen terrain. Section X-D audits this one-step-persistent rollout against the nominal $\hat d=0$ model. The estimator matrices are held fixed across contact events, so a phase change is a change of measured disturbance, not of the estimator model; a persistently large innovation (Section VIII) flags a possible contact-mode mismatch instead.
+This is deliberately not a terrain preview: it extrapolates the currently observed mismatch forward rather than forecasting unseen terrain. Section IX-D audits this one-step-persistent rollout against the nominal $\hat d=0$ model. The estimator is phase-invariant, so a contact phase change enters as a change of the measured disturbance, not of the estimator.
 
 ---
 
@@ -206,79 +204,63 @@ The realizer executes the requested task acceleration $\ddot y_d+v_k^\star$ at t
 
 $$
 \begin{aligned}
-\min_{\ddot q,\tau,\lambda,s}\quad&
-\|s_{\rm task}\|_{W_t}^2+\|s_W\|_{W_b}^2+\|\tau-\tau_{\rm ref}\|_{W_\tau}^2\\
+\min_{\ddot q,\tau,\lambda}\quad&
+\|J_y\ddot q+\dot J_y\dot q-(\ddot y_d+v_k^\star)\|_{W_t}^2
++\|J_c\ddot q+\dot J_c\dot q\|_{W_c}^2
++\|\tau-\tau_{\rm ref}\|_{W_\tau}^2\\
 \text{s.t.}\quad&
 M\ddot q+h=S^\top\tau+J_c^\top\lambda,\\
-&J_c\ddot q+\dot J_c\dot q=0,\\
-&J_y\ddot q+\dot J_y\dot q=\ddot y_d+v_k^\star+s_{\rm task},\\
-&\lambda\in\mathcal F_\rho,\quad \tau_{\min}\le\tau\le\tau_{\max},\\
-&q_{j,\min}+\epsilon\le S_j\!\big(q+\Delta t_{\rm w}\,\dot q+\tfrac12\Delta t_{\rm w}^2\ddot q\big)\le q_{j,\max}-\epsilon .
+&\lambda\in\mathcal F_\rho,\quad \tau_{\min}\le\tau\le\tau_{\max}.
 \end{aligned}
 \tag{12}
 $$
 
-Body and swing-foot objectives are soft, so an unrealizable request produces a measurable task-acceleration slack $s_{\rm task}$ rather than a hard infeasibility. With the measured task acceleration $\ddot y^{\rm meas}$, the realization residual
+Body, contact, and swing-foot accelerations are tracked as weighted least-squares objectives, while the floating-base dynamics, friction and unilateral-force limits, and torque bounds are hard constraints. The body and swing-foot objectives being soft, an unrealizable request produces a measurable task-acceleration slack $s_{\rm task}=J_y\ddot q+\dot J_y\dot q-(\ddot y_d+v_k^\star)$ rather than a hard infeasibility. With the measured task acceleration $\ddot y^{\rm meas}$, the realization residual
 
 $$
 d_{{\rm real},k}\approx\ddot y^{\rm meas}_k-\big(\ddot y_d+v_k^\star\big)
 \tag{13}
 $$
 
-is finite-differenced and returned to the estimator as the observable realization component of $d_{\rm eff}$. The realizer enforces the modeled multibody, contact, friction, unilateral-force, and torque limits as hard constraints; it is the layer that keeps the executed motion physically admissible regardless of the predictor. With a friction-pyramid approximation (12) is a convex QP solvable by operator splitting [14]; exact Coulomb cones make it a second-order cone program.
+is finite-differenced and folded into the measured task acceleration of (9). The realizer enforces the floating-base dynamics, friction, unilateral-force, and torque limits as hard constraints and tracks the contact and body accelerations as weighted objectives; it is the layer that keeps the executed motion physically admissible regardless of the predictor. Rigid-contact acceleration equalities and one-step joint-position limits are available in an exact-realization mode but are not used in the evaluated configuration. With a friction-pyramid approximation (12) is a convex QP solvable by operator splitting [14]; exact Coulomb cones make it a second-order cone program.
 
-The realizer runs at the high (simulated $500$ Hz) rate and the MPC at $100$ Hz, and the applied torque is held between realizer updates; the one-step joint-limit lookahead in (12) accordingly uses the realizer step $\Delta t_{\rm w}$ ($2$ ms), distinct from the predictor sample period $\Delta t$ ($10$ ms) of (8). Section X-H reports the measured wall-clock cost of this QP, which does not yet meet the simulated schedule.
+The realizer runs at the high (simulated $500$ Hz) rate with step $\Delta t_{\rm w}$ ($2$ ms) and the MPC at $100$ Hz ($\Delta t=10$ ms of (8)), and the applied torque is held between realizer updates. Section IX-I reports the measured wall-clock cost of this QP, which does not yet meet the simulated schedule.
 
----
-
-## VIII. Contact-Phase Consistency and Innovation Monitoring
-
-Locomotion proceeds through scheduled contact phases, and the realizer's contact mode $\rho$ is updated from the planner's schedule. Because the predictor and estimator matrices are phase-invariant, a phase change enters only through the re-formed recovery map and through the measured disturbance. To monitor consistency between the assumed and actual contact state, we track the normalized innovation
-
-$$
-\eta_k=\nu_k^\top S_k^{-1}\nu_k ,
-\tag{14}
-$$
-
-where $\nu_k$ and $S_k$ are the filter innovation and its covariance. A value of $\eta_k$ that stays above a calibrated threshold for $n_d$ consecutive samples, together with a geometrically plausible candidate contact, flags a possible mode mismatch. This is a monitor, not a certified detector: at the CoM channel, distinct external wrenches and contact changes can produce indistinguishable aggregate disturbances without additional kinematic or contact information, so $\eta_k$ triggers a hypothesis rather than an event. The evaluation of Section X uses the planner's scheduled transitions directly; event-driven contact updates from $\eta_k$ are left to future work.
-
-A hardware implementation of (9)–(14) also requires generalized velocity from a filtered estimate rather than raw encoder differences, and the phase lag and noise of that estimate must be included in the observer and closed-loop robustness evaluation; they are not removed by the update rate alone.
+Locomotion proceeds through scheduled contact phases, and the realizer's contact mode $\rho$ is updated from the planner's schedule. Because the predictor and estimator are phase-invariant, a phase change enters only through the re-formed recovery map and through the measured disturbance; the evaluation uses the planner's scheduled transitions directly. A hardware implementation of (9)–(13) also requires generalized velocity from a filtered estimate rather than raw encoder differences, and the phase lag and noise of that estimate must be included in the observer and closed-loop robustness evaluation; they are not removed by the update rate alone.
 
 ---
 
-## IX. Properties and Scope
+## VIII. Properties and Scope
 
 The construction inherits the fixed-model offset-free property of [1] and adds the qualification that the disturbance is now an aggregate effect on a floating base.
 
-**Offset-free regulation (conditional).** Fix a contact phase and suppose the effective disturbance is constant and matched, the augmented filter (9) is detectable and converges so that $\hat d\to d_{\rm eff}$, and the cancelling correction $v=-d_{\rm eff}$ lies within the fixed bounds and remains realizable by (12). Then the offset-free MPC (11) drives the task error to zero: the matched interaction and realization effects are cancelled together, so exact realization $d_{\rm real}=0$ is not required — only that the residual be matched, constant, and realizable.
+**Offset-free regulation (conditional).** Fix a contact phase and suppose the effective disturbance is constant and matched, the residual estimator (9) converges so that $\hat d\to d_{\rm eff}$, and the cancelling correction $v=-d_{\rm eff}$ lies within the fixed bounds and remains realizable by (12). Then the offset-free MPC (11) drives the task error to zero: the matched interaction and realization effects are cancelled together, so exact realization $d_{\rm real}=0$ is not required — only that the residual be matched, constant, and realizable.
 
 **Bounded mismatch.** If the nominal requested-model loop is input-to-state stable as in [1] and the unmatched residual is bounded, $\sup_k\lVert d_{\rm eff}-d_{\rm matched}\rVert\le\varepsilon$, then the realized error inherits the nominal transient plus an ultimate bound proportional to $\varepsilon$. Bounded corrections do not by themselves establish recursive feasibility, contact stability, or fall avoidance; those remain properties of the plan and the realizer.
 
-**What the model does not claim.** The predictor is exact only for the normalized task under ideal feedforward and zero realization error. In execution, state-estimation delay, contact compliance, velocity filtering, impact dynamics, realizer task trade-offs, actuator dynamics, and terrain mismatch all enter $d_{\rm eff}$, and the estimator observes their sum only after it becomes measurable. There is no terrain preview and no per-sample feasibility certificate. Section X measures where this compact model helps, where it is neutral, and where it slightly hurts.
+**What the model does not claim.** The predictor is exact only for the normalized task under ideal feedforward and zero realization error. In execution, state-estimation delay, contact compliance, velocity filtering, impact dynamics, realizer task trade-offs, actuator dynamics, and terrain mismatch all enter $d_{\rm eff}$, and the estimator observes their sum only after it becomes measurable. There is no terrain preview and no per-sample feasibility certificate. Section IX measures where this compact model helps, where it is neutral, and where it slightly hurts.
 
 ---
 
-## X. Environmental-Interaction Experiments
+## IX. Environmental-Interaction Experiments
 
-The evaluation tests whether one canonical residual-acceleration model explains two distinct interaction classes — terrain-mediated contact mismatch and externally applied body force — under an identical walking plan and constrained realizer. Every controller receives the same nominal walking trajectory, contact schedule, initial state, and seed and uses the same state estimator, contact logic, inverse-dynamics/contact QP, torque limits, friction model, and solver settings. Only the task-space correction law changes. Two full-physics benchmarks anchor the evaluation — a 160-trial terrain study (four terrains $\times$ four controllers $\times$ ten seeds; Sections X-D to X-F) and a 160-trial external-push study (four direction/phase conditions $\times$ four controllers $\times$ ten seeds; Section X-G) — a total of 320 torque-level runs, all completing without a QP fallback. Two focused studies then probe the boundaries of the mechanism: a sustained-force study on the reduced interaction model (Section X-H), which isolates the offset-free property that the falling walker cannot hold at torque level, and a step-height/combined-disturbance physics vignette (Section X-I).
+The evaluation tests whether one canonical residual-acceleration model explains two distinct interaction classes — terrain-mediated contact mismatch and externally applied body force — under an identical walking plan and constrained realizer. Every controller receives the same nominal walking trajectory, contact schedule, initial state, and seed and uses the same state estimator, contact logic, inverse-dynamics/contact QP, torque limits, friction model, and solver settings. Only the task-space correction law changes. Two full-physics benchmarks anchor the evaluation — a terrain study (four terrains $\times$ three controllers $\times$ ten seeds; Sections IX-D and IX-E) and an external-push study (four direction/phase conditions $\times$ three controllers $\times$ ten seeds; Section IX-F) — 240 torque-level runs in all, with zero QP fallbacks; falls are reported per cell as a secondary outcome. Two focused studies then probe the boundaries of the mechanism: a sustained-force study on the reduced interaction model (Section IX-G), which isolates the offset-free property that the falling walker cannot hold at torque level, and a step-height/combined-disturbance physics vignette (Section IX-H).
 
 ### A. Multirate Experimental Architecture
 
-All trials use the Unitree G1 MuJoCo model (MuJoCo 3.10.0) with 1 ms integration and torque application. Simulated updates are scheduled at 500 Hz for the whole-body QP and estimator and at 100 Hz for the MPC. The external reference supplies nominal body, swing-foot, and contact trajectories and is not modified by terrain feedback. The 500 Hz value is therefore the simulated schedule, not a demonstrated wall-clock rate; measured computation is reported in Section X-H.
+All trials use the Unitree G1 MuJoCo model (MuJoCo 3.10.0) with 1 ms integration and torque application. Simulated updates are scheduled at 500 Hz for the whole-body QP and estimator and at 100 Hz for the MPC. The external reference supplies nominal body, swing-foot, and contact trajectories and is not modified by terrain feedback. The 500 Hz value is therefore the simulated schedule, not a demonstrated wall-clock rate; measured computation is reported in Section IX-I.
 
 The WBC enforces floating-base dynamics, active-contact acceleration, unilateral force, friction, and torque constraints. Body and swing-foot objectives remain soft, so an unrealizable request produces a measurable acceleration residual rather than a hard-task infeasibility. The interaction layer neither changes the contact schedule nor selects footsteps. The controlled vector is CoM position plus roll and pitch; the paper does not interpret this simulated attitude channel as a hardware centroidal-momentum measurement.
 
-The locomotion planner, contact schedule, and whole-body realization stack are shared by all evaluated controllers, and the interaction layer modifies only the body-task acceleration command. To isolate interaction-prediction performance from long-horizon gait-stabilization effects — the shared lateral gait is only marginally stable over long horizons (Section XI) — the comparisons are conducted over a fixed evaluation window in which the shared locomotion infrastructure remains repeatable for every controller.
+The locomotion planner, contact schedule, and whole-body realization stack are shared by all evaluated controllers, and the interaction layer modifies only the body-task acceleration command. To isolate interaction-prediction performance from long-horizon gait-stabilization effects — the shared lateral gait is only marginally stable over long horizons (Section X) — the comparisons are conducted over a fixed evaluation window in which the shared locomotion infrastructure remains repeatable for every controller.
 
 ### B. Compared Controllers
 
-Four controllers are compared:
+Three controllers are compared:
 
 1. **Task impedance:** fixed body and swing-foot feedback generates acceleration requests for the shared WBC. This baseline accommodates terrain interaction through compliant tracking error.
 2. **Nominal MPC:** the same double-integrator MPC, horizon, cost, acceleration bounds, planner, and WBC as the proposed controller, but with $\hat d_{\rm eff}=0$. This isolates the value of residual estimation and prediction.
-3. **Interaction-Dynamics MPC (ID-MPC):** the proposed residual-augmented predictor uses $\hat d_{\rm eff}$ over the horizon and feeds the WBC-reported realization mismatch back to the estimator.
-
-A fourth controller, **ID-MPC without realization feedback**, retains the estimated interaction component but omits the finite-difference realization term. It directly tests whether closing the prediction--realization loop improves this implementation.
+3. **Interaction-Dynamics MPC (ID-MPC):** the proposed residual-augmented predictor uses the estimated $\hat d_{\rm eff}$ of (9)–(10) over the horizon.
 
 Controller parameters are frozen across evaluation terrains. No method receives terrain height, future contact force, or replanning. The interaction estimate uses only acceleration residuals that have already become observable; no oracle sequence is used.
 
@@ -303,7 +285,7 @@ At each estimator update, the nominal model ($\hat d=0$) and constant-residual m
 
 **Fig. 3.** Interaction-augmented versus nominal prediction.
 
-At 10 ms, residual augmentation reduces median CoM prediction RMSE from 0.0281 to 0.0265 mm on flat ground (5.6%), from 0.0272 to 0.0257 mm in the depression (5.7%), and from 0.0301 to 0.0287 mm on rough ground (4.7%). It does not improve obstacle CoM prediction (0.06443 versus 0.06444 mm). Roll/pitch improvement is smaller: 0.18--0.67% depending on terrain. Thus the experiment supports a modest short-horizon prediction benefit after the residual becomes observable, but not a universal benefit and not terrain preview.
+At 10 ms, residual augmentation reduces median CoM prediction RMSE from 0.0281 to 0.0267 mm on flat ground (4.6%), from 0.0272 to 0.0257 mm in the depression (5.7%), and from 0.0301 to 0.0291 mm on rough ground (3.6%). It slightly worsens obstacle CoM prediction (0.0644 to 0.0665 mm, $-3.2\%$) and worsens roll/pitch prediction by 2--3% on every terrain. The absolute changes are small — order $0.001$ mm at $10$ ms — so we treat this open-loop prediction audit as corroborating rather than headline evidence: the benefit is a modest, CoM-channel effect on three of four terrains after the residual becomes observable, not a universal benefit and not terrain preview. That the obstacle's closed-loop tracking still improves (Table I) while its open-loop prediction does not underlines that the two are different measurements.
 
 ### E. Uneven-Ground Tracking and Interaction Response
 
@@ -313,22 +295,18 @@ Table I reports medians across the ten seeds. Fig. 4 visualizes the same CoM met
 |---|---|---:|---:|---:|---:|
 | flat | impedance | 3.468 | 8.987 | 22.08 | 0 |
 |  | nominal MPC | 3.446 | 8.703 | 25.70 | 0 |
-|  | ID-MPC | 3.445 | 8.844 | 23.91 | 0 |
-|  | no realization feedback | 3.439 | 8.938 | 23.88 | 0 |
+|  | ID-MPC | 3.488 | 8.936 | 25.03 | 0 |
 | depression | impedance | 7.524 | 48.676 | 143.30 | 5 |
 |  | nominal MPC | 3.916 | 9.671 | 24.14 | 0 |
-|  | ID-MPC | 3.949 | 9.659 | 23.04 | 0 |
-|  | no realization feedback | 3.923 | 9.749 | 24.14 | 1 |
+|  | ID-MPC | 3.944 | 9.713 | 25.61 | 0 |
 | obstacle | impedance | 5.927 | 13.134 | 44.95 | 0 |
 |  | nominal MPC | 5.800 | 12.706 | 50.20 | 0 |
-|  | ID-MPC | 5.657 | 11.047 | 50.73 | 0 |
-|  | no realization feedback | **5.332** | **10.221** | **46.23** | 0 |
+|  | ID-MPC | **5.427** | **10.188** | 52.25 | 0 |
 | rough | impedance | 4.590 | 11.895 | **21.64** | 0 |
-|  | nominal MPC | **4.511** | 11.850 | 26.44 | 0 |
-|  | ID-MPC | 4.614 | **11.545** | 23.76 | 0 |
-|  | no realization feedback | 4.546 | 11.910 | 24.90 | 0 |
+|  | nominal MPC | 4.511 | 11.850 | 26.44 | 0 |
+|  | ID-MPC | **4.499** | **11.737** | 25.65 | 0 |
 
-**Table I.** Paired uneven-ground tracking results (cell medians).
+**Table I.** Paired uneven-ground tracking results (cell medians over ten seeds).
 
 ![Fig. 4. Uneven-ground CoM tracking metrics.](figures/uneven_ground_tracking.png)
 
@@ -338,58 +316,44 @@ Table I reports medians across the ten seeds. Fig. 4 visualizes the same CoM met
 
 **Fig. 5.** Representative obstacle response (seed 4200).
 
-Relative to nominal MPC, ID-MPC changes median CoM RMS by 0.00%, +0.83%, -2.46%, and +2.28% on flat, depression, obstacle, and rough terrain, respectively; the corresponding peak changes are +1.63%, -0.12%, -13.06%, and -2.58%. A paired bootstrap over seeds gives an obstacle peak-error difference of -1.79 mm (95% interval [-2.14, -0.17] mm); the sub-3% RMS changes on the remaining terrains are within seed variability. The strongest system-level contrast is the depression, where impedance falls in five trials while both nominal and ID-MPC complete all ten, confirming the value of predictive correction over the impedance baseline. The sharper separation between residual augmentation and nominal MPC appears under the external pushes of Section X-G, where the interaction becomes large and constraint-active.
+Relative to nominal MPC, ID-MPC changes median CoM peak error by +2.7%, +0.4%, $-19.8\%$, and $-1.0\%$ on flat, depression, obstacle, and rough terrain, and median CoM RMS by +1.2%, +0.7%, $-6.4\%$, and $-0.3\%$. The single clear terrain effect is the obstacle, where ID-MPC lowers the peak from 12.71 to 10.19 mm; the sub-3% changes on flat, depression, and rough terrain are within seed variability. The strongest system-level contrast is the depression, where impedance falls in five trials while both nominal MPC and ID-MPC complete all ten, confirming the value of predictive correction over the impedance baseline. The sharper separation between residual augmentation and nominal MPC appears under the external pushes of Section IX-F, where the interaction is larger and more observable.
 
-### F. Role of the Realization-Feedback Term
+### F. External-Push Study
 
-On the terrain set the realization-feedback term is approximately neutral: removing it changes obstacle RMS and peak by under $0.9$ mm (5.332/10.221 mm without versus 5.657/11.047 mm with), leaves flat and rough RMS within the same band; the full controller completes every trial while the no-feedback ablation falls once on depression, too rare in ten seeds to read as a robustness signal. The terrain interactions here are mild enough that the constrained realizer rarely saturates, so the realization residual it reports is small and adds little to the estimate. The push study of Section X-G supplies the complementary regime: under a single-support push the realizer does saturate, and there the realization-feedback term materially improves peak error and recovery. We therefore retain it as a component that is beneficial when the whole-body constraints become active and inexpensive otherwise, and identify a better-separated realization observer as future work.
-
-### G. External-Push Study
-
-To test the second interaction class, a phase-locked external wrench is applied to the torso during walking. A half-sine force of $90$ N peak and $150$ ms duration ($8.6$ N$\cdot$s impulse) is applied at the first planned occurrence of the target gait phase after $1.6$ s. The wrench perturbs only the plant; it is logged at $1$ kHz for ground truth but is hidden from the estimator and every controller. Four conditions cross push direction (lateral, forward) with gait phase (double and single support); the same four controllers and ten paired seeds give $160$ additional trials. Recovery time is defined before the final seeds as the first post-onset instant at which the CoM planar error returns below a frozen $12$ mm band and stays there for $200$ ms.
+To test the second interaction class, a phase-locked external wrench is applied to the torso during walking. A half-sine force of $90$ N peak and $150$ ms duration ($8.6$ N$\cdot$s impulse) is applied once the target gait phase is confirmed by *measured* foot contact — exactly one foot in contact for single support, both for double support — held for a $60$ ms dwell, and no earlier than $1.6$ s. Gating on measured rather than planned contact is essential: every trial's onset contact is verified, and all single-support pushes land with one measured foot on the ground. The wrench perturbs only the plant; it is logged at $1$ kHz for ground truth but is hidden from the estimator and every controller. Four conditions cross push direction (lateral, forward) with gait phase (double and single support); three controllers and ten paired seeds give $120$ trials. Recovery time is the first post-onset instant at which the CoM planar error returns below a frozen $12$ mm band and stays there for $200$ ms.
 
 | condition | controller | CoM peak (mm) | CoM RMS (mm) | recovery (s) | recovered/10 | falls/10 |
 |---|---|---:|---:|---:|---:|---:|
-| lateral, DS | impedance | 14.6 | 4.7 | 0.49 | 10 | 0 |
-|  | nominal MPC | 14.3 | 4.6 | 0.49 | 10 | 0 |
-|  | ID-MPC | 11.8 | 3.4 | **0.00** | 10 | 0 |
-|  | no realization fb | **10.4** | **3.3** | **0.00** | 10 | 0 |
-| lateral, SS | impedance | 82.4 | 21.9 | — | 0 | 0 |
-|  | nominal MPC | 57.3 | 17.3 | — | 0 | 1 |
-|  | ID-MPC | **31.0** | **10.4** | **1.64** | 6 | 0 |
-|  | no realization fb | 51.9 | 15.5 | — | 0 | 1 |
-| forward, DS | impedance | 17.2 | 6.6 | 1.06 | 10 | 0 |
-|  | nominal MPC | 16.6 | 6.7 | 1.02 | 10 | 0 |
-|  | ID-MPC | 16.1 | 5.5 | **0.39** | 10 | 0 |
-|  | no realization fb | **14.6** | 5.8 | 0.50 | 10 | 0 |
-| forward, SS | impedance | 66.1 | 23.8 | 1.66 | 1 | 8 |
-|  | nominal MPC | 17.5 | 6.3 | 0.82 | 9 | 1 |
-|  | ID-MPC | 17.0 | 5.9 | **0.45** | 10 | 0 |
-|  | no realization fb | **15.5** | **5.8** | 0.53 | 10 | 0 |
+| lateral, DS | impedance | 14.1 | 4.4 | 0.37 | 10 | 0 |
+|  | nominal MPC | 13.6 | 4.0 | 0.36 | 10 | 1 |
+|  | ID-MPC | **10.1** | **3.1** | **0.00** | 10 | 0 |
+| lateral, SS | impedance | 39.3 | 11.4 | 0.42 | 5 | 5 |
+|  | nominal MPC | 14.4 | 4.4 | 0.41 | 8 | 2 |
+|  | ID-MPC | **10.6** | **3.1** | **0.00** | 7 | 3 |
+| forward, DS | impedance | 17.1 | 6.3 | 0.71 | 10 | 0 |
+|  | nominal MPC | 16.3 | 6.2 | 0.77 | 10 | 0 |
+|  | ID-MPC | **14.0** | **5.2** | **0.51** | 10 | 0 |
+| forward, SS | impedance | 16.5 | 6.4 | 0.75 | 10 | 0 |
+|  | nominal MPC | 16.7 | 6.5 | 0.84 | 10 | 0 |
+|  | ID-MPC | **14.2** | **5.6** | **0.66** | 10 | 0 |
 
-**Table II.** External-push response (cell medians over ten seeds). Recovery is the median over recovering seeds and is reported with the number of seeds that recover; "—" marks conditions in which no seed re-enters the band.
+**Table II.** External-push response (cell medians over ten seeds). Recovery is the median over recovering seeds and is reported with the number of seeds that recover.
 
-ID-MPC reduces the post-push peak CoM error relative to nominal MPC in every condition, and the reduction is largest where the disturbance is largest and most observable. Under a lateral single-support push it lowers the median peak from $57.3$ to $31.0$ mm ($-46\%$) and is the only controller that returns to the $12$ mm band (six of ten seeds), while impedance, nominal MPC, and the no-feedback ablation never do. It also shortens recovery in the three conditions where all controllers recover: from $0.49$ to $\le0.001$ s (lateral DS), $1.02$ to $0.39$ s (forward DS), and $0.82$ to $0.45$ s (forward SS). Post-push short-horizon prediction improves under the lateral pushes ($10$ ms CoM RMSE $0.069\to0.050$ mm for the single-support case) and is neutral for the forward pushes, mirroring the terrain finding that residual augmentation helps modestly and where the residual is informative.
+ID-MPC reduces the median post-push peak CoM error relative to nominal MPC in every condition — by $26\%$ (lateral SS, $14.4\to10.6$ mm), $26\%$ (lateral DS), $15\%$ (forward SS), and $14\%$ (forward DS) — and lowers post-push RMS correspondingly. Its recovery is also faster in every condition: in the three conditions where all three controllers recover it re-enters the $12$ mm band in $\le0.51$ s versus $0.36$–$0.84$ s for the baselines, and in the lateral cases its surviving seeds barely leave the band at all ($\le0.001$ s median). The advantage is largest in the vulnerable lateral single-support case, where impedance reaches a $39.3$ mm peak and falls in five of ten seeds while ID-MPC holds $10.6$ mm.
 
-The realization-feedback path behaves differently here than on terrain. Under the lateral single-support push — the one condition that drives the WBC hardest — the full ID-MPC ($31.0$ mm, recovering) clearly outperforms the no-realization-feedback ablation ($51.9$ mm, not recovering, one fall). In the milder conditions the ablation edges the full controller on peak error, as on terrain. The realization term is therefore useful specifically when constraints become active, which is the deliberately saturation-inducing regime the terrain study lacked; the realization-feedback path is thus partially supported by the push study while remaining unsupported on terrain.
+The benefit is in error magnitude and recovery speed, not fall avoidance. Fall counts in the hardest condition (lateral single support) are similar and noisy across the MPC controllers — nominal MPC falls twice and ID-MPC three times in ten seeds — and no controller recovers every seed there; we therefore do not claim a fall-rate advantage and report falls as a secondary outcome. We also do not attribute the gains to whole-body constraint activation: across the push trials the peak torque utilization reaches $0.89$ (median $0.66$) and the benchmark does not log active-set membership, so a large realization residual is not evidence of hard-constraint saturation.
 
-Impedance fails the forward single-support push in eight of ten seeds, whereas every MPC-based controller completes it. This reproduces the MPC-versus-impedance contrast of the depression terrain and, as there, does not by itself isolate residual augmentation. Falls are a secondary outcome.
+![Fig. 6. External-push summary.](figures/external_push_summary.png)
 
-![Fig. 7. External-push summary.](figures/external_push_summary.png)
+**Fig. 6.** Post-push peak CoM error and recovery time by controller across the four push conditions.
 
-**Fig. 7.** Post-push peak CoM error and recovery time by controller across the four push conditions.
+![Fig. 7. Representative push response.](figures/external_push_response.png)
 
-![Fig. 8. Post-push prediction.](figures/external_push_prediction.png)
+**Fig. 7.** Representative lateral single-support push: CoM planar error for nominal MPC and ID-MPC, with the applied-force pulse shaded.
 
-**Fig. 8.** Post-push $10$ ms CoM prediction RMSE, nominal versus residual-augmented model.
+### G. Sustained-Force Rejection and the Authority Limit
 
-![Fig. 9. Representative push response.](figures/external_push_response.png)
-
-**Fig. 9.** Representative lateral single-support push: CoM planar error for nominal and ID-MPC, with the applied-force pulse shaded.
-
-### H. Sustained-Force Rejection and the Authority Limit
-
-The transient push of Section X-G is a full torque-level result, but a *sustained* force cannot be studied there: the shared gait/WBC is stable only for about 4 s (Section X-A), so a 1 s constant push cannot be applied and observed to steady state. To isolate the offset-free property predicted by Theorem 1 under a persistent force, we exercise the same reduced CoM/body interaction model on which ID-MPC operates — the two-dimensional model that also drives the root-assisted walking visualization — under a 1 s constant lateral force during a 1.2 m/s forward reference, with ten paired seeds injecting lateral process noise. This is a controlled demonstration of the mechanism on the interaction model itself, not a torque-level physics result; it complements, and does not replace, the full-physics transient study above.
+The transient push of Section IX-F is a full torque-level result, but a *sustained* force cannot be studied there: the shared gait is only marginally stable over long horizons (Section X), so a 1 s constant push cannot be reliably applied and observed to steady state on the walking robot. To isolate the offset-free property predicted by Theorem 1 under a persistent force, we exercise the same reduced CoM/body interaction model on which ID-MPC operates — the two-dimensional model that also drives the root-assisted walking visualization — under a 1 s constant lateral force during a 1.2 m/s forward reference, with ten paired seeds injecting lateral process noise. This is a controlled demonstration of the mechanism on the interaction model itself, not a torque-level physics result; it complements, and does not replace, the full-physics transient study above.
 
 | force | controller | steady offset (mm) | peak (mm) | recovered/10 |
 |---|---|---:|---:|---:|
@@ -402,13 +366,13 @@ The transient push of Section X-G is a full torque-level result, but a *sustaine
 
 **Table III.** Sustained 1 s lateral force on the reduced CoM/body model (cell medians over ten seeds). "Recovered" is the fraction of seeds whose lateral error returns below a 15 mm band.
 
-The command authority of the reduced model is $\approx48$ N ($1.4$ m/s$^2\times34$ kg). The sweep tracks the three regimes of Theorem 1's realizability condition exactly. **Within authority (30 N):** ID-MPC rejects the constant force nearly offset-free — the steady lateral error drops from $42.8$ to $4.2$ mm (a $10\times$ reduction) and it is the only controller to re-enter the band, because the augmented observer converges to the constant disturbance and the cancelling command $v=-\hat d_{\rm eff}$ is admissible. **Just past authority (50 N):** ID-MPC is still better ($59.6$ vs $83.0$ mm) but the command saturates and a residual offset remains. **Beyond authority (70 N):** both hold $\approx245$ mm — the cancelling command is inadmissible, so no observer can help, exactly as the falsifiability remark after Theorem 1 states. Nominal MPC, lacking the disturbance feedforward, holds a droop proportional to the force throughout.
+The command authority of the reduced model is $\approx48$ N ($1.4$ m/s$^2\times34$ kg). The sweep tracks the three regimes of Theorem 1's realizability condition exactly. **Within authority (30 N):** ID-MPC rejects the constant force nearly offset-free — the steady lateral error drops from $42.8$ to $4.2$ mm (a $10\times$ reduction) and it is the only controller to re-enter the band, because the residual estimator converges to the constant disturbance and the cancelling command $v=-\hat d_{\rm eff}$ is admissible. **Just past authority (50 N):** ID-MPC is still better ($59.6$ vs $83.0$ mm) but the command saturates and a residual offset remains. **Beyond authority (70 N):** both hold $\approx245$ mm — the cancelling command is inadmissible, so no observer can help, exactly as the falsifiability remark after Theorem 1 states. Nominal MPC, lacking the disturbance feedforward, holds a droop proportional to the force throughout.
 
-![Fig. 10. Sustained-force offset-free rejection.](figures/sustained_push_offset.png)
+![Fig. 8. Sustained-force offset-free rejection.](figures/sustained_push_offset.png)
 
-**Fig. 10.** Steady-state lateral CoM offset under a sustained force; ID-MPC is offset-free within the command authority ($\approx48$ N) and degrades to the nominal droop beyond it.
+**Fig. 8.** Steady-state lateral CoM offset under a sustained force; ID-MPC is offset-free within the command authority ($\approx48$ N) and degrades to the nominal droop beyond it.
 
-### I. Step Height and a Combined Disturbance
+### H. Step Height and a Combined Disturbance
 
 To probe contact-transition strength at torque level, a short (4 s) physics vignette walks the foot onto a unilateral step — down (a depression) or up (a raised lane) — swept at 20, 30, and 40 mm, and finally combines a 30 mm step-up with a lateral push. Ten paired seeds, ID-MPC vs nominal MPC.
 
@@ -424,47 +388,47 @@ To probe contact-transition strength at torque level, a short (4 s) physics vign
 
 **Table IV.** Step-height sweep and combined push+platform (physics, 4 s window; cell medians over ten seeds).
 
-At moderate amplitude ID-MPC helps where the disturbance is informative: a 30 mm step-up reduces the peak CoM error by about 40% ($49.8\to30.1$ mm), and the combined push+platform case lowers peak error by $46\%$ ($36.4\to19.6$ mm) and RMS by $42\%$. The extremes are reported honestly. A 40 mm step-up exceeds the gait's balance envelope and both controllers fall — a limit of the shared walker, not of the representation. A 40 mm step-down destabilizes ID-MPC (8/10 falls) while nominal survives: a deep, persistent, asymmetric drop saturates the realizer, so the fed-back realization residual over-reacts rather than helps — the same un-realizable regime the Theorem 1 remark flags, and consistent with the terrain finding that the realization-feedback term is only beneficial when the realizer is not saturated.
+At moderate amplitude ID-MPC helps where the disturbance is informative: a 30 mm step-up reduces the peak CoM error by about 40% ($49.8\to30.1$ mm), and the combined push+platform case lowers peak error by $46\%$ ($36.4\to19.6$ mm) and RMS by $42\%$. The extremes are reported honestly. A 40 mm step-up exceeds the gait's balance envelope and both controllers fall — a limit of the shared walker, not of the representation. A 40 mm step-down destabilizes ID-MPC (8/10 falls) while nominal survives: a deep, persistent, asymmetric drop drives a large residual estimate whose cancelling command is not admissible on the already-marginal walker, so the constant-residual feedforward over-reacts rather than helps — the same un-realizable regime the Theorem 1 remark flags. This is a boundary of the mechanism reported plainly: the feedforward helps where the disturbance is informative and admissible and hurts where it is neither.
 
-### J. Computational and Reproducibility Evaluation
+### I. Computational and Reproducibility Evaluation
 
-Timing is measured on a general-purpose workstation under a standard, non-real-time operating system in an unoptimized Python implementation; it is a prototype measurement on a non-real-time host, not a deployment result. Across the 160 terrain trial summaries the WBC median is 2.77 ms with a median trial p99 of 7.71 ms, while the 100 Hz MPC has a 0.294 ms median of trial medians, a 0.434 ms median p99, and a 6.28 ms maximum. The largest single WBC sample, 48.98 ms, coincides with an operating-system scheduling spike rather than a compute cost, which is exactly why a non-real-time host is not a fair basis for a hard-deadline claim. The dominant WBC cost is Python matrix assembly rather than the QP solve, so a compiled sparse solver with warm-starting on a real-time target is the expected route to the 2 ms budget. The push study uses the identical multirate loop and exhibits the same profile. We therefore preserve the 500 Hz simulated schedule for every controller and treat real-time realization as an implementation task rather than a claim of this paper.
+Timing is measured on a general-purpose workstation under a standard, non-real-time operating system in an unoptimized Python implementation; it is a prototype measurement on a non-real-time host, not a deployment result, and is representative rather than reproducible from run to run. Across the terrain trials a representative profile has a WBC median near 2.8 ms with a median trial p99 near 7.7 ms, while the 100 Hz MPC has a median of trial medians near 0.3 ms and a median p99 near 0.4 ms. Occasional large single WBC samples coincide with operating-system scheduling spikes rather than compute cost, which is exactly why a non-real-time host is not a fair basis for a hard-deadline claim. The dominant WBC cost is Python matrix assembly rather than the QP solve, so a compiled sparse solver with warm-starting on a real-time target is the expected route to the 2 ms budget. The push study uses the identical multirate loop and exhibits the same profile. We therefore preserve the 500 Hz simulated schedule for every controller and treat real-time realization as an implementation task rather than a claim of this paper.
 
-![Fig. 11. Wall-clock timing.](figures/uneven_ground_timing.png)
+![Fig. 9. Wall-clock timing.](figures/uneven_ground_timing.png)
 
-**Fig. 11.** Prototype wall-clock timing on a general-purpose, non-real-time host in unoptimized Python. The dashed lines mark the 500 Hz and 100 Hz schedule periods for context, not hard deadlines.
+**Fig. 9.** Prototype wall-clock timing on a general-purpose, non-real-time host in unoptimized Python. The dashed lines mark the 500 Hz and 100 Hz schedule periods for context, not hard deadlines.
 
-The authoritative artifacts are code/results/uneven_ground_benchmark.json (SHA-256 8b7f8595d173b2a71ce87fc7bb67b8d023bf747334e889ffc6275ad3f41d3996), code/results/external_push_benchmark.json, code/results/sustained_push_benchmark.json (reduced-model, Section X-H), and code/results/platform_vignette.json (physics, Section X-I). Representative 1 kHz logs are stored as compressed NPZ files. make_uneven_ground_figures.py, make_external_push_figures.py, and make_sustained_push_figure.py generate Figs. 3--10, and verify_interaction_paper_claims.py requires all 160 terrain trials, all 160 push trials, the 60-trial sustained-force sweep, and the 140-trial step vignette — complete seed/cell matrices, zero QP fallbacks in the physics studies, and all derived figures — before reporting PASS.
+The authoritative artifacts are `code/results/uneven_ground_benchmark.json`, `code/results/external_push_benchmark.json`, `code/results/sustained_push_benchmark.json` (reduced-model, Section IX-G), and `code/results/platform_vignette.json` (physics, Section IX-H); representative 1 kHz logs are stored as compressed NPZ files. `make_uneven_ground_figures.py`, `make_external_push_figures.py`, and `make_sustained_push_figure.py` generate Figs. 3–8, and `verify_interaction_paper_claims.py` recomputes the reported medians from the committed JSON and checks the experimental configuration — measured onset contact for every push, the soft-realizer setting, the three-controller matrix, and the per-cell fall counts — as well as complete seed/cell matrices and zero QP fallbacks, before reporting PASS.
 
 ---
 
-## XI. Limitations
+## X. Limitations
 
 The proposed controller is not a terrain-aware motion planner. It follows an externally supplied body, foot, and contact reference and therefore cannot choose a safer foothold, change step timing arbitrarily, or route around terrain that makes the nominal plan infeasible. The uneven-ground experiments intentionally retain the same flat-ground plan to isolate interaction compensation. Failure beyond the tested terrain amplitude may reflect the limits of that plan or of the shared WBC rather than the double-integrator representation alone.
 
-Nor is the framework a complete locomotion stabilizer, and an extended-walking diagnostic locates this boundary precisely. In undisturbed 15 s flat walking the evaluated controllers track the reference lateral divergent-component motion (DCM) closely — tracking error $\approx16$ mm maximum, $5.6$ mm RMS — and a diagnostic DCM-based foot-placement layer transmits corrective foothold commands through the swing trajectory and whole-body realizer with commanded and realized touchdowns agreeing to $\approx5$ mm. The eventual fall (near $7$ s) is therefore neither a tracking nor a swing-realization failure. Instead, the shared nominal lateral gait reference itself places the divergent component $\approx135$ mm from the stance foot on every step, nearly saturating the available step-width correction and leaving little margin for perturbation rejection; the result is a marginally stable lateral gait that eventually loses capturability. This behavior is common to all evaluated controllers and is a property of the shared lateral gait reference, not of the interaction estimator, which is why the primary comparisons are conducted over a fixed evaluation window in which the shared locomotion stack remains repeatable for every controller. Embedding the interaction layer within a locomotion controller that jointly manages within-step center-of-pressure authority and step-to-step capturability — for which a touchdown-anchoring and predictive-DCM foot-placement module is implemented but disabled in these benchmarks — remains future work.
+Nor is the framework a complete locomotion stabilizer. Within the evaluation window the body task is tracked tightly — on flat ground the lateral CoM error is $4.0$ mm RMS ($8.1$ mm max) and the lateral divergent-component-motion (DCM) tracking error is $4.1$ mm RMS ($9.0$ mm max) — so the compensation is not the limiting factor. Over long horizons, however, the shared lateral gait is only marginally stable: extended continuous-walking runs on this gait complete some trials but fall in others, and in a slower development gait both nominal MPC and ID-MPC fall near a platform/step-down transition ($\approx8.5$ s), which is a property of the shared reference and realizer rather than of the interaction estimator. We note in passing that a walking DCM reference *is* expected to sit roughly a step-width from the stance foot during single support — in this gait the reference DCM sits a median $\approx140$ mm from the stance foot, dominated by the normal lateral rocking velocity (the lateral CoM position reference swings only $\approx74$ mm) — so that excursion is a feature of the plan and not a tracking error. Because the marginal stability is shared by every controller, the primary comparisons are conducted over a fixed evaluation window in which the locomotion stack remains repeatable. Embedding the interaction layer within a locomotion controller that jointly manages within-step center-of-pressure authority and step-to-step capturability — for which a touchdown-anchoring and predictive-DCM foot-placement module is implemented but disabled in these benchmarks — remains future work.
 
 The residual estimator does not uniquely identify terrain force, realization error, and model mismatch. It estimates their combined observable effect in selected task-acceleration coordinates. Measured contact force can explain part of that signal, but without exteroceptive terrain sensing the controller cannot know an unseen depression or obstacle before interaction begins. Its prediction is near-future extrapolation after mismatch becomes observable, relative to waiting for a large body-tracking error to develop.
 
 The fixed double-integrator predictor is exact only for the normalized requested task under ideal feedforward and zero realization error. In execution, state-estimation delay, contact compliance, velocity filtering, impact dynamics, WBC task tradeoffs, actuator dynamics, and model mismatch enter $d_{\rm eff}$. Offset-free tracking is conditional on residual-estimator convergence and on the required cancelling acceleration remaining realizable. Bounded acceleration commands do not by themselves prove recursive feasibility, contact stability, or fall avoidance.
 
-The evaluation is limited to selected body tasks, 4 s trials, four fixed terrain models, ten seeds, and a body-priority realization policy on one simulated humanoid. It does not establish equivalent performance for long-distance walking, running, terrain amplitudes beyond the 40 mm probed in Section X-I, deformable ground, arbitrary low friction, simultaneous manipulation, or other robots. No terrain-height failure sweep or hardware experiment was performed. MuJoCo contact and idealized torque actuation do not reproduce hardware bandwidth, sensing noise, delay, transmission compliance, or all impact effects.
+The evaluation is limited to selected body tasks, 4 s trials, four fixed terrain models, ten seeds, and a body-priority realization policy on one simulated humanoid. It does not establish equivalent performance for long-distance walking, running, terrain amplitudes beyond the 40 mm probed in Section IX-H, deformable ground, arbitrary low friction, simultaneous manipulation, or other robots. No terrain-height failure sweep was run for the primary four-terrain benchmark — the step vignette of Section IX-H sweeps 20/30/40 mm separately — and no hardware experiment was performed. MuJoCo contact and idealized torque actuation do not reproduce hardware bandwidth, sensing noise, delay, transmission compliance, or all impact effects.
 
 The push study uses a single frozen impulse ($90$ N, $150$ ms) at four direction/phase conditions and does not sweep impulse magnitude to a rejection boundary or claim a maximum rejectable push. The applied wrench is hidden from every evaluated controller; the measured-wrench feedforward and oracle-wrench rollout permitted by the design are diagnostics, not deployable baselines, and footstep replanning and capture-step recovery remain disabled. Post-push prediction is near-future extrapolation after the disturbance is observable, not anticipation of the push.
 
-The WBC timing is reported as a prototype measurement on a general-purpose, non-real-time host in unoptimized Python, not a deployment result; its 2.77 ms median and 7.71 ms p99, and the occasional operating-system scheduling spike, reflect Python matrix assembly and host jitter rather than a fundamental limit of the formulation. The experiments preserve a 500 Hz simulated update schedule for all controllers. A compiled sparse solver, warm-starting, and a real-time target are the natural path to meeting that schedule on hardware, and confirming it is left to an implementation study.
+The WBC timing is reported as a prototype measurement on a general-purpose, non-real-time host in unoptimized Python, not a deployment result; its near-$2.8$ ms median and $7.7$ ms p99, and the occasional operating-system scheduling spike, reflect Python matrix assembly and host jitter rather than a fundamental limit of the formulation. The experiments preserve a 500 Hz simulated update schedule for all controllers. A compiled sparse solver, warm-starting, and a real-time target are the natural path to meeting that schedule on hardware, and confirming it is left to an implementation study.
 
-Finally, the benefit is condition-specific. On terrain, residual augmentation improves short-horizon prediction on three terrains and reduces obstacle peak tracking error, with sub-3% RMS changes on depression and rough terrain and a realization-feedback term that is neutral on this mild set. Under external pushes the benefit is clearer — lower post-push peak error in every condition and the only recovery under a lateral single-support push — and we report it per direction and phase rather than pooling it into a single number. These observations bound the contribution as a condition-specific augmentation that is strongest where the interaction is large, rather than a universal uneven-terrain or push-recovery guarantee.
+Finally, the benefit is condition-specific. On terrain, residual augmentation improves short-horizon CoM prediction on three terrains and reduces obstacle peak tracking error, with sub-3% RMS changes on flat, depression, and rough terrain and a slight prediction worsening on the obstacle. Under external pushes the benefit is clearer — lower post-push peak error and faster recovery in every direction/phase condition — and we report it per condition rather than pooling it into a single number. It is an error-magnitude and recovery-speed benefit, not a fall-rate one: in the hardest condition the MPC controllers' fall counts are similar and noisy. These observations bound the contribution as a condition-specific augmentation that is strongest where the interaction is large, rather than a universal uneven-terrain or push-recovery guarantee.
 
 ---
 
-## XII. Conclusion
+## XI. Conclusion
 
-This paper argued that terrain-mediated contact mismatch and external body force are one phenomenon — physical interaction — whose observable effect can be carried as a single residual on a fixed, robot-independent predictive model. The central object is therefore not a controller but a *representation*: a configuration-invariant interaction-dynamics model $\ddot e=v+d_{\rm eff}$ whose transition matrices are provably fixed across gait phase, terrain, and push (Theorem 1), with all robot and environment dependence confined to $d_{\rm eff}$, the admissible-command set, and the realizer. ID-MPC is one controller realized on this representation; the augmented estimator and the whole-body realizer are the other two blocks, and the predict–realize–observe interface of Figure 2 is not specific to locomotion.
+This paper argued that terrain-mediated contact mismatch and external body force are one phenomenon — physical interaction — whose observable effect can be carried as a single residual on a fixed predictive model. The central object is therefore not a controller but a *representation*: an interaction-dynamics model $\ddot e=v+d_{\rm eff}$ whose transition matrices are, for the normalized requested-task coordinates, provably fixed across gait phase, terrain, and push (Theorem 1), with all robot and environment dependence confined to $d_{\rm eff}$, the admissible-command set, and the realizer. ID-MPC is one controller realized on this representation; the residual estimator and the whole-body realizer are the other two blocks, and the predict–realize–observe interface of Figure 2 is not specific to locomotion.
 
-Two paired 160-trial Unitree G1 studies show what this separation does and does not provide across two interaction classes. On terrain, constant-residual augmentation improves 10 ms CoM prediction by 4.7--5.7% on three of four terrains and reduces obstacle peak tracking error by 13.1% relative to nominal MPC, with flat-ground and the remaining terrain RMS essentially unchanged (within 3%) and a realization-feedback term that is neutral on this mild set. Under phase-locked external pushes the same model performs more clearly: ID-MPC lowers post-push peak CoM error in every direction/phase condition, cuts the lateral single-support peak by 46% relative to nominal MPC, is the only controller that re-enters the error band there, and — where terrain leaves it neutral — benefits from the realization-feedback term precisely when the whole-body constraints become active. The experiment therefore supports one canonical residual-prediction mechanism across both interaction classes as a useful augmentation whose benefit is largest where the interaction is largest.
+Two paired three-controller Unitree G1 studies show what this separation does and does not provide across two interaction classes. On terrain, constant-residual augmentation improves 10 ms CoM prediction by 3.6--5.7% on three of four terrains (and slightly worsens it on the obstacle) and reduces obstacle peak tracking error by 19.8% relative to nominal MPC, with flat, depression, and rough RMS essentially unchanged (within 3%). Under phase-locked external pushes the same model performs more clearly: ID-MPC lowers post-push peak CoM error in every direction/phase condition (14--27% relative to nominal MPC), most in the vulnerable lateral single-support case, and returns to the error band faster than the baselines; fall counts in the hardest condition are similar across the MPC controllers, so the gain is in error magnitude and recovery speed rather than fall rate. The experiment therefore supports one canonical residual-prediction mechanism across both interaction classes as a useful augmentation whose benefit is largest where the interaction is largest.
 
-The framework is accordingly intended for regimes where interaction is strong enough that prediction becomes informative — dynamic pushes and large contact transitions — with mild terrain a corroborating rather than a headline case, which is why the clearest gains appear under the pushes. The shared inverse-dynamics/contact QP is experimental infrastructure rather than a contribution of this paper; its Python latency on a non-real-time host is dominated by matrix assembly, and a compiled solver on a real-time target is the expected route to the 500 Hz schedule. Future work should improve residual-source separation and real-time realization, then test longer walks, a terrain-height sweep, and hardware. Because the representation and the predict–realize–observe interface are robot-independent, the same construction is a natural target for other strongly interacting systems — dexterous manipulation, surgical and continuum robots — where the mechanics change but the interaction-dynamics model does not.
+The framework is accordingly intended for regimes where interaction is strong enough that prediction becomes informative — dynamic pushes and large contact transitions — with mild terrain a corroborating rather than a headline case, which is why the clearest gains appear under the pushes. The shared inverse-dynamics/contact QP is experimental infrastructure rather than a contribution of this paper; its Python latency on a non-real-time host is dominated by matrix assembly, and a compiled solver on a real-time target is the expected route to the 500 Hz schedule. Future work should improve residual-source separation and real-time realization, then test longer walks, a terrain-height sweep, and hardware. Because the representation and the predict–realize–observe interface are not specific to this robot or interaction class, the same construction is a natural target for other strongly interacting systems — dexterous manipulation, surgical and continuum robots — where the mechanics change but the interaction-dynamics model does not.
 
 ---
 

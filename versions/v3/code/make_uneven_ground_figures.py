@@ -17,9 +17,9 @@ HERE = Path(__file__).resolve().parent
 RESULTS = HERE / "results"
 FIGURES = HERE.parent / "figures"
 TERRAINS = ("flat", "depression", "obstacle", "rough")
-CONTROLLERS = ("impedance", "nominal_mpc", "interaction_mpc", "no_realization_feedback")
-LABELS = ("Impedance", "Nominal MPC", "Interaction MPC", "No realization feedback")
-COLORS = ("#777777", "#4477AA", "#228833", "#CC6677")
+CONTROLLERS = ("impedance", "nominal_mpc", "interaction_mpc")
+LABELS = ("Impedance", "Nominal MPC", "ID-MPC")
+COLORS = ("#777777", "#4477AA", "#CC6677")
 
 
 def load() -> dict:
@@ -61,6 +61,7 @@ def prediction_figure(data: dict) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.5), constrained_layout=True)
     horizons = (1, 5, 10)
     styles = {"nominal": ("--", "o"), "augmented": ("-", "s")}
+    terrain_colors = ("#4477AA", "#EE6677", "#228833", "#CCBB44")
     for ti, terrain in enumerate(TERRAINS):
         trials = [t for t in data["trials"]
                   if t["terrain"] == terrain and t["controller"] == "nominal_mpc"]
@@ -71,8 +72,8 @@ def prediction_figure(data: dict) -> None:
                              for t in trials]) for h in horizons]
             ls, marker = styles[model]
             label = f"{terrain.capitalize()} - {model}"
-            axes[0].plot(horizons, com, ls=ls, marker=marker, color=COLORS[ti], label=label)
-            axes[1].plot(horizons, rp, ls=ls, marker=marker, color=COLORS[ti])
+            axes[0].plot(horizons, com, ls=ls, marker=marker, color=terrain_colors[ti], label=label)
+            axes[1].plot(horizons, rp, ls=ls, marker=marker, color=terrain_colors[ti])
     for ax, ylabel in zip(axes, ("CoM prediction RMSE (mm)", "Roll/pitch prediction RMSE (mrad)")):
         ax.set_xlabel("Prediction horizon (ms)")
         ax.set_xticks(horizons)

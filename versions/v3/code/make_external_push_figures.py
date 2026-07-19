@@ -24,12 +24,12 @@ RESULTS = HERE / "results"
 FIGURES = HERE.parent / "figures"
 DATA = json.loads((RESULTS / "external_push_benchmark.json").read_text())
 
-CONTROLLERS = DATA["controllers"]
+CONTROLLERS = [c for c in DATA["controllers"] if c != "no_realization_feedback"]
 CONDITIONS = DATA["conditions"]  # "direction:phase"
 CLABEL = {"impedance": "impedance", "nominal_mpc": "nominal MPC",
-          "interaction_mpc": "interaction MPC", "no_realization_feedback": "no-realization-fb"}
+          "interaction_mpc": "ID-MPC"}
 COLORS = {"impedance": "#8c8c8c", "nominal_mpc": "#4c78a8",
-          "interaction_mpc": "#c05f28", "no_realization_feedback": "#59a14f"}
+          "interaction_mpc": "#c05f28"}
 CONDLABEL = {"lateral:double_support": "lat / DS", "lateral:single_support": "lat / SS",
              "forward:double_support": "fwd / DS", "forward:single_support": "fwd / SS"}
 
@@ -40,13 +40,13 @@ def cell(direction, phase, controller):
 
 def _grouped(ax, metric, ylabel, title):
     x = np.arange(len(CONDITIONS))
-    w = 0.2
+    w = 0.26
     for i, c in enumerate(CONTROLLERS):
         vals = []
         for cond in CONDITIONS:
             d, p = cond.split(":")
             vals.append(cell(d, p, c).get(metric) or np.nan)
-        ax.bar(x + (i - 1.5) * w, vals, w, label=CLABEL[c], color=COLORS[c])
+        ax.bar(x + (i - 1) * w, vals, w, label=CLABEL[c], color=COLORS[c])
     ax.set_xticks(x)
     ax.set_xticklabels([CONDLABEL[c] for c in CONDITIONS], fontsize=8)
     ax.set_ylabel(ylabel, fontsize=9)
@@ -122,5 +122,4 @@ def response_figure():
 
 if __name__ == "__main__":
     summary_figure()
-    prediction_figure()
     response_figure()
