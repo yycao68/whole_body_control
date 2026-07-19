@@ -140,7 +140,7 @@ def generate_terrain_model(terrain: str, height_mm: float = 20.0,
         # A unilateral raised right-foot lane, present from the initial pose so
         # the (very short) walk actually stands on it -- the +h mirror of the
         # depression's lowered right lane.
-        _add_box(world, "terrain_right_obstacle", (0.11, -0.135, h / 2), (0.41, 0.105, h / 2))
+        _add_box(world, "terrain_right_obstacle", (0.28, -0.135, h / 2), (0.24, 0.105, h / 2))
     elif terrain == "rough":
         # Frozen two-lane sequence: left +15 mm, right -h after x=0.04 m.
         _add_box(world, "terrain_left_high", (0.28, 0.135, (0.015 - h) / 2),
