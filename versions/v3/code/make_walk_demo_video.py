@@ -57,7 +57,7 @@ from run_g1_root_assist_demo import (
     COMMAND_DT, DISTANCE, DURATION, MODEL_PATH, SIM_DT,
     G1CommandLayer, LocalTrajectory, apply_commanded_pose, apply_root_assist,
     body_id, pin_support_foot, site_id, support_phase, support_site_name,
-    trajectory,
+    trajectory, yaw_quat,
 )
 
 HERE = Path(__file__).resolve().parent
@@ -101,14 +101,19 @@ def terrain_height(x: float) -> float:
         + STEP_HEIGHT * _stepup(x, STEP_X, STEP_EDGE)
 
 
-def _box(world, name, x0, x1, top, rgba):
+def _box(world, name, x0, x1, top, rgba=None, material=None):
     cx, hx = 0.5 * (x0 + x1), 0.5 * (x1 - x0)
-    ET.SubElement(world, "geom", {
+    attrs = {
         "name": name, "type": "box",
         "pos": f"{cx:.5f} 0 {top - 0.5:.5f}", "size": f"{hx:.5f} 1.4 0.5",
-        "rgba": rgba, "friction": "0.9 0.02 0.001", "condim": "3",
+        "friction": "0.9 0.02 0.001", "condim": "3",
         "contype": "1", "conaffinity": "1",
-    })
+    }
+    if material is not None:
+        attrs["material"] = material
+    if rgba is not None:
+        attrs["rgba"] = rgba
+    ET.SubElement(world, "geom", attrs)
 
 
 def build_demo_terrain() -> Path:
@@ -127,10 +132,11 @@ def build_demo_terrain() -> Path:
     for b in list(world.findall("body")):
         if b.attrib.get("name") == "apple_body":
             world.remove(b)
-    _box(world, "ground_a", -2.0, HOLE_X - HOLE_HW, 0.0, "0.55 0.52 0.47 1")
-    _box(world, "hole_pit", HOLE_X - HOLE_HW, HOLE_X + HOLE_HW, -HOLE_DEPTH, "0.16 0.13 0.11 1")
-    _box(world, "ground_b", HOLE_X + HOLE_HW, STEP_X, 0.0, "0.55 0.52 0.47 1")
-    _box(world, "step_up", STEP_X, 12.0, STEP_HEIGHT, "0.44 0.45 0.50 1")
+    _box(world, "ground_a", -2.0, HOLE_X - HOLE_HW, 0.0, material="grid")
+    _box(world, "hole_pit", HOLE_X - HOLE_HW, HOLE_X + HOLE_HW, -HOLE_DEPTH,
+         rgba="0.14 0.11 0.09 1")
+    _box(world, "ground_b", HOLE_X + HOLE_HW, STEP_X, 0.0, material="grid")
+    _box(world, "step_up", STEP_X, 12.0, STEP_HEIGHT, rgba="0.42 0.46 0.55 1")
     out = RESULTS / "g1_wbc_walk_demo_terrain.xml"
     tree.write(out, encoding="unicode")
     return out
@@ -150,11 +156,19 @@ def main() -> None:
                              u_max=np.array([3.0, 1.4]))
     body_observer = RandomWalkDisturbanceObserver(dim=2, dt=SIM_DT, q_d=0.06, r_y=8e-5)
 
+    # Two camera views rendered from one deterministic sim pass.
+    views = {
+        "follow": dict(distance=3.9, azimuth=125.0, elevation=-12.0),
+        "side": dict(distance=4.2, azimuth=90.0, elevation=-8.0),
+    }
     renderer = mujoco.Renderer(model, height=480, width=640)
-    cam = mujoco.MjvCamera()
-    cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
-    cam.trackbodyid = torso
-    cam.distance, cam.azimuth, cam.elevation = 3.9, 125.0, -12.0
+    cams = {}
+    for name, cfg in views.items():
+        c = mujoco.MjvCamera()
+        c.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        c.trackbodyid = torso
+        c.distance, c.azimuth, c.elevation = cfg["distance"], cfg["azimuth"], cfg["elevation"]
+        cams[name] = c
 
     steps = int(round(DURATION / SIM_DT))
     command_period = max(1, int(round(COMMAND_DT / SIM_DT)))
@@ -165,7 +179,8 @@ def main() -> None:
     d_body_hat = np.zeros(2)
     ctrl = command.step(0.0, trajectory(0.0))
     locked_support, plant_xy = None, None
-    frames, frame_times = [], []
+    frames = {name: [] for name in views}
+    frame_times = []
 
     for k in range(steps):
         t = k * SIM_DT
@@ -185,6 +200,8 @@ def main() -> None:
             ctrl = command.step(t, traj)
 
         apply_root_assist(data, traj, t)
+        # Face the walking direction (apply_root_assist adds a 180-deg flip).
+        data.qpos[3:7] = yaw_quat(traj.heading)
         data.qpos[2] += terrain_height(root_p[0])
         apply_commanded_pose(model, data, ctrl)
         mujoco.mj_forward(model, data)
@@ -200,15 +217,19 @@ def main() -> None:
         mujoco.mj_forward(model, data)
 
         if k % v_stride == 0:
-            renderer.update_scene(data, camera=cam)
-            frames.append(renderer.render().copy())
+            for name, cam in cams.items():
+                renderer.update_scene(data, camera=cam)
+                frames[name].append(renderer.render().copy())
             frame_times.append(t)
     renderer.close()
 
-    frames = [draw_overlay(f, ft) for f, ft in zip(frames, frame_times)]
-    out = VIDEODIR / "walk_hole_step_push.mp4"
-    imageio.mimwrite(out, frames, fps=FPS, quality=8, macro_block_size=None)
-    print(f"wrote {out}  ({len(frames)} frames, {len(frames)/FPS:.1f}s)")
+    names = {"follow": "walk_hole_step_push.mp4",
+             "side": "walk_hole_step_push_side.mp4"}
+    for name, fname in names.items():
+        overlaid = [draw_overlay(f, ft) for f, ft in zip(frames[name], frame_times)]
+        out = VIDEODIR / fname
+        imageio.mimwrite(out, overlaid, fps=FPS, quality=8, macro_block_size=None)
+        print(f"wrote {out}  ({len(overlaid)} frames, {len(overlaid)/FPS:.1f}s)")
     print(f"events: push @ {PUSH_START}s (x={0.6+1.2*(PUSH_START-1):.1f}m), "
           f"hole @ x={HOLE_X}m (t~5s), step @ x={STEP_X}m (t~8s)")
 

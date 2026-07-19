@@ -20,7 +20,7 @@ Walking is a continuous physical interaction between a robot, the terrain, and �
 
 Existing locomotion controllers address this problem through several complementary mechanisms. Reduced-order MPC efficiently replans body motion and contact forces; whole-body inverse dynamics enforces instantaneous multibody and contact constraints; impedance control absorbs interaction through compliant tracking error; full-order NMPC represents richer coupled dynamics; and learning-based policies can provide strong empirical terrain robustness. The gap addressed here is narrower. These approaches do not necessarily expose terrain/contact mismatch as an explicit, configuration-invariant interaction input whose near-future effect can be predicted and cancelled in the coordinates used for precise body tracking.
 
-The proposed framework retains the external motion planner and fast whole-body controller. It inserts an interaction-prediction layer between them. Let $y$ denote selected locomotion-task coordinates, such as lateral/vertical body position and roll/pitch, and let $e=y-y_d$ be their tracking error. After nominal dynamic compensation, the task-level model isok
+The proposed framework retains the external motion planner and fast whole-body controller. It inserts an interaction-prediction layer between them. Let $y$ denote selected locomotion-task coordinates, such as lateral/vertical body position and roll/pitch, and let $e=y-y_d$ be their tracking error. After nominal dynamic compensation, the task-level model is
 
 $$
 \begin{aligned}
@@ -98,9 +98,9 @@ d_{\rm eff}=d_{\rm int}+d_{\rm real}+d_{\rm mod},
 \tag{4}
 $$
 
-with interaction effect $d_{\rm int}=M_p^{-1}F^{\rm ext}$, realization effect $d_{\rm real}=M_p^{-1}\delta$, and model residual $d_{\rm mod}$; and its exact zero-order-hold transition pair is the **same** matrix pair $(A_d,B_d)$ for every $\rho\in\mathcal M$ — the ZOH of the order-$r$ integrator chain, a function of the sample period $T$ and $r$ **alone**. Consequently the robot mechanics $M_p(q,\rho),\mu_p$, the contact geometry, and the environment enter only $d_{\rm eff}$ and the admissible-command set, never $(A_d,B_d)$: a contact switch $\rho\to\rho'$ changes $(M_p,\mu_p,d_{\rm eff},\widehat{\mathcal U})$ but leaves the prediction matrices invariant.
+with interaction effect $d_{\rm int}=M_p^{-1}F^{\rm ext}$, realization effect $d_{\rm real}=M_p^{-1}\delta$, and model residual $d_{\rm mod}$; and its exact zero-order-hold transition pair is the **same** matrix pair $(A_d,B_d)$ for every $\rho\in\mathcal M$ — the ZOH of the order-$r$ integrator chain, a function of the sample period $\Delta t$ and $r$ **alone**. Consequently the robot mechanics $M_p(q,\rho),\mu_p$, the contact geometry, and the environment enter only $d_{\rm eff}$ and the admissible-command set, never $(A_d,B_d)$: a contact switch $\rho\to\rho'$ changes $(M_p,\mu_p,d_{\rm eff},\widehat{\mathcal U})$ but leaves the prediction matrices invariant.
 
-*Proof.* Substituting the feedforward $F^{\rm act}=\mu_p+M_p(\ddot y_d+v)+\delta$ into the constrained dynamics $M_p\ddot y+\mu_p=F^{\rm act}+F^{\rm ext}$ cancels $\mu_p$, and left-multiplying by $M_p^{-1}$ gives $\ddot e=\ddot y-\ddot y_d=v+M_p^{-1}(F^{\rm ext}+\delta)=v+d_{\rm eff}$. The input-to-error map $v\mapsto\ddot e$ is therefore the identity **in every mode $\rho\in\mathcal M$**, independent of $M_p$, $\mu_p$, and $\rho$. Its exact-ZOH sampling is the order-$r$ integrator pair, whose entries are polynomials in $T$ only (for $r=2$, $A_d=\big[\begin{smallmatrix}I&TI\\0&I\end{smallmatrix}\big]$, $B_d=\big[\begin{smallmatrix}\frac12T^2I\\TI\end{smallmatrix}\big]$). No mode-dependent quantity can appear in $(A_d,B_d)$ because none appears in the map it discretizes; every such quantity is absorbed, *by construction*, into $F^{\rm act}$ — hence into the recovery map, the admissible set, and $d_{\rm eff}$. $\square$
+*Proof.* Substituting the feedforward $F^{\rm act}=\mu_p+M_p(\ddot y_d+v)+\delta$ into the constrained dynamics $M_p\ddot y+\mu_p=F^{\rm act}+F^{\rm ext}$ cancels $\mu_p$, and left-multiplying by $M_p^{-1}$ gives $\ddot e=\ddot y-\ddot y_d=v+M_p^{-1}(F^{\rm ext}+\delta)=v+d_{\rm eff}$. The input-to-error map $v\mapsto\ddot e$ is therefore the identity **in every mode $\rho\in\mathcal M$**, independent of $M_p$, $\mu_p$, and $\rho$. Its exact-ZOH sampling is the order-$r$ integrator pair, whose entries are polynomials in $\Delta t$ only (for $r=2$, $A_d=\big[\begin{smallmatrix}I&\Delta t\,I\\0&I\end{smallmatrix}\big]$, $B_d=\big[\begin{smallmatrix}\frac12\Delta t^2I\\\Delta t\,I\end{smallmatrix}\big]$). No mode-dependent quantity can appear in $(A_d,B_d)$ because none appears in the map it discretizes; every such quantity is absorbed, *by construction*, into $F^{\rm act}$ — hence into the recovery map, the admissible set, and $d_{\rm eff}$. $\square$
 
 **Remark (the decomposition is falsifiable, not vacuous).** Isolating all robot and environment dependence in $d_{\rm eff}$ is a modeling *choice*, and it would be empty if $d_{\rm eff}$ could absorb any effect for free. It cannot: the port is regulated without steady-state error only when the cancelling request $v=-d_{\rm eff}$ is admissible and realizable by the constrained realizer (Sections VII and IX). When it is not — a force beyond the command authority, or a drop that saturates the realizer — the effect is not hidden in $d_{\rm eff}$ but surfaces as an un-rejected residual or a loss of balance. The claim is therefore testable, and Section X delineates exactly where it holds: a $30$ N sustained force within the command authority is rejected to a $4$ mm steady error, a $70$ N force exceeds that authority and is not (Section X-H), and a $40$ mm step-down saturates the realizer and destabilizes the controller (Section X-I). Invariance of $(A_d,B_d)$ buys a fixed predictor; it does not buy unconditional rejection.
 
@@ -135,7 +135,7 @@ so the CoM error is a double integrator whose disturbance splits into an interac
 
 *Roll and pitch.* The body orientation error is regulated as a double integrator in roll/pitch with the same disturbance structure, the effective rotational inertia folded into $M_p$ and any moment mismatch absorbed into $d_{\rm eff}$. Consistent with the evaluation, we treat roll/pitch as simulated body-task coordinates and do not interpret them as a hardware centroidal-angular-momentum measurement.
 
-Stacking the selected coordinates and holding $v$ and $d_{\rm eff}$ over each interval, the exact-ZOH model at period $T$ is
+Stacking the selected coordinates and holding $v$ and $d_{\rm eff}$ over each interval, the exact-ZOH model at sample period $\Delta t$ is
 
 $$
 x_{k+1}=A_dx_k+B_d\big(v_k+d_{{\rm eff},k}\big),\qquad
@@ -144,8 +144,8 @@ x=[e^\top,\dot e^\top]^\top,
 $$
 
 $$
-A_d=\begin{bmatrix}I&TI\\0&I\end{bmatrix},\qquad
-B_d=\begin{bmatrix}\tfrac12T^2I\\TI\end{bmatrix}.
+A_d=\begin{bmatrix}I&\Delta t\,I\\0&I\end{bmatrix},\qquad
+B_d=\begin{bmatrix}\tfrac12\Delta t^2I\\\Delta t\,I\end{bmatrix}.
 \tag{8}
 $$
 
