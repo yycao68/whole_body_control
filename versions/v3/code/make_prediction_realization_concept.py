@@ -3,8 +3,8 @@
 
 Regenerates ``figures/prediction_realization_concept.png`` to match the current
 Interaction-Dynamics framing: the predictor runs the fixed, robot-independent
-model e_ddot = v + d_eff and emits the task-acceleration correction v; the
-realizer projects it onto the instantaneous robot/contact constraints; a Kalman
+model e_ddot = a_e + d_eff and emits the task-acceleration correction a_e; the
+realizer projects it onto the instantaneous robot/contact constraints; a low-pass
 observer estimates d_eff from the measured innovation.  (The prior version still
 carried the retired authority-set notation u in U_hat_k.)
 """
@@ -67,7 +67,7 @@ def main() -> None:
     box(ax, 0.25, 2.55, 2.0, 1.15, "Reference",
         ["planner /", "learned policy"], GREY, GREY_FILL)
     box(ax, 2.95, 2.4, 2.0, 1.4, "PREDICTOR",
-        [r"$\ddot e = v + d_{\mathrm{eff}}$",
+        [r"$\ddot e = a_e + d_{\mathrm{eff}}$",
          r"fixed $(A_d,B_d)$"], BLUE, BLUE_FILL)
     box(ax, 6.3, 2.4, 2.05, 1.4, "REALIZER",
         ["inverse-dyn. QP", "contacts, limits"], GREY, GREY_FILL,
@@ -75,13 +75,13 @@ def main() -> None:
     box(ax, 9.05, 2.55, 1.9, 1.15, "Robot",
         [r"actual $\ddot e$"], "#111111", "#f6f6f6", title_color="#111111")
     box(ax, 6.35, 0.35, 2.0, 1.2, "OBSERVER",
-        ["Kalman:", r"estimates $d_{\mathrm{eff}}$"], GREEN, GREEN_FILL)
+        ["low-pass:", r"estimates $d_{\mathrm{eff}}$"], GREEN, GREEN_FILL)
 
     # forward path
     arrow(ax, (2.25, 3.12), (2.95, 3.12), GREY,
           r"intent $\ddot e_d$", ly=0.22)
     arrow(ax, (4.95, 3.1), (6.3, 3.1), BLUE,
-          r"correction $v$", ly=0.22)
+          r"correction $a_e$", ly=0.22)
     arrow(ax, (8.35, 3.12), (9.05, 3.12), GREY)
 
     # observer loop

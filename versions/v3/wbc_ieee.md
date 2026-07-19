@@ -6,7 +6,7 @@
 
 ## Abstract
 
-Locomotion is disturbed both by terrain-mediated contact mismatch — uneven height, early or late touchdown, support-force redistribution — and by external body forces such as pushes. We argue that these are one problem: *interaction dynamics*. Rather than embedding terrain, contact, and force states into the predictive model, we represent their observable motion effect — together with constrained-realization error and model residual — as a single interaction residual $d_{\rm eff}$ acting on a task model $\ddot e=v+d_{\rm eff}$ whose exact zero-order-hold matrices are, for the normalized requested-task coordinates under one modeling assumption, provably fixed across gait phase, terrain, and push. This turns interaction into a predictive *state* on a fixed shared model rather than a property to be re-modeled per contact. A model-predictive controller (Interaction-Dynamics MPC, ID-MPC) then chooses the task-acceleration correction $v$; a low-pass estimator of the measured task-acceleration residual propagates it over the horizon; and a separate inverse-dynamics/contact QP realizes the command subject to the instantaneous robot and contact constraints. The controller replans no footsteps and embeds no full nonlinear dynamics in the horizon.
+Locomotion is disturbed both by terrain-mediated contact mismatch — uneven height, early or late touchdown, support-force redistribution — and by external body forces such as pushes. We argue that these are one problem: *interaction dynamics*. Rather than embedding terrain, contact, and force states into the predictive model, we represent their observable motion effect — together with constrained-realization error and model residual — as a single interaction residual $d_{\rm eff}$ acting on a task model $\ddot e=a_e+d_{\rm eff}$ whose exact zero-order-hold matrices are, for the normalized requested-task coordinates under one modeling assumption, provably fixed across gait phase, terrain, and push. This turns interaction into a predictive *state* on a fixed shared model rather than a property to be re-modeled per contact. A model-predictive controller (Interaction-Dynamics MPC, ID-MPC) then chooses the task-acceleration correction $a_e$; a low-pass estimator of the measured task-acceleration residual propagates it over the horizon; and a separate inverse-dynamics/contact QP realizes the command subject to the instantaneous robot and contact constraints. The controller replans no footsteps and embeds no full nonlinear dynamics in the horizon.
 
 We evaluate three controllers on a torque-actuated Unitree G1 simulation using the same walking reference and realizer — task impedance, nominal MPC, and ID-MPC — across two paired studies (four conditions $\times$ three controllers $\times$ ten seeds each). In an uneven-terrain study (flat, a 20 mm depression, a 20 mm obstacle, and a frozen rough surface), residual augmentation improves 10 ms CoM prediction by 3.6--5.7% on three terrains (and slightly worsens it on the obstacle) and reduces obstacle peak CoM error by 19.8% relative to nominal MPC, with flat-ground, depression, and rough RMS essentially unchanged (within 3%). In an external-push study — phase-locked $90$ N, $150$ ms torso pushes hidden from the estimator, gated on measured single- or double-support contact across two directions — ID-MPC lowers post-push peak CoM error in every condition (14--27% relative to nominal MPC), most in the vulnerable lateral single-support case (14.4 to 10.6 mm), and returns to a 12 mm error band far faster than the baselines; fall counts in the hardest condition are similar across the MPC controllers and are a secondary outcome. The 100 Hz MPC meets its measured deadline, and the shared inverse-dynamics QP runs on a preserved 500 Hz simulated schedule whose wall-clock optimization is left to future work. Together the studies show that one canonical residual-acceleration model predicts and compensates two distinct interaction classes, with the clearest benefit under external pushes.
 
@@ -25,16 +25,16 @@ The proposed framework retains the external motion planner and fast whole-body c
 $$
 \begin{aligned}
 \ddot e
-&=v+d_{\rm eff},\\
+&=a_e+d_{\rm eff},\\
 d_{\rm eff}
 &=d_{\rm int}+d_{\rm real}+d_{\rm mod},
 \end{aligned}
 \tag{1}
 $$
 
-where $v$ is the acceleration correction selected by MPC. The term $d_{\rm int}$ is the task-acceleration effect of contact-force, timing, terrain, compliance, and friction mismatch; $d_{\rm real}$ is the acceleration request not realized by the constrained WBC; and $d_{\rm mod}$ contains normalization, state-estimation, and unmodeled-dynamics error. The estimator need not identify these sources uniquely to control their combined effect, although measured contact forces provide an interpretable component. The main state remains $x=[e^\top,\dot e^\top]^\top$ rather than being enlarged with contact force, foot position, and mode variables. Consequently, the exact-ZOH pair $(A_d,B_d)$ remains the fixed double-integrator pair, while robot and environment dependence is isolated in $d_{\rm eff}$, task constraints, and the high-rate realization map.
+where $a_e$ is the acceleration correction selected by MPC. The term $d_{\rm int}$ is the task-acceleration effect of contact-force, timing, terrain, compliance, and friction mismatch; $d_{\rm real}$ is the acceleration request not realized by the constrained WBC; and $d_{\rm mod}$ contains normalization, state-estimation, and unmodeled-dynamics error. The estimator need not identify these sources uniquely to control their combined effect, although measured contact forces provide an interpretable component. The main state remains $x=[e^\top,\dot e^\top]^\top$ rather than being enlarged with contact force, foot position, and mode variables. Consequently, the exact-ZOH pair $(A_d,B_d)$ remains the fixed double-integrator pair, while robot and environment dependence is isolated in $d_{\rm eff}$, task constraints, and the high-rate realization map.
 
-This separation is important for both precision and compliance. Conventional impedance absorbs a persistent interaction through a nonzero tracking deflection. The ID-MPC instead estimates the equivalent acceleration and predicts its effect over the horizon. When the cancelling acceleration remains realizable, the steady condition $v_\infty+\hat d_{{\rm eff},\infty}=0$ permits zero tracking bias without requiring an infinitely stiff task. The controller does not directly command an unknown terrain force; it shapes the body response by choosing constrained task acceleration.
+This separation is important for both precision and compliance. Conventional impedance absorbs a persistent interaction through a nonzero tracking deflection. The ID-MPC instead estimates the equivalent acceleration and predicts its effect over the horizon. When the cancelling acceleration remains realizable, the steady condition $a_{e,\infty}+\hat d_{{\rm eff},\infty}=0$ permits zero tracking bias without requiring an infinitely stiff task. The controller does not directly command an unknown terrain force; it shapes the body response by choosing constrained task acceleration.
 
 The paper therefore asks:
 
@@ -88,27 +88,27 @@ where $q_b$ is the floating base, $q_j$ the actuated joints, $\lambda$ stacks co
 
 Let $y$ collect the selected locomotion-task coordinates — here CoM position and body roll/pitch — and let $e=y-y_d$ be their tracking error against the planned reference.
 
-**Assumption 1 (task-acceleration normalization).** On the operating set the selected task has an invertible, well-conditioned interaction inertia $M_p(q,\rho)$ and constrained dynamics $M_p\ddot y+\mu_p=F^{\rm act}+F^{\rm ext}$. The realizer's nominal feedforward cancels the modeled bias and injects the desired task acceleration plus a correction $v$, $F^{\rm act}=\mu_p+M_p(\ddot y_d+v)+\delta$, where $\delta$ is the realization discrepancy (the realized minus the requested generalized force) and $F^{\rm ext}$ the external interaction wrench.
+**Assumption 1 (task-acceleration normalization).** On the operating set the selected task has an invertible, well-conditioned interaction inertia $M_p(q,\rho)$ and constrained dynamics $M_p\ddot y+\mu_p=F^{\rm act}+F^{\rm ext}$. The realizer's nominal feedforward cancels the modeled bias and injects the desired task acceleration plus a correction $a_e$, $F^{\rm act}=\mu_p+M_p(\ddot y_d+a_e)+\delta$, where $\delta$ is the realization discrepancy (the realized minus the requested generalized force) and $F^{\rm ext}$ the external interaction wrench.
 
 **Theorem 1 (contact-mode invariance of the requested model).** Let a controlled task have error coordinate $e$ of relative degree $r$, and let $\mathcal M$ be a set of contact modes for which Assumption 1 holds with the *same* requested coordinate. Then for every mode $\rho\in\mathcal M$ the realized error obeys the canonical model (1),
 
 $$
-\ddot e=v+d_{\rm eff},\qquad
+\ddot e=a_e+d_{\rm eff},\qquad
 d_{\rm eff}=d_{\rm int}+d_{\rm real}+d_{\rm mod},
 \tag{4}
 $$
 
 with interaction effect $d_{\rm int}=M_p^{-1}F^{\rm ext}$, realization effect $d_{\rm real}=M_p^{-1}\delta$, and model residual $d_{\rm mod}$; and its exact zero-order-hold transition pair is the **same** matrix pair $(A_d,B_d)$ for every $\rho\in\mathcal M$ — the ZOH of the order-$r$ integrator chain, a function of the sample period $\Delta t$ and $r$ **alone**. Consequently the robot mechanics $M_p(q,\rho),\mu_p$, the contact geometry, and the environment enter only $d_{\rm eff}$ and the admissible-command set, never $(A_d,B_d)$: a contact switch $\rho\to\rho'$ changes $(M_p,\mu_p,d_{\rm eff},\widehat{\mathcal U})$ but leaves the prediction matrices invariant.
 
-*Proof.* Substituting the feedforward $F^{\rm act}=\mu_p+M_p(\ddot y_d+v)+\delta$ into the constrained dynamics $M_p\ddot y+\mu_p=F^{\rm act}+F^{\rm ext}$ cancels $\mu_p$, and left-multiplying by $M_p^{-1}$ gives $\ddot e=\ddot y-\ddot y_d=v+M_p^{-1}(F^{\rm ext}+\delta)=v+d_{\rm eff}$. The input-to-error map $v\mapsto\ddot e$ is therefore the identity **in every mode $\rho\in\mathcal M$**, independent of $M_p$, $\mu_p$, and $\rho$. Its exact-ZOH sampling is the order-$r$ integrator pair, whose entries are polynomials in $\Delta t$ only (for $r=2$, $A_d=\big[\begin{smallmatrix}I&\Delta t\,I\\0&I\end{smallmatrix}\big]$, $B_d=\big[\begin{smallmatrix}\frac12\Delta t^2I\\\Delta t\,I\end{smallmatrix}\big]$). No mode-dependent quantity can appear in $(A_d,B_d)$ because none appears in the map it discretizes; every such quantity is absorbed, *by construction*, into $F^{\rm act}$ — hence into the recovery map, the admissible set, and $d_{\rm eff}$. $\square$
+*Proof.* Substituting the feedforward $F^{\rm act}=\mu_p+M_p(\ddot y_d+a_e)+\delta$ into the constrained dynamics $M_p\ddot y+\mu_p=F^{\rm act}+F^{\rm ext}$ cancels $\mu_p$, and left-multiplying by $M_p^{-1}$ gives $\ddot e=\ddot y-\ddot y_d=a_e+M_p^{-1}(F^{\rm ext}+\delta)=a_e+d_{\rm eff}$. The input-to-error map $a_e\mapsto\ddot e$ is therefore the identity **in every mode $\rho\in\mathcal M$**, independent of $M_p$, $\mu_p$, and $\rho$. Its exact-ZOH sampling is the order-$r$ integrator pair, whose entries are polynomials in $\Delta t$ only (for $r=2$, $A_d=\big[\begin{smallmatrix}I&\Delta t\,I\\0&I\end{smallmatrix}\big]$, $B_d=\big[\begin{smallmatrix}\frac12\Delta t^2I\\\Delta t\,I\end{smallmatrix}\big]$). No mode-dependent quantity can appear in $(A_d,B_d)$ because none appears in the map it discretizes; every such quantity is absorbed, *by construction*, into $F^{\rm act}$ — hence into the recovery map, the admissible set, and $d_{\rm eff}$. $\square$
 
-**Remark (the decomposition is falsifiable, not vacuous).** Isolating all robot and environment dependence in $d_{\rm eff}$ is a modeling *choice*, and it would be empty if $d_{\rm eff}$ could absorb any effect for free. It cannot: the task is regulated without steady-state error only when the cancelling request $v=-d_{\rm eff}$ is admissible and realizable by the constrained realizer (Sections VII and VIII). When it is not — for instance a force beyond the command authority — the effect is not hidden in $d_{\rm eff}$ but surfaces as an un-rejected residual or a loss of balance. The claim is therefore testable, and Section IX delineates where it holds: a $30$ N sustained force within the command authority is rejected to a $4$ mm steady error, while a $70$ N force exceeds that authority and is not (Section IX-G). Invariance of $(A_d,B_d)$ buys a fixed predictor; it does not buy unconditional rejection.
+**Remark (the decomposition is falsifiable, not vacuous).** Isolating all robot and environment dependence in $d_{\rm eff}$ is a modeling *choice*, and it would be empty if $d_{\rm eff}$ could absorb any effect for free. It cannot: the task is regulated without steady-state error only when the cancelling request $a_e=-d_{\rm eff}$ is admissible and realizable by the constrained realizer (Sections VII and VIII). When it is not — for instance a force beyond the command authority — the effect is not hidden in $d_{\rm eff}$ but surfaces as an un-rejected residual or a loss of balance. The claim is therefore testable, and Section IX delineates where it holds: a $30$ N sustained force within the command authority is rejected to a $4$ mm steady error, while a $70$ N force exceeds that authority and is not (Section IX-G). Invariance of $(A_d,B_d)$ buys a fixed predictor; it does not buy unconditional rejection.
 
 This is the organizing idea of the paper: robot and environment dependence is isolated in the estimated disturbance $d_{\rm eff}$, the task constraints, and the high-rate realization map, while the predictor keeps one fixed model across configuration and contact phase. The estimator (Section V) need not separate $d_{\rm int}$, $d_{\rm real}$, and $d_{\rm mod}$ to control their sum, although measured contact force gives an interpretable component. Figure 2 places this interaction-prediction block between the planner and the realizer.
 
 ![Fig. 2. Interaction prediction with high-rate realization.](figures/prediction_realization_concept.png)
 
-**Fig. 2.** The interaction-prediction layer sits between the motion planner and the whole-body realizer, estimating $d_{\rm eff}$ and choosing the task-acceleration correction $v$ on the fixed model (4).
+**Fig. 2.** The interaction-prediction layer sits between the motion planner and the whole-body realizer, estimating $d_{\rm eff}$ and choosing the task-acceleration correction $a_e$ on the fixed model (4).
 
 ---
 
@@ -123,10 +123,10 @@ m\ddot c=\sum_{i\in\mathcal C_\rho}f_i+mg+w_c ,
 \tag{5}
 $$
 
-where $w_c$ lumps the external and unmodeled load. For $e_c=c-c_d$ the planner-consistent desired resultant is $F_c^{\rm des}=m(\ddot c_d-g)+mv_c$; writing the realized contact resultant as $\sum_i f_i=F_c^{\rm des}+\delta_c$ with the realization discrepancy $\delta_c$ (realized minus desired, as in Assumption 1),
+where $w_c$ lumps the external and unmodeled load. For $e_c=c-c_d$ the planner-consistent desired resultant is $F_c^{\rm des}=m(\ddot c_d-g)+m\,a_{e,c}$; writing the realized contact resultant as $\sum_i f_i=F_c^{\rm des}+\delta_c$ with the realization discrepancy $\delta_c$ (realized minus desired, as in Assumption 1),
 
 $$
-\ddot e_c=v_c+d_c,\qquad
+\ddot e_c=a_{e,c}+d_c,\qquad
 d_c=m^{-1}w_c+m^{-1}\delta_c ,
 \tag{6}
 $$
@@ -135,10 +135,10 @@ so the CoM error is a double integrator whose disturbance splits into an interac
 
 *Roll and pitch.* The body orientation error is regulated as a double integrator in roll/pitch with the same disturbance structure, the effective rotational inertia folded into $M_p$ and any moment mismatch absorbed into $d_{\rm eff}$. Consistent with the evaluation, we treat roll/pitch as simulated body-task coordinates and do not interpret them as a hardware centroidal-angular-momentum measurement.
 
-Stacking the selected coordinates and holding $v$ and $d_{\rm eff}$ over each interval, the exact-ZOH model at sample period $\Delta t$ is
+Stacking the selected coordinates and holding $a_e$ and $d_{\rm eff}$ over each interval, the exact-ZOH model at sample period $\Delta t$ is
 
 $$
-x_{k+1}=A_dx_k+B_d\big(v_k+d_{{\rm eff},k}\big),\qquad
+x_{k+1}=A_dx_k+B_d\big(a_{e,k}+d_{{\rm eff},k}\big),\qquad
 x=[e^\top,\dot e^\top]^\top,
 \tag{7}
 $$
@@ -159,7 +159,7 @@ The disturbance $d_{\rm eff}$ is not commanded; on the fixed model (7) it equals
 
 $$
 \hat d_{{\rm eff},k}=(1-\alpha)\,\hat d_{{\rm eff},k-1}
-+\alpha\big(\hat{\ddot e}_k-v_k\big),\qquad
++\alpha\big(\hat{\ddot e}_k-a_{e,k}\big),\qquad
 \hat{\ddot e}_k=\frac{\dot e_k-\dot e_{k-1}}{\Delta t_{\rm w}} ,
 \tag{9}
 $$
@@ -179,33 +179,33 @@ This is deliberately not a terrain preview: it extrapolates the currently observ
 
 ## VI. Constrained Interaction-Dynamics MPC
 
-The correction $v$ is chosen by an offset-free MPC on the fixed model (7):
+The correction $a_e$ is chosen by an offset-free MPC on the fixed model (7):
 
 $$
 \begin{aligned}
-\min_{v_0,\dots,v_{N-1}}\quad&
-\sum_{j=0}^{N-1}\Big(\|x_j\|_Q^2+\|v_j+\hat d_k\|_R^2\Big)+\|x_N\|_S^2\\
+\min_{a_{e,0},\dots,a_{e,N-1}}\quad&
+\sum_{j=0}^{N-1}\Big(\|x_j\|_Q^2+\|a_{e,j}+\hat d_k\|_R^2\Big)+\|x_N\|_S^2\\
 \text{s.t.}\quad&
-x_{j+1}=A_dx_j+B_d\big(v_j+\hat d_k\big),\\
-&v_{\min}\le v_j\le v_{\max}.
+x_{j+1}=A_dx_j+B_d\big(a_{e,j}+\hat d_k\big),\\
+&a_{e,\min}\le a_{e,j}\le a_{e,\max}.
 \end{aligned}
 \tag{11}
 $$
 
-Penalizing $\|v_j+\hat d_k\|$ rather than $\|v_j\|$ is what makes the regulation offset-free: for a constant estimated disturbance the cost-minimizing steady state is $v_\infty=-\hat d_{{\rm eff},\infty}$, so the cancelling correction incurs no penalty and the task error can reach zero without an infinitely stiff task gain. This is the interaction alternative to impedance, which instead accepts a persistent deflection proportional to the interaction. The bounds $[v_{\min},v_{\max}]$ are fixed acceleration limits, not a per-sample capability set; the physical limits are enforced downstream by the realizer, and an infeasible correction appears as a realization residual rather than a predictor constraint violation.
+Penalizing $\|a_{e,j}+\hat d_k\|$ rather than $\|a_{e,j}\|$ is what makes the regulation offset-free: for a constant estimated disturbance the cost-minimizing steady state is $a_{e,\infty}=-\hat d_{{\rm eff},\infty}$, so the cancelling correction incurs no penalty and the task error can reach zero without an infinitely stiff task gain. This is the interaction alternative to impedance, which instead accepts a persistent deflection proportional to the interaction. The bounds $[a_{e,\min},a_{e,\max}]$ are fixed acceleration limits, not a per-sample capability set; the physical limits are enforced downstream by the realizer, and an infeasible correction appears as a realization residual rather than a predictor constraint violation.
 
-Only the first correction $v_k^\star$ is applied, and the horizon is re-solved at the next MPC update. Because $(A_d,B_d,Q,R,S)$ never change, the condensed MPC Hessian is constant and (11) is a small fixed-size QP, independent of robot configuration and contact phase.
+Only the first correction $a_{e,k}^\star$ is applied, and the horizon is re-solved at the next MPC update. Because $(A_d,B_d,Q,R,S)$ never change, the condensed MPC Hessian is constant and (11) is a small fixed-size QP, independent of robot configuration and contact phase.
 
 ---
 
 ## VII. Whole-Body Realization
 
-The realizer executes the requested task acceleration $\ddot y_d+v_k^\star$ at the current sample. It is an instantaneous inverse-dynamics/contact QP, not a second predictor. Let $\tau_{\rm ref}$ be a regularization torque (previous command or gravity compensation), $J_y$ the task Jacobian, and $\mathcal F_\rho$ the polyhedral friction set for the active mode:
+The realizer executes the requested task acceleration $\ddot y_d+a_{e,k}^\star$ at the current sample. It is an instantaneous inverse-dynamics/contact QP, not a second predictor. Let $\tau_{\rm ref}$ be a regularization torque (previous command or gravity compensation), $J_y$ the task Jacobian, and $\mathcal F_\rho$ the polyhedral friction set for the active mode:
 
 $$
 \begin{aligned}
 \min_{\ddot q,\tau,\lambda}\quad&
-\|J_y\ddot q+\dot J_y\dot q-(\ddot y_d+v_k^\star)\|_{W_t}^2
+\|J_y\ddot q+\dot J_y\dot q-(\ddot y_d+a_{e,k}^\star)\|_{W_t}^2
 +\|J_c\ddot q+\dot J_c\dot q\|_{W_c}^2
 +\|\tau-\tau_{\rm ref}\|_{W_\tau}^2\\
 \text{s.t.}\quad&
@@ -215,10 +215,10 @@ M\ddot q+h=S^\top\tau+J_c^\top\lambda,\\
 \tag{12}
 $$
 
-Body, contact, and swing-foot accelerations are tracked as weighted least-squares objectives, while the floating-base dynamics, friction and unilateral-force limits, and torque bounds are hard constraints. The body and swing-foot objectives being soft, an unrealizable request produces a measurable task-acceleration slack $s_{\rm task}=J_y\ddot q+\dot J_y\dot q-(\ddot y_d+v_k^\star)$ rather than a hard infeasibility. With the measured task acceleration $\ddot y^{\rm meas}$, the realization residual
+Body, contact, and swing-foot accelerations are tracked as weighted least-squares objectives, while the floating-base dynamics, friction and unilateral-force limits, and torque bounds are hard constraints. The body and swing-foot objectives being soft, an unrealizable request produces a measurable task-acceleration slack $s_{\rm task}=J_y\ddot q+\dot J_y\dot q-(\ddot y_d+a_{e,k}^\star)$ rather than a hard infeasibility. With the measured task acceleration $\ddot y^{\rm meas}$, the realization residual
 
 $$
-d_{{\rm real},k}\approx\ddot y^{\rm meas}_k-\big(\ddot y_d+v_k^\star\big)
+d_{{\rm real},k}\approx\ddot y^{\rm meas}_k-\big(\ddot y_d+a_{e,k}^\star\big)
 \tag{13}
 $$
 
@@ -234,7 +234,7 @@ Locomotion proceeds through scheduled contact phases, and the realizer's contact
 
 The construction inherits the fixed-model offset-free property of [1] and adds the qualification that the disturbance is now an aggregate effect on a floating base.
 
-**Offset-free regulation (conditional).** Fix a contact phase and suppose the effective disturbance is constant and matched, the residual estimator (9) converges so that $\hat d\to d_{\rm eff}$, and the cancelling correction $v=-d_{\rm eff}$ lies within the fixed bounds and remains realizable by (12). Then the offset-free MPC (11) drives the task error to zero: the matched interaction and realization effects are cancelled together, so exact realization $d_{\rm real}=0$ is not required — only that the residual be matched, constant, and realizable.
+**Offset-free regulation (conditional).** Fix a contact phase and suppose the effective disturbance is constant and matched, the residual estimator (9) converges so that $\hat d\to d_{\rm eff}$, and the cancelling correction $a_e=-d_{\rm eff}$ lies within the fixed bounds and remains realizable by (12). Then the offset-free MPC (11) drives the task error to zero: the matched interaction and realization effects are cancelled together, so exact realization $d_{\rm real}=0$ is not required — only that the residual be matched, constant, and realizable.
 
 **Bounded mismatch.** If the nominal requested-model loop is input-to-state stable as in [1] and the unmatched residual is bounded, $\sup_k\lVert d_{\rm eff}-d_{\rm matched}\rVert\le\varepsilon$, then the realized error inherits the nominal transient plus an ultimate bound proportional to $\varepsilon$. Bounded corrections do not by themselves establish recursive feasibility, contact stability, or fall avoidance; those remain properties of the plan and the realizer.
 
@@ -366,7 +366,7 @@ The transient push of Section IX-F is a full torque-level result, but a *sustain
 
 **Table III.** Sustained 1 s lateral force on the reduced CoM/body model (cell medians over ten seeds). "Recovered" is the fraction of seeds whose lateral error returns below a 15 mm band.
 
-The command authority of the reduced model is $\approx48$ N ($1.4$ m/s$^2\times34$ kg). The sweep tracks the three regimes of Theorem 1's realizability condition exactly. **Within authority (30 N):** ID-MPC rejects the constant force nearly offset-free — the steady lateral error drops from $42.8$ to $4.2$ mm (a $10\times$ reduction) and it is the only controller to re-enter the band, because the residual estimator converges to the constant disturbance and the cancelling command $v=-\hat d_{\rm eff}$ is admissible. **Just past authority (50 N):** ID-MPC is still better ($59.6$ vs $83.0$ mm) but the command saturates and a residual offset remains. **Beyond authority (70 N):** both hold $\approx245$ mm — the cancelling command is inadmissible, so no observer can help, exactly as the falsifiability remark after Theorem 1 states. Nominal MPC, lacking the disturbance feedforward, holds a droop proportional to the force throughout.
+The command authority of the reduced model is $\approx48$ N ($1.4$ m/s$^2\times34$ kg). The sweep tracks the three regimes of Theorem 1's realizability condition exactly. **Within authority (30 N):** ID-MPC rejects the constant force nearly offset-free — the steady lateral error drops from $42.8$ to $4.2$ mm (a $10\times$ reduction) and it is the only controller to re-enter the band, because the residual estimator converges to the constant disturbance and the cancelling command $a_e=-\hat d_{\rm eff}$ is admissible. **Just past authority (50 N):** ID-MPC is still better ($59.6$ vs $83.0$ mm) but the command saturates and a residual offset remains. **Beyond authority (70 N):** both hold $\approx245$ mm — the cancelling command is inadmissible, so no observer can help, exactly as the falsifiability remark after Theorem 1 states. Nominal MPC, lacking the disturbance feedforward, holds a droop proportional to the force throughout.
 
 ![Fig. 8. Sustained-force offset-free rejection.](figures/sustained_push_offset.png)
 
@@ -421,7 +421,7 @@ Finally, the benefit is condition-specific. On terrain, residual augmentation im
 
 ## XI. Conclusion
 
-This paper argued that terrain-mediated contact mismatch and external body force are one phenomenon — physical interaction — whose observable effect can be carried as a single residual on a fixed predictive model. The central object is therefore not a controller but a *representation*: an interaction-dynamics model $\ddot e=v+d_{\rm eff}$ whose transition matrices are, for the normalized requested-task coordinates, provably fixed across gait phase, terrain, and push (Theorem 1), with all robot and environment dependence confined to $d_{\rm eff}$, the admissible-command set, and the realizer. ID-MPC is one controller realized on this representation; the residual estimator and the whole-body realizer are the other two blocks, and the predict–realize–observe interface of Figure 2 is not specific to locomotion.
+This paper argued that terrain-mediated contact mismatch and external body force are one phenomenon — physical interaction — whose observable effect can be carried as a single residual on a fixed predictive model. The central object is therefore not a controller but a *representation*: an interaction-dynamics model $\ddot e=a_e+d_{\rm eff}$ whose transition matrices are, for the normalized requested-task coordinates, provably fixed across gait phase, terrain, and push (Theorem 1), with all robot and environment dependence confined to $d_{\rm eff}$, the admissible-command set, and the realizer. ID-MPC is one controller realized on this representation; the residual estimator and the whole-body realizer are the other two blocks, and the predict–realize–observe interface of Figure 2 is not specific to locomotion.
 
 Two paired three-controller Unitree G1 studies show what this separation does and does not provide across two interaction classes. On terrain, constant-residual augmentation improves 10 ms CoM prediction by 3.6--5.7% on three of four terrains (and slightly worsens it on the obstacle) and reduces obstacle peak tracking error by 19.8% relative to nominal MPC, with flat, depression, and rough RMS essentially unchanged (within 3%). Under phase-locked external pushes the same model performs more clearly: ID-MPC lowers post-push peak CoM error in every direction/phase condition (14--27% relative to nominal MPC), most in the vulnerable lateral single-support case, and returns to the error band faster than the baselines; fall counts in the hardest condition are similar across the MPC controllers, so the gain is in error magnitude and recovery speed rather than fall rate. The experiment therefore supports one canonical residual-prediction mechanism across both interaction classes as a useful augmentation whose benefit is largest where the interaction is largest.
 
