@@ -2,7 +2,7 @@ PWD /Users/yycao/ai_learn/whole_body_control/versions/v3
 INPUT /usr/local/texlive/2026/texmf.cnf
 INPUT /usr/local/texlive/2026/texmf-dist/web2c/texmf.cnf
 INPUT /usr/local/texlive/2026/texmf-var/web2c/pdftex/pdflatex.fmt
-INPUT wbc_v3.tex
+INPUT /Users/yycao/ai_learn/whole_body_control/versions/v3/wbc_v3.tex
 OUTPUT wbc_v3.log
 INPUT /usr/local/texlive/2026/texmf-dist/tex/latex/ieeetran/IEEEtran.cls
 INPUT /usr/local/texlive/2026/texmf-dist/tex/latex/ieeetran/IEEEtran.cls

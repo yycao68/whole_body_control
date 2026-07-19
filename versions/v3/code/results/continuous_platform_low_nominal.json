@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "scenario": {
+    "duration_s": 15.0,
+    "push_window_s": [
+      2.0,
+      3.0
+    ],
+    "nominal_step_up_s": 5.2,
+    "nominal_step_down_s": 8.0,
+    "gait": {
+      "n_steps": 12,
+      "step_length": 0.02,
+      "step_time": 1.4,
+      "double_support_time": 1.0,
+      "settle_time": 1.0,
+      "lateral_zmp_scale": 1.0
+    },
+    "platform_coordinates_by_seed": {
+      "4300": [
+        0.048802551005675966,
+        0.08880255100567597
+      ]
+    }
+  },
+  "metadata": {
+    "python": "3.13.12",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "plant_dt_s": 0.001,
+    "wbc_schedule_dt_s": 0.002,
+    "mpc_schedule_dt_s": 0.01
+  },
+  "trials": [
+    {
+      "controller": "nominal_mpc",
+      "terrain": "platform",
+      "seed": 4300,
+      "duration_requested_s": 15.0,
+      "duration_completed_s": 14.087999999997631,
+      "fell": true,
+      "qp_fallbacks": 0,
+      "forward_travel_m": 0.11908487221468006,
+      "com_xyz_rms_mm": 5.855374732640177,
+      "com_xyz_peak_mm": 65.39135571150771,
+      "roll_pitch_rms_rad": 0.09065969718346556,
+      "max_abs_roll_pitch_rad": 0.8506546382929869,
+      "realization_residual_rms_mps2": 1.951092986912207,
+      "realization_residual_peak_mps2": 27.627107113844666,
+      "peak_contact_force_n": 405.27662870843176,
+      "contact_impulse_ns": 4663.129354233107,
+      "max_torque_utilization": 0.5736771644008903,
+      "min_friction_margin": -2.06349808144261,
+      "prediction": {
+        "1": {
+          "horizon_ms": 1.0,
+          "n": 1409,
+          "nominal_com_rmse_mm": 0.0024974677664558946,
+          "augmented_com_rmse_mm": 0.002505358573386922,
+          "nominal_roll_pitch_rmse_mrad": 0.3173216429807983,
+          "augmented_roll_pitch_rmse_mrad": 0.31667904676990427
+        },
+        "5": {
+          "horizon_ms": 5.0,
+          "n": 1409,
+          "nominal_com_rmse_mm": 0.013845329769114572,
+          "augmented_com_rmse_mm": 0.013486126847146345,
+          "nominal_roll_pitch_rmse_mrad": 1.5891580574052098,
+          "augmented_roll_pitch_rmse_mrad": 1.5731514861485072
+        },
+        "10": {
+          "horizon_ms": 10.0,
+          "n": 1409,
+          "nominal_com_rmse_mm": 0.035673496074055386,
+          "augmented_com_rmse_mm": 0.033222198681731555,
+          "nominal_roll_pitch_rmse_mrad": 3.1771199321890604,
+          "augmented_roll_pitch_rmse_mrad": 3.1134036484466843
+        }
+      },
+      "timing": {
+        "wbc": {
+          "n": 7024,
+          "median_ms": 3.369187470525503,
+          "p99_ms": 10.231453719316038,
+          "max_ms": 18.122792011126876,
+          "deadline_ms": 2.0,
+          "deadline_miss_fraction": 1.0
+        },
+        "mpc": {
+          "n": 1404,
+          "median_ms": 0.29795849695801735,
+          "p99_ms": 0.46662371431011707,
+          "max_ms": 0.6606670212931931,
+          "deadline_ms": 10.0,
+          "deadline_miss_fraction": 0.0
+        }
+      },
+      "event_metrics": {
+        "peak_abs_lateral_error_mm": 65.39135571150771,
+        "peak_abs_roll_deg": 48.67950589498508,
+        "measured_step_up_time_s": 12.109999999998728,
+        "measured_step_down_time_s": 12.12499999999872
+      },
+      "challenge_terrain": {
+        "height_mm": 10.0,
+        "platform_start_x_m": 0.048802551005675966,
+        "platform_end_x_m": 0.08880255100567597
+      },
+      "stage": "platform_sweep"
+    },
+    {
+      "controller": "nominal_mpc",
+      "terrain": "platform",
+      "seed": 4300,
+      "duration_requested_s": 15.0,
+      "duration_completed_s": 12.55699999999848,
+      "fell": true,
+      "qp_fallbacks": 0,
+      "forward_travel_m": 0.084414998498208,
+      "com_xyz_rms_mm": 19.131360815072338,
+      "com_xyz_peak_mm": 102.51400976209307,
+      "roll_pitch_rms_rad": 0.15925222846310663,
+      "max_abs_roll_pitch_rad": 0.8500560063798498,
+      "realization_residual_rms_mps2": 3.3098707317770804,
+      "realization_residual_peak_mps2": 28.794668889059864,
+      "peak_contact_force_n": 404.1427132222899,
+      "contact_impulse_ns": 4141.198319571866,
+      "max_torque_utilization": 0.8973224424528163,
+      "min_friction_margin": -1.5674452928727565,
+      "prediction": {
+        "1": {
+          "horizon_ms": 1.0,
+          "n": 1256,
+          "nominal_com_rmse_mm": 0.0024646176048591585,
+          "augmented_com_rmse_mm": 0.0024423173434135704,
+          "nominal_roll_pitch_rmse_mrad": 0.4614619308282846,
+          "augmented_roll_pitch_rmse_mrad": 0.46045364887285484
+        },
+        "5": {
+          "horizon_ms": 5.0,
+          "n": 1256,
+          "nominal_com_rmse_mm": 0.015235245748076559,
+          "augmented_com_rmse_mm": 0.01356178583738941,
+          "nominal_roll_pitch_rmse_mrad": 2.3098832580831066,
+          "augmented_roll_pitch_rmse_mrad": 2.284564850326016
+        },
+        "10": {
+          "horizon_ms": 10.0,
+          "n": 1256,
+          "nominal_com_rmse_mm": 0.04503786245543189,
+          "augmented_com_rmse_mm": 0.0373050622164737,
+          "nominal_roll_pitch_rmse_mrad": 4.617340695963507,
+          "augmented_roll_pitch_rmse_mrad": 4.515494110662856
+        }
+      },
+      "timing": {
+        "wbc": {
+          "n": 6259,
+          "median_ms": 3.395750012714416,
+          "p99_ms": 10.19810152356513,
+          "max_ms": 16.182499995920807,
+          "deadline_ms": 2.0,
+          "deadline_miss_fraction": 1.0
+        },
+        "mpc": {
+          "n": 1251,
+          "median_ms": 0.31391700031235814,
+          "p99_ms": 0.5013540212530643,
+          "max_ms": 0.8651249809190631,
+          "deadline_ms": 10.0,
+          "deadline_miss_fraction": 0.0
+        }
+      },
+      "event_metrics": {
+        "peak_abs_lateral_error_mm": 102.51400976209307,
+        "peak_abs_roll_deg": 48.609541634905085,
+        "measured_step_up_time_s": 10.948999999999371,
+        "measured_step_down_time_s": 11.344999999999152
+      },
+      "challenge_terrain": {
+        "height_mm": 15.0,
+        "platform_start_x_m": 0.048802551005675966,
+        "platform_end_x_m": 0.08880255100567597
+      },
+      "stage": "platform_sweep"
+    }
+  ]
+}

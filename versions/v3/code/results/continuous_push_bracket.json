@@ -1,0 +1,379 @@
+{
+  "schema_version": 1,
+  "scenario": {
+    "duration_s": 15.0,
+    "push_window_s": [
+      2.0,
+      3.0
+    ],
+    "nominal_step_up_s": 5.2,
+    "nominal_step_down_s": 8.0,
+    "gait": {
+      "n_steps": 12,
+      "step_length": 0.02,
+      "step_time": 1.4,
+      "double_support_time": 1.0,
+      "settle_time": 1.0,
+      "lateral_zmp_scale": 1.0
+    },
+    "platform_coordinates_by_seed": {
+      "4300": [
+        0.048802551005675966,
+        0.08880255100567597
+      ]
+    }
+  },
+  "metadata": {
+    "python": "3.13.12",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "plant_dt_s": 0.001,
+    "wbc_schedule_dt_s": 0.002,
+    "mpc_schedule_dt_s": 0.01
+  },
+  "trials": [
+    {
+      "controller": "nominal_mpc",
+      "terrain": "flat",
+      "seed": 4300,
+      "duration_requested_s": 15.0,
+      "duration_completed_s": 14.999999999997126,
+      "fell": false,
+      "qp_fallbacks": 0,
+      "forward_travel_m": 0.1348060633488903,
+      "com_xyz_rms_mm": 4.890262733260621,
+      "com_xyz_peak_mm": 11.438163032011756,
+      "roll_pitch_rms_rad": 0.04093885697497152,
+      "max_abs_roll_pitch_rad": 0.1001930206243921,
+      "realization_residual_rms_mps2": 1.0510183159417212,
+      "realization_residual_peak_mps2": 8.423642896243953,
+      "peak_contact_force_n": 396.83873834303864,
+      "contact_impulse_ns": 4982.609030333855,
+      "max_torque_utilization": 0.4219339283519515,
+      "min_friction_margin": -1.387541872773598,
+      "prediction": {
+        "1": {
+          "horizon_ms": 1.0,
+          "n": 1500,
+          "nominal_com_rmse_mm": 0.002439013359767606,
+          "augmented_com_rmse_mm": 0.00241152001543703,
+          "nominal_roll_pitch_rmse_mrad": 0.17525041553719303,
+          "augmented_roll_pitch_rmse_mrad": 0.17499735839392147
+        },
+        "5": {
+          "horizon_ms": 5.0,
+          "n": 1500,
+          "nominal_com_rmse_mm": 0.013532634857836606,
+          "augmented_com_rmse_mm": 0.012886452515634793,
+          "nominal_roll_pitch_rmse_mrad": 0.8741268834269695,
+          "augmented_roll_pitch_rmse_mrad": 0.8677720661051467
+        },
+        "10": {
+          "horizon_ms": 10.0,
+          "n": 1499,
+          "nominal_com_rmse_mm": 0.03184467912119392,
+          "augmented_com_rmse_mm": 0.029498276132267912,
+          "nominal_roll_pitch_rmse_mrad": 1.7386742170163783,
+          "augmented_roll_pitch_rmse_mrad": 1.7129923201964319
+        }
+      },
+      "timing": {
+        "wbc": {
+          "n": 7480,
+          "median_ms": 3.0809169984422624,
+          "p99_ms": 11.172383177326992,
+          "max_ms": 17.677374999038875,
+          "deadline_ms": 2.0,
+          "deadline_miss_fraction": 0.9990641711229946
+        },
+        "mpc": {
+          "n": 1495,
+          "median_ms": 0.27949997456744313,
+          "p99_ms": 0.3615124989300966,
+          "max_ms": 0.46991597628220916,
+          "deadline_ms": 10.0,
+          "deadline_miss_fraction": 0.0
+        }
+      },
+      "push": {
+        "direction": "lateral",
+        "phase": "timed",
+        "magnitude_n": 5.0,
+        "duration_s": 1.0,
+        "profile": "flat_top",
+        "onset_s": 2.0,
+        "onset_contact": [
+          1,
+          1
+        ],
+        "impulse_ns": 4.5
+      },
+      "event_metrics": {
+        "peak_abs_lateral_error_mm": 11.438163032011756,
+        "peak_abs_roll_deg": 5.7406372184448795,
+        "push_recovery_threshold": 1.0601444164261782,
+        "push_recovery_time_s": 0.0009999999997805098,
+        "measured_step_up_time_s": 6.832000000000616,
+        "measured_step_down_time_s": 7.169000000000729
+      },
+      "stage": "push_sweep"
+    },
+    {
+      "controller": "nominal_mpc",
+      "terrain": "flat",
+      "seed": 4300,
+      "duration_requested_s": 15.0,
+      "duration_completed_s": 14.999999999997126,
+      "fell": false,
+      "qp_fallbacks": 0,
+      "forward_travel_m": 0.13735532143263485,
+      "com_xyz_rms_mm": 5.374216875984963,
+      "com_xyz_peak_mm": 21.11373615885262,
+      "roll_pitch_rms_rad": 0.04760173447781394,
+      "max_abs_roll_pitch_rad": 0.14713577534455358,
+      "realization_residual_rms_mps2": 1.2213442391435763,
+      "realization_residual_peak_mps2": 9.723779114512322,
+      "peak_contact_force_n": 406.18956439115703,
+      "contact_impulse_ns": 4990.266696991896,
+      "max_torque_utilization": 0.44210905713158305,
+      "min_friction_margin": -1.530076860902513,
+      "prediction": {
+        "1": {
+          "horizon_ms": 1.0,
+          "n": 1500,
+          "nominal_com_rmse_mm": 0.002445374220231066,
+          "augmented_com_rmse_mm": 0.0024141780413464748,
+          "nominal_roll_pitch_rmse_mrad": 0.23292360086859876,
+          "augmented_roll_pitch_rmse_mrad": 0.23259548391652796
+        },
+        "5": {
+          "horizon_ms": 5.0,
+          "n": 1500,
+          "nominal_com_rmse_mm": 0.013902641505510365,
+          "augmented_com_rmse_mm": 0.013176107498169835,
+          "nominal_roll_pitch_rmse_mrad": 1.160720744518243,
+          "augmented_roll_pitch_rmse_mrad": 1.1524757275203568
+        },
+        "10": {
+          "horizon_ms": 10.0,
+          "n": 1499,
+          "nominal_com_rmse_mm": 0.03384947000618906,
+          "augmented_com_rmse_mm": 0.031289878205713655,
+          "nominal_roll_pitch_rmse_mrad": 2.308811322764912,
+          "augmented_roll_pitch_rmse_mrad": 2.2755878935632268
+        }
+      },
+      "timing": {
+        "wbc": {
+          "n": 7480,
+          "median_ms": 3.197145473677665,
+          "p99_ms": 10.480651080142708,
+          "max_ms": 17.351125017739832,
+          "deadline_ms": 2.0,
+          "deadline_miss_fraction": 0.9995989304812835
+        },
+        "mpc": {
+          "n": 1495,
+          "median_ms": 0.2815829939208925,
+          "p99_ms": 0.39656253647990486,
+          "max_ms": 0.47862500650808215,
+          "deadline_ms": 10.0,
+          "deadline_miss_fraction": 0.0
+        }
+      },
+      "push": {
+        "direction": "lateral",
+        "phase": "timed",
+        "magnitude_n": 10.0,
+        "duration_s": 1.0,
+        "profile": "flat_top",
+        "onset_s": 2.0,
+        "onset_contact": [
+          1,
+          1
+        ],
+        "impulse_ns": 9.0
+      },
+      "event_metrics": {
+        "peak_abs_lateral_error_mm": 21.11373615885262,
+        "peak_abs_roll_deg": 8.430258942627956,
+        "push_recovery_threshold": 1.0601444164261782,
+        "push_recovery_time_s": 0.14799999999976432,
+        "measured_step_up_time_s": 4.042999999999685,
+        "measured_step_down_time_s": 7.041000000000686
+      },
+      "stage": "push_sweep"
+    },
+    {
+      "controller": "nominal_mpc",
+      "terrain": "flat",
+      "seed": 4300,
+      "duration_requested_s": 15.0,
+      "duration_completed_s": 14.999999999997126,
+      "fell": false,
+      "qp_fallbacks": 0,
+      "forward_travel_m": 0.135308446831466,
+      "com_xyz_rms_mm": 6.338884416767635,
+      "com_xyz_peak_mm": 30.65043813988723,
+      "roll_pitch_rms_rad": 0.05201618437690019,
+      "max_abs_roll_pitch_rad": 0.22516333966752933,
+      "realization_residual_rms_mps2": 1.4119479805537112,
+      "realization_residual_peak_mps2": 14.203377521965756,
+      "peak_contact_force_n": 432.34820350846246,
+      "contact_impulse_ns": 5003.100589103138,
+      "max_torque_utilization": 0.45886657664365965,
+      "min_friction_margin": -1.6698413076184746,
+      "prediction": {
+        "1": {
+          "horizon_ms": 1.0,
+          "n": 1500,
+          "nominal_com_rmse_mm": 0.002465440929949465,
+          "augmented_com_rmse_mm": 0.0024302053717774777,
+          "nominal_roll_pitch_rmse_mrad": 0.2563732490804304,
+          "augmented_roll_pitch_rmse_mrad": 0.25597943948363067
+        },
+        "5": {
+          "horizon_ms": 5.0,
+          "n": 1500,
+          "nominal_com_rmse_mm": 0.014726176773043246,
+          "augmented_com_rmse_mm": 0.013964975305586729,
+          "nominal_roll_pitch_rmse_mrad": 1.2798131439464664,
+          "augmented_roll_pitch_rmse_mrad": 1.2699611965294537
+        },
+        "10": {
+          "horizon_ms": 10.0,
+          "n": 1499,
+          "nominal_com_rmse_mm": 0.03756885972281375,
+          "augmented_com_rmse_mm": 0.035082880716588626,
+          "nominal_roll_pitch_rmse_mrad": 2.5504482170031935,
+          "augmented_roll_pitch_rmse_mrad": 2.5109466744901847
+        }
+      },
+      "timing": {
+        "wbc": {
+          "n": 7480,
+          "median_ms": 3.4147710248362273,
+          "p99_ms": 11.206181188463233,
+          "max_ms": 17.657624965067953,
+          "deadline_ms": 2.0,
+          "deadline_miss_fraction": 0.9997326203208556
+        },
+        "mpc": {
+          "n": 1495,
+          "median_ms": 0.29616698157042265,
+          "p99_ms": 0.45846943394280965,
+          "max_ms": 0.5549589986912906,
+          "deadline_ms": 10.0,
+          "deadline_miss_fraction": 0.0
+        }
+      },
+      "push": {
+        "direction": "lateral",
+        "phase": "timed",
+        "magnitude_n": 15.0,
+        "duration_s": 1.0,
+        "profile": "flat_top",
+        "onset_s": 2.0,
+        "onset_contact": [
+          1,
+          1
+        ],
+        "impulse_ns": 13.5
+      },
+      "event_metrics": {
+        "peak_abs_lateral_error_mm": 30.65043813988723,
+        "peak_abs_roll_deg": 12.900909064020023,
+        "push_recovery_threshold": 1.0601444164261782,
+        "push_recovery_time_s": 0.5219999999997231,
+        "measured_step_up_time_s": 6.945000000000654,
+        "measured_step_down_time_s": 7.032000000000683
+      },
+      "stage": "push_sweep"
+    },
+    {
+      "controller": "nominal_mpc",
+      "terrain": "flat",
+      "seed": 4300,
+      "duration_requested_s": 15.0,
+      "duration_completed_s": 13.876999999997748,
+      "fell": true,
+      "qp_fallbacks": 0,
+      "forward_travel_m": 0.11488948056716489,
+      "com_xyz_rms_mm": 8.223061406150858,
+      "com_xyz_peak_mm": 47.680609682701544,
+      "roll_pitch_rms_rad": 0.07910783855779116,
+      "max_abs_roll_pitch_rad": 0.8512223646337175,
+      "realization_residual_rms_mps2": 2.0228157262486395,
+      "realization_residual_peak_mps2": 27.426310508520473,
+      "peak_contact_force_n": 485.60142764861547,
+      "contact_impulse_ns": 4625.264477464102,
+      "max_torque_utilization": 0.8255834130603016,
+      "min_friction_margin": -1.8030450724291924,
+      "prediction": {
+        "1": {
+          "horizon_ms": 1.0,
+          "n": 1388,
+          "nominal_com_rmse_mm": 0.002499340668941064,
+          "augmented_com_rmse_mm": 0.002489603793311509,
+          "nominal_roll_pitch_rmse_mrad": 0.40395784127720735,
+          "augmented_roll_pitch_rmse_mrad": 0.4032372318572666
+        },
+        "5": {
+          "horizon_ms": 5.0,
+          "n": 1388,
+          "nominal_com_rmse_mm": 0.014816338987434284,
+          "augmented_com_rmse_mm": 0.014010929831729203,
+          "nominal_roll_pitch_rmse_mrad": 2.026006312004863,
+          "augmented_roll_pitch_rmse_mrad": 2.008110822593328
+        },
+        "10": {
+          "horizon_ms": 10.0,
+          "n": 1388,
+          "nominal_com_rmse_mm": 0.04583789277442137,
+          "augmented_com_rmse_mm": 0.044162596788178056,
+          "nominal_roll_pitch_rmse_mrad": 4.0698652616624384,
+          "augmented_roll_pitch_rmse_mrad": 3.9998690722656365
+        }
+      },
+      "timing": {
+        "wbc": {
+          "n": 6919,
+          "median_ms": 3.095625026617199,
+          "p99_ms": 9.849142043385653,
+          "max_ms": 22.328499995637685,
+          "deadline_ms": 2.0,
+          "deadline_miss_fraction": 0.9998554704437057
+        },
+        "mpc": {
+          "n": 1383,
+          "median_ms": 0.29616698157042265,
+          "p99_ms": 0.43109001242555683,
+          "max_ms": 0.6277079810388386,
+          "deadline_ms": 10.0,
+          "deadline_miss_fraction": 0.0
+        }
+      },
+      "push": {
+        "direction": "lateral",
+        "phase": "timed",
+        "magnitude_n": 20.0,
+        "duration_s": 1.0,
+        "profile": "flat_top",
+        "onset_s": 2.0,
+        "onset_contact": [
+          1,
+          1
+        ],
+        "impulse_ns": 18.0
+      },
+      "event_metrics": {
+        "peak_abs_lateral_error_mm": 47.680609682701544,
+        "peak_abs_roll_deg": 48.58358859796445,
+        "push_recovery_threshold": 1.0601444164261782,
+        "push_recovery_time_s": 1.1909999999997343,
+        "measured_step_up_time_s": 8.240000000000872,
+        "measured_step_down_time_s": 8.301000000000839
+      },
+      "stage": "push_sweep"
+    }
+  ]
+}

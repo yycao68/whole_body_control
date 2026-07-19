@@ -1,5 +1,6 @@
 # Fdb version 4
-["pdflatex"] 1784398952.96966 "wbc_v3.tex" "wbc_v3.pdf" "wbc_v3" 1784398954.0002 0
+["pdflatex"] 1784418121.83814 "/Users/yycao/ai_learn/whole_body_control/versions/v3/wbc_v3.tex" "wbc_v3.pdf" "wbc_v3" 1784418122.92643 0
+  "/Users/yycao/ai_learn/whole_body_control/versions/v3/wbc_v3.tex" 1784398472.07344 73700 ddef0a5fde38551241c15463e7ce6403 ""
   "/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/base/8r.enc" 1165713224 4850 80dc9bab7f31fb78a000ccfed0e27cab ""
   "/usr/local/texlive/2026/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/local/texlive/2026/texmf-dist/fonts/tfm/adobe/times/ptmb7t.tfm" 1136768653 2172 fd0c924230362ff848a33632ed45dc23 ""
@@ -104,9 +105,9 @@
   "/usr/local/texlive/2026/texmf.cnf" 1774209515 577 648cd9f92f9c0eac486f4c71c85cfbbe ""
   "figures/e5_admissible_set.png" 1784398910.27498 49910 1353bca9ba98e2350270e8a93df860d3 ""
   "figures/e6_task_port_timeseries.png" 1784398919.0599 88405 5d8fa4cf972d29db77ab112ddb6c152c ""
-  "figures/multirate_architecture.png" 1784084737.14843 201526 da93fb84ef4f6618a7d04d86ac05e74e ""
+  "figures/multirate_architecture.png" 1784418121.43079 242793 9de306c630821421340726259683d8d5 ""
   "figures/prediction_realization_concept.png" 1783995436.54576 70044 b9ecc4a1b9d08a9d546d24a123f02a90 ""
-  "wbc_v3.aux" 1784398953.90367 7546 974ea6cf9ca3619373b2fae235c882ab "pdflatex"
+  "wbc_v3.aux" 1784418122.8443 7546 8540cbd050348788191d543a441db5fb "pdflatex"
   "wbc_v3.tex" 1784398472.07344 73700 ddef0a5fde38551241c15463e7ce6403 ""
   (generated)
   "wbc_v3.aux"

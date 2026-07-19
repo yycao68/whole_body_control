@@ -1,4 +1,4 @@
-# Interaction Dynamics and Local Realization Authority for Floating-Base Whole-Body Control
+# Interaction Dynamics: A Configuration-Invariant Predictive Model for Humanoid Locomotion under Terrain and External Disturbances
 
 **Yongyan Cao**
 
@@ -6,715 +6,465 @@
 
 ## Abstract
 
-Floating-base whole-body control is often split among a centroidal predictor, a task-space controller, and an inverse-dynamics layer, without an explicit account of what normalized commands the constrained robot can currently realize. This paper separates *canonical prediction* from *local realization authority*. A $200$ Hz prototype node solves canonical body and task predictors and one active-mode whole-body quadratic program (QP); a $1$ kHz servo holds the optimized torque. The predictors use residual-acceleration coordinates with an exact zero-order-hold pair $(A,B)$ that is unchanged by configuration and contact mode. Robot mechanics instead appear in a local admissible-command geometry recovered from the QP.
+Locomotion is disturbed both by terrain-mediated contact mismatch — uneven height, early or late touchdown, support-force redistribution — and by external body forces such as pushes. We argue that these are one problem: *interaction dynamics*. Rather than embedding terrain, contact, and force states into the predictive model, we represent their observable motion effect — together with constrained-realization error and model residual — as a single interaction residual $d_{\rm eff}$ acting on a **configuration-invariant** task model $\ddot e=v+d_{\rm eff}$, whose exact zero-order-hold matrices are provably fixed across gait phase, terrain, and push. This turns interaction into a predictive *state* on a robot-independent model rather than a property to be re-modeled per contact. A model-predictive controller (Interaction-Dynamics MPC, ID-MPC) then chooses the task-acceleration correction $v$; a Kalman-style random-walk estimator propagates the measured residual over the horizon; and a separate inverse-dynamics/contact QP realizes the command subject to the instantaneous robot and contact constraints. The controller replans no footsteps and embeds no full nonlinear dynamics in the horizon.
 
-Because the residual command enters the QP only through linear objective terms, one active-set KKT sensitivity calculation after the nominal QP solve returns affine torque and contact-force maps and a critical-region-informed command model $H_k u\le h_k$. We extend this local map along signed coordinate rays, locating region transitions from primal and dual sensitivities without additional whole-body QP solves. On the evaluated planar grids, continuation has zero observed sampled false positives and false negatives relative to an offline ray-and-corner repeated-QP numerical reference, while the single-cell map rejects $66$--$71\%$ of reference-feasible samples. Torque-level MuJoCo studies evaluate the authority query across four double-support conditions and demonstrate one fixed five-transfer, 30 mm forward-step sequence.
+We evaluate four controllers on a torque-actuated Unitree G1 simulation using the same walking reference and realizer — task impedance, nominal MPC, ID-MPC, and an ID-MPC without realization feedback — across two paired 160-trial studies. In an uneven-terrain study (flat, a 20 mm depression, a 20 mm obstacle, and a frozen rough surface), residual augmentation improves 10 ms CoM prediction by 4.7--5.7% on three terrains and reduces obstacle peak CoM error by 13.1% relative to nominal MPC, with flat-ground and the remaining terrain RMS essentially unchanged (within 3%). In an external-push study — phase-locked $90$ N, $150$ ms torso pushes hidden from the estimator, across two directions and two gait phases — ID-MPC lowers post-push peak CoM error in every condition, cuts the lateral single-support peak from 57.3 to 31.0 mm ($-46\%$), and is the only controller that re-enters a 12 mm error band; here the realization-feedback term is beneficial precisely because the whole-body constraints become active. The 100 Hz MPC meets its measured deadline, and the shared inverse-dynamics QP runs on a preserved 500 Hz simulated schedule whose wall-clock optimization is left to future work. Together the studies show that one canonical residual-acceleration model predicts and compensates two distinct interaction classes, with the clearest benefit under external pushes.
 
-**Index Terms** - interaction dynamics, centroidal MPC, whole-body control, floating-base robots, loco-manipulation, physical human-robot interaction, model predictive control.
+**Index Terms** - interaction dynamics, uneven-terrain locomotion, external-push rejection, humanoid robots, model predictive control, disturbance estimation, whole-body control.
 
 ---
 
 ## I. Introduction
 
-Humanoid robots regulate two physical interfaces at once: the feet exchange forces with the environment for balance, the hands with people, tools, and objects for a task. Existing stacks assign these to different objects — a centroidal MPC plans contact forces, a whole-body QP maps them to joint commands, an impedance controller regulates the hand — which is practical but hides that both are the same interaction-dynamics problem.
+Walking is a continuous physical interaction between a robot, the terrain, and — when present — external forces on the body. A motion planner may prescribe dynamically reasonable body and foot trajectories, yet the forces realized at execution can differ from their nominal values because terrain height, compliance, friction, and contact timing are imperfectly known, and an external push or pull adds an unmodeled body wrench. A lower foothold delays load transfer; a higher foothold advances impact; a compliant or low-friction patch redistributes the support wrench; a torso push injects a transient acceleration. These mismatches first appear in contact, proprioceptive, and inertial measurements and then drive body-position and orientation error.
 
-The question is whether floating-base manipulation admits the same normalized interaction-dynamics representation derived for fixed-base systems in [1] without making prediction blind to current physical capability: whether balance and manipulation can share one **configuration-independent requested state transition** while robot-specific mechanics enter only through the admissible command geometry. Such a canonical requested model is also a natural target for learned whole-body *intent*, which a realization-informed feasible set turns into constraint-aware execution.
+Existing locomotion controllers address this problem through several complementary mechanisms. Reduced-order MPC efficiently replans body motion and contact forces; whole-body inverse dynamics enforces instantaneous multibody and contact constraints; impedance control absorbs interaction through compliant tracking error; full-order NMPC represents richer coupled dynamics; and learning-based policies can provide strong empirical terrain robustness. The gap addressed here is narrower. These approaches do not necessarily expose terrain/contact mismatch as an explicit, configuration-invariant interaction input whose near-future effect can be predicted and cancelled in the coordinates used for precise body tracking.
 
-At the body port the interaction is between centroidal motion and the net contact wrench; at the task port, between end-effector motion and task wrench. In both, known dynamics and desired acceleration go in feedforward, leaving a residual acceleration input:
+The proposed framework retains the external motion planner and fast whole-body controller. It inserts an interaction-prediction layer between them. Let $y$ denote selected locomotion-task coordinates, such as lateral/vertical body position and roll/pitch, and let $e=y-y_d$ be their tracking error. After nominal dynamic compensation, the task-level model isok
 
 $$
 \begin{aligned}
-\text{physical wrench}
-&=\text{model feedforward}\\
-&\quad+\text{interaction inertia}\times u.
+\ddot e
+&=v+d_{\rm eff},\\
+d_{\rm eff}
+&=d_{\rm int}+d_{\rm real}+d_{\rm mod},
 \end{aligned}
 \tag{1}
 $$
 
-The resulting error model is the interaction-dynamics backbone of [1]. The floating-base case is nontrivial because contact geometry, support changes, friction, center-of-pressure limits, actuator saturation, nominal feedforward, and arm–body reactions together determine which normalized accelerations are *currently* realizable. The central claim is therefore a bidirectional prediction–realization separation: the full robot dynamics do not replace the canonical horizon model, but they must tell it what it may ask for. A capability query supplies a local admissible-command model $\widehat{\mathcal U}_k$; the predictors keep the same exact-ZOH pair across contact modes, constrain their commands to that model, and pass the first request to the instantaneous realizer, which executes it and reports whatever residual remains. Because the command enters the whole-body QP only through linear cost terms, the solution is affine on a fixed active set, and a KKT sensitivity solve returns the feedforward and input maps from which $\widehat{\mathcal U}_k$ follows without another whole-body QP solve.
+where $v$ is the acceleration correction selected by MPC. The term $d_{\rm int}$ is the task-acceleration effect of contact-force, timing, terrain, compliance, and friction mismatch; $d_{\rm real}$ is the acceleration request not realized by the constrained WBC; and $d_{\rm mod}$ contains normalization, state-estimation, and unmodeled-dynamics error. The estimator need not identify these sources uniquely to control their combined effect, although measured contact forces provide an interpretable component. The main state remains $x=[e^\top,\dot e^\top]^\top$ rather than being enlarged with contact force, foot position, and mode variables. Consequently, the exact-ZOH pair $(A_d,B_d)$ remains the fixed double-integrator pair, while robot and environment dependence is isolated in $d_{\rm eff}$, task constraints, and the high-rate realization map.
 
-A central observation is the technical heart of this paper: a set built from one active set is the QP's *critical region* — the region in which the constraint pattern is unchanged — whereas successful realization can span several such regions through contact-force redistribution. Following the solution across these regions, with entering and leaving constraints located in closed form from the *primal and dual* sensitivities, recovers the residual-tolerance boundary along a ray without another whole-body QP. In short:
+This separation is important for both precision and compliance. Conventional impedance absorbs a persistent interaction through a nonzero tracking deflection. The ID-MPC instead estimates the equivalent acceleration and predicts its effect over the horizon. When the cancelling acceleration remains realizable, the steady condition $v_\infty+\hat d_{{\rm eff},\infty}=0$ permits zero tracking bias without requiring an infinitely stiff task. The controller does not directly command an unknown terrain force; it shapes the body response by choosing constrained task acceleration.
 
-> **Contact transitions change the admissible input geometry, not the canonical interaction dynamics.**
+The paper therefore asks:
 
-The contributions follow this separation:
+> **Can one configuration-invariant interaction model predict and compensate the observable motion effect of two distinct disturbance classes — terrain-mediated contact mismatch and external body pushes — and improve precise body tracking during walking when the motion plan and high-rate WBC are held fixed?**
 
-1. **Canonical ports.** Body and task interaction are two ports of one exact-ZOH model whose pair $(A,B)$ is independent of configuration, inertia, and contact mode.
-2. **Multirate realization.** The prototype combines both predictors with one active-mode whole-body QP at 200 Hz and a 1 kHz torque zero-order hold. A repeated timing study characterizes the resulting computational profile and deadline-miss fraction.
-3. **Local authority query.** A local KKT sensitivity solve returns the feedforward, torque/contact input maps, and a critical-region command model $H_ku\le h_k$ without a second whole-body QP solve.
-4. **Ray continuation.** Continuing the piecewise-affine solution along signed coordinate rays matches all sampled planar-grid classifications of the offline repeated-QP numerical reference and recovers the authority excluded by the single-cell map.
-5. **Torque-level execution.** The full stack executes a five-transfer, 30 mm forward sequence in the Unitree G1 MuJoCo model using an externally specified contact schedule.
+The contributions are:
 
-The evaluation proceeds from local authority geometry to torque-level contact-transition execution. The mathematical conditions governing the local map and the evaluation protocol are stated with the corresponding results rather than repeated throughout the paper.
+1. **Interaction as a predictive state on a robot-independent model.** We show (Theorem 1) that the selected body tasks share one exact-ZOH transition pair that is provably invariant across gait phase, terrain, and contact mode, and that terrain, contact timing, external force, and realization error all enter a single interaction residual $d_{\rm eff}$ rather than the model. A non-vacuity argument, confirmed by the experiments, establishes that this is a falsifiable modeling claim rather than a free relabelling.
+2. **Interaction estimation and prediction.** A Kalman-style augmented residual model converts emerging contact and proprioceptive mismatch into a horizon disturbance sequence, without claiming pre-contact knowledge of unseen terrain.
+3. **Constrained interaction compensation.** An offset-free MPC selects smooth task-acceleration corrections while retaining the same prediction matrices across configuration and contact phase.
+4. **Controlled terrain and external-push evaluation.** Two paired 160-trial, four-controller benchmarks — an uneven-terrain study and a phase-locked torso-push study — use the same external reference and constrained realizer, report prediction, tracking, and recovery outcomes per condition, and separate the simulated control schedule from measured wall-clock feasibility.
 
-Figure 1 summarizes the resulting architecture. A $200$ Hz node reads the state and model once, then solves both predictors and one active-mode whole-body QP in sequence, publishing a local authority model from a KKT sensitivity solve; a $1$ kHz servo holds the saturated optimized torque between updates. The ray estimate is decimated in the prototype, and snapshot validation publishes a validation-triggered fallback box whenever the current local model is unavailable.
+Figure 1 summarizes the multirate architecture. The external reference publishes nominal body, foot, and contact trajectories; the ID-MPC updates the acceleration correction at 100 Hz; the inverse-dynamics/contact QP is scheduled at 500 Hz; and torque is applied at the 1 kHz simulation rate. These are simulated update periods; Section X-H reports their wall-clock measurements.
 
 ![Fig. 1. The multirate interaction-dynamics architecture.](figures/multirate_architecture.png)
 
-**Fig. 1.** The multirate interaction-dynamics architecture.
+**Fig. 1.** Interaction prediction with high-rate whole-body realization.
 
 ---
 
 ## II. Related Work
 
-Centroidal and single-rigid-body MPC [2], [3], [8], [13] predict CoM and orientation while optimizing contact forces over a gait schedule, carrying friction, unilateral contact, and support geometry in the horizon. Our body port instead predicts a normalized residual acceleration and moves the contact forces out of the predictor entirely: at the current sample the realizer maps the physical limits into a residual-command set that constrains the canonical predictor.
+Reduced-order locomotion MPC predicts center-of-mass and orientation motion while optimizing contact forces over a gait schedule, carrying friction, unilateral contact, and support geometry inside the prediction horizon [2], [3], [8], [13]. This replans body motion efficiently but embeds contact and support variables in the predictive model. The present framework instead predicts only the fixed double-integrator task dynamics and pushes contact, terrain, and realization effects into an estimated disturbance, so the prediction matrices never change with configuration or contact phase.
 
-Whole-body inverse dynamics and hierarchical QPs [4], [5], [7], [9] enforce rigid contacts, task priorities, and actuator limits. They remain essential here — but as the instantaneous realizer that maps a desired body wrench and task acceleration to feasible generalized forces, not as a second predictive model. Operational-space impedance, admittance, and task-space MPC [6], [11], [12] regulate the end-effector; residual-acceleration coordinates remove their configuration-dependent apparent inertia from the prediction while retaining it in force recovery.
+Whole-body inverse dynamics and hierarchical QPs [4], [5], [7], [9] enforce instantaneous multibody dynamics, rigid contact, task priorities, and actuator limits. They are retained here unchanged as the high-rate realizer that maps a requested task acceleration to feasible joint torques and contact forces, not as a second predictive model. Operational-space impedance and admittance control [6], [11], [12] absorb interaction through compliant tracking deflection. The interaction layer proposed here differs in that it estimates the equivalent interaction acceleration and predicts its near-future effect, so a persistent interaction can be cancelled without a permanent tracking offset (Section VI).
 
-The affine solution of a strictly regular fixed-active-set QP and its critical regions are established results in multiparametric programming and explicit MPC [18], [19]. Differentiable-optimization work likewise obtains local derivatives through KKT systems [20], [21]. Building on these structures, this paper exposes the current inverse-dynamics QP's residual-command sensitivity as a capability query, carries its primal and dual critical-region conditions into the predictor constraints, and continues the resulting piecewise-affine map along diagnostic coordinate rays.
+Full-order nonlinear MPC represents richer coupled dynamics at higher computational cost, and learning-based policies can provide strong empirical terrain robustness at the cost of model transparency and explicit constraint handling. Across these lines, existing locomotion controllers improve locomotion primarily by replanning motion, adapting contact forces, or increasing model fidelity. Our objective is orthogonal: to expose *interaction itself* as the predictive state on a fixed, robot-independent model, and to insert this representation between an existing planner and an existing whole-body controller without replacing either.
 
-Feasible wrench sets and static-equilibrium tests already characterize how contact geometry and friction limit what a legged robot can support [22], [23]. Those methods address related physical capability questions, commonly in wrench or contact-force coordinates. The present query complements them with a local, reference- and QP-weight-dependent set expressed directly in the residual-acceleration coordinates of the two canonical ports.
-
-Learning-based pipelines (reinforcement-learning policies, demonstration retargeting) increasingly *generate* whole-body references, but a kinematic reference is not guaranteed executable under real contact forces and actuator limits; it still needs a local, model-based layer for constraints and reactive compliance. This framework is exactly that layer, whether the reference is hand-authored or learned.
-
-Closest is unified whole-body MPC for locomotion and manipulation [10], which optimizes a single predictive model; we differ in the prediction–realization split, predicting only the two normalized interaction dynamics while the full contact-constrained dynamics act at the current sample as a feasibility projection. The normalized model, offset-free regulation, and impedance interpretation belong to [1]; the centroidal model [8], [17], whole-body inverse dynamics [9], and the integrating-disturbance observer [16] are prior tools. The contribution is their floating-base integration, a QP-based authority query with ray continuation, and its torque-level evaluation on a Unitree G1 in MuJoCo [15].
+Offset-free tracking through an augmented constant-disturbance observer is a classical tool for rejecting persistent matched disturbances [16]. The normalized integrator interaction model, its offset-free regulation, and its impedance interpretation for fixed-base contact tasks were developed in [1]. This paper carries that construction onto a floating base during locomotion: the disturbance now aggregates terrain, contact-timing, realization, and model residuals in selected body-task coordinates, and it is evaluated against nominal-MPC and impedance baselines on uneven ground. The centroidal model [8], [17], whole-body inverse dynamics [9], and the integrating-disturbance observer [16] are prior tools; the contribution is their combination into a fixed-model interaction predictor for precise uneven-ground body tracking, with an honest four-controller evaluation on a Unitree G1 in MuJoCo [15].
 
 ---
 
-## III. Floating-Base Interaction Dynamics
+## III. Locomotion Interaction Dynamics
 
-Let
+The floating-base dynamics are
 
 $$
 q=[q_b^\top,q_j^\top]^\top,\qquad
-M(q)\ddot q+h(q,\dot q)=S^\top\tau+J_c^\top\lambda+J_t^\top F_h^{\rm ext},
+M(q)\ddot q+h(q,\dot q)=S^\top\tau+J_c^\top\lambda+w_{\rm ext},
 \tag{2}
 $$
 
-where $q_b$ is the floating-base coordinate, $q_j$ contains actuated joints, $\lambda$ stacks contact wrenches, and $F_h^{\rm ext}\in\mathbb R^3$ is the *actual* external translational task force applied through $J_t^\top$. The controller may use a separate feedforward estimate $\widehat F_h^{\rm ff}$ defined in Section VII. Rigid active contacts satisfy
+with rigid active contacts
 
 $$
-J_c\ddot q+\dot J_c\dot q=0.
+J_c\ddot q+\dot J_c\dot q=0,
 \tag{3}
 $$
 
-The controller uses two controlled ports. The body port is defined by CoM position and body-orientation errors — the orientation channel regulated in centroidal angular-momentum coordinates (Section IV), with a desired attitude entering only through an outer loop — and the task port is defined by Cartesian end-effector tracking error. The active contact mode $\rho$ changes the contact Jacobian and feasible wrench set. Following [1], it does not change the normalized prediction pair used below. This invariance is the organizing idea of the paper, which we state once and then use throughout.
+where $q_b$ is the floating base, $q_j$ the actuated joints, $\lambda$ stacks contact wrenches, and $w_{\rm ext}$ collects external interaction forces. A motion planner supplies nominal body, swing-foot, and contact-schedule references; a high-rate whole-body controller (Section VII) realizes task requests subject to (2)–(3) and the physical limits. The interaction layer sits between them and modifies neither the plan nor the realizer.
 
-**Definition 1 (interaction-dynamics representation, under exact feedforward normalization).** An *interaction-dynamics representation* of a controlled port consists of: (i) a canonical requested model $\ddot e=u+d$ whose exact-ZOH state-transition pair $(A,B)$ is independent of the robot's mechanics; (ii) a realization-informed admissible set $\widehat{\mathcal U}_k$ supplied at every MPC update from the current robot state, reference feedforward, contact mode, and physical constraints; and (iii) an instantaneous recovery map that realizes the selected command and reports the residual $r=\ddot e^{\rm real}-(u+d)$. The hat denotes the current, active-set-dependent authority query. Robot mechanics therefore do not enter $(A,B)$, but they do enter the input geometry $\widehat{\mathcal U}_k$ and recovery map.
+Let $y$ collect the selected locomotion-task coordinates — here CoM position and body roll/pitch — and let $e=y-y_d$ be their tracking error against the planned reference.
 
-The qualifier is essential, and we make its hypotheses explicit.
+**Assumption 1 (task-acceleration normalization).** On the operating set the selected task has an invertible, well-conditioned interaction inertia $M_p(q,\rho)$ and constrained dynamics $M_p\ddot y+\mu_p=F^{\rm act}+F^{\rm ext}$. The realizer's nominal feedforward cancels the modeled bias and injects the desired task acceleration plus a correction $v$, $F^{\rm act}=\mu_p+M_p(\ddot y_d+v)+\delta$, where $\delta$ is the unrealized part of the request and $F^{\rm ext}$ the external interaction wrench.
 
-**Assumption 1 (exact feedforward normalization).** A controlled port has physical coordinate $x$ with tracking error $e = x - x_d$, and constrained dynamics $M_p(q,\rho)\ddot x + \mu_p(q,\dot q,\rho) = F_p^{\rm act} + F_p^{\rm ext}$, where the *interaction inertia* $M_p$ is invertible and well-conditioned on the operating set. The controller may use a feedforward estimate $\widehat F_p^{\rm ff}$ of the physical external load. The commanded actuation cancels the bias and injects the desired-trajectory plus residual acceleration, $F_p^{\rm act} = \mu_p + M_p(\ddot x_d + u)-\widehat F_p^{\rm ff}+\delta$, and the recovery map $u \mapsto F_p^{\rm act}$ is affine on each active-constraint cell.
-
-**Theorem 1 (canonical second-order-port invariance).** Under Assumption 1 for a **second-order** port, the realized model is $\ddot e=u+d+r$, with residual-acceleration input $u$, interaction disturbance $d=M_p^{-1}(F_p^{\rm ext}-\widehat F_p^{\rm ff})$, and pure actuation realization residual $r=M_p^{-1}\delta$. The exact-ZOH pair $(A,B)$ of the requested double-integrator chain is independent of $M_p$, $\mu_p$, and contact mode $\rho$. These quantities may change the admissible input set $\widehat{\mathcal U}_k$ and recovery map at every update, but they do not change the canonical state-transition matrices. Hence a contact transition is constraint switching, not dynamics switching, in the requested coordinates.
-
-*Proof sketch.* Substituting the feedforward of Assumption 1 into the constrained dynamics cancels $\mu_p$, leaving $M_p\ddot x = M_p(\ddot x_d + u) + F_p^{\rm ext}-\widehat F_p^{\rm ff}+\delta$; subtracting $M_p\ddot x_d$ and left-multiplying by $M_p^{-1}$ gives $\ddot e = \ddot x - \ddot x_d = u + d + r$. The map from $u$ to $\ddot e$ is the identity, so the sampled predictor is the integrator ZOH pair, which contains no entry of $M_p$, $\mu_p$, or $\rho$. $\square$
-
-**Remark (dynamics-invariant does not mean physics-blind).** Under actuation redundancy the recovery map is generally non-unique: different QP weightings, task priorities, and contact-force allocations produce different local authority sets and residuals, while sharing the same $(A,B)$. The invariant object is the requested dynamics, not the available control authority. Upstream planners may reuse the canonical transition pair, but they must accept the current admissible geometry supplied by the robot-specific realizer.
-
-Intuitively, the representation behaves like a stable software interface with a capability query. The transition contract $\ddot e=u+d$ does not change across robots or contacts, but the realizer reports which $u$ values it can currently honor. As shown in Fig. 2, state/reference/contact data produce $\widehat{\mathcal U}_k$, the constrained predictor selects $u\in\widehat{\mathcal U}_k$, the realizer executes it, the residual $r$ closes the realization account, and the Kalman observer estimates $d$. Different robots therefore share one transition interface while exposing different current authority.
-
-![Fig. 2. Prediction–realization interface.](figures/prediction_realization_concept.png)
-
-**Fig. 2.** Prediction–realization interface.
-
----
-
-## IV. Body Interaction Port
-
-### A. Centroidal Normalization
-
-Let $c$ be the CoM, $m$ the robot mass, $f_i$ the force at active contact $i$, and $g$ the signed gravitational-acceleration vector (so $mg$ is the weight). With lumped disturbance $w_c$, including the physical external hand-force contribution and unmodeled loads,
+**Theorem 1 (contact-mode invariance of the requested model).** Let a controlled task have error coordinate $e$ of relative degree $r$, and let $\mathcal M$ be a set of contact modes for which Assumption 1 holds with the *same* requested coordinate. Then for every mode $\rho\in\mathcal M$ the realized error obeys the canonical model (1),
 
 $$
-m\ddot c=\sum_{i\in\mathcal C_\rho}f_i+mg+w_c.
+\ddot e=v+d_{\rm eff},\qquad
+d_{\rm eff}=d_{\rm int}+d_{\rm real}+d_{\rm mod},
 \tag{4}
 $$
 
-For $e_c=c-c_d$, define the desired resultant
+with interaction effect $d_{\rm int}=M_p^{-1}F^{\rm ext}$, realization effect $d_{\rm real}=M_p^{-1}\delta$, and model residual $d_{\rm mod}$; and its exact zero-order-hold transition pair is the **same** matrix pair $(A_d,B_d)$ for every $\rho\in\mathcal M$ — the ZOH of the order-$r$ integrator chain, a function of the sample period $T$ and $r$ **alone**. Consequently the robot mechanics $M_p(q,\rho),\mu_p$, the contact geometry, and the environment enter only $d_{\rm eff}$ and the admissible-command set, never $(A_d,B_d)$: a contact switch $\rho\to\rho'$ changes $(M_p,\mu_p,d_{\rm eff},\widehat{\mathcal U})$ but leaves the prediction matrices invariant.
+
+*Proof.* Substituting the feedforward $F^{\rm act}=\mu_p+M_p(\ddot y_d+v)+\delta$ into the constrained dynamics $M_p\ddot y+\mu_p=F^{\rm act}+F^{\rm ext}$ cancels $\mu_p$, and left-multiplying by $M_p^{-1}$ gives $\ddot e=\ddot y-\ddot y_d=v+M_p^{-1}(F^{\rm ext}+\delta)=v+d_{\rm eff}$. The input-to-error map $v\mapsto\ddot e$ is therefore the identity **in every mode $\rho\in\mathcal M$**, independent of $M_p$, $\mu_p$, and $\rho$. Its exact-ZOH sampling is the order-$r$ integrator pair, whose entries are polynomials in $T$ only (for $r=2$, $A_d=\big[\begin{smallmatrix}I&TI\\0&I\end{smallmatrix}\big]$, $B_d=\big[\begin{smallmatrix}\frac12T^2I\\TI\end{smallmatrix}\big]$). No mode-dependent quantity can appear in $(A_d,B_d)$ because none appears in the map it discretizes; every such quantity is absorbed, *by construction*, into $F^{\rm act}$ — hence into the recovery map, the admissible set, and $d_{\rm eff}$. $\square$
+
+**Remark (the decomposition is falsifiable, not vacuous).** Isolating all robot and environment dependence in $d_{\rm eff}$ is a modeling *choice*, and it would be empty if $d_{\rm eff}$ could absorb any effect for free. It cannot: the port is regulated without steady-state error only when the cancelling request $v=-d_{\rm eff}$ is admissible and realizable by the constrained realizer (Sections VII and IX). When it is not — a force beyond the command authority, or a drop that saturates the realizer — the effect is not hidden in $d_{\rm eff}$ but surfaces as an un-rejected residual or a loss of balance. The claim is therefore testable, and Section X delineates exactly where it holds: a $30$ N sustained force within the command authority is rejected to a $4$ mm steady error, a $70$ N force exceeds that authority and is not (Section X-H), and a $40$ mm step-down saturates the realizer and destabilizes the controller (Section X-I). Invariance of $(A_d,B_d)$ buys a fixed predictor; it does not buy unconditional rejection.
+
+This is the organizing idea of the paper: robot and environment dependence is isolated in the estimated disturbance $d_{\rm eff}$, the task constraints, and the high-rate realization map, while the predictor keeps one fixed model across configuration and contact phase. The estimator (Section V) need not separate $d_{\rm int}$, $d_{\rm real}$, and $d_{\rm mod}$ to control their sum, although measured contact force gives an interpretable component. Figure 2 places this interaction-prediction block between the planner and the realizer.
+
+![Fig. 2. Interaction prediction with high-rate realization.](figures/prediction_realization_concept.png)
+
+**Fig. 2.** The interaction-prediction layer sits between the motion planner and the whole-body realizer, estimating $d_{\rm eff}$ and choosing the task-acceleration correction $v$ on the fixed model (4).
+
+---
+
+## IV. Canonical Task Model and Normalization
+
+Two physical arguments reduce the selected body-task coordinates to a fixed double integrator with a disturbance input.
+
+*Center of mass.* With CoM $c$, mass $m$, active-contact forces $f_i$, and signed gravitational-acceleration vector $g$,
 
 $$
-F_c^{\rm des}=m(\ddot c_d-g)+m u_c.
+m\ddot c=\sum_{i\in\mathcal C_\rho}f_i+mg+w_c ,
 \tag{5}
 $$
 
-When the recovered contact forces satisfy $\sum_i f_i=F_c^{\rm des}-\widehat F_h^{\rm ff}$,
+where $w_c$ lumps the external and unmodeled load. For $e_c=c-c_d$ the planner-consistent desired resultant is $F_c^{\rm des}=m(\ddot c_d-g)+mv_c$; when the realized contact forces satisfy $\sum_i f_i=F_c^{\rm des}-\delta_c$,
 
 $$
-\ddot e_c=u_c+d_c,\qquad d_c=m^{-1}(w_c-\widehat F_h^{\rm ff}).
+\ddot e_c=v_c+d_c,\qquad
+d_c=m^{-1}w_c+m^{-1}\delta_c ,
 \tag{6}
 $$
 
-The rotational channel is expressed directly in centroidal **angular-momentum** coordinates, which avoids identifying the locked-inertia angular velocity with a rigid-body attitude rate. Let $k_G=A_G(q)\dot q$ be the centroidal angular momentum, with $A_G$ the angular block of the centroidal momentum matrix, and let $M_c$ be the net contact moment about the CoM. Then
+so the CoM error is a double integrator whose disturbance splits into an interaction part $m^{-1}w_c$ and a realization part $m^{-1}\delta_c$, exactly as in (4).
+
+*Roll and pitch.* The body orientation error is regulated as a double integrator in roll/pitch with the same disturbance structure, the effective rotational inertia folded into $M_p$ and any moment mismatch absorbed into $d_{\rm eff}$. Consistent with the evaluation, we treat roll/pitch as simulated body-task coordinates and do not interpret them as a hardware centroidal-angular-momentum measurement.
+
+Stacking the selected coordinates and holding $v$ and $d_{\rm eff}$ over each interval, the exact-ZOH model at period $T$ is
 
 $$
-\dot k_G=M_c+w_\theta,
+x_{k+1}=A_dx_k+B_d\big(v_k+d_{{\rm eff},k}\big),\qquad
+x=[e^\top,\dot e^\top]^\top,
 \tag{7}
 $$
 
-where $w_\theta$ lumps external and unmodeled moments. For the angular-momentum error $e_h=k_G-k_{G,d}$, define the desired net moment
-
 $$
-M_c^{\rm des}=\dot k_{G,d}+u_\theta.
+A_d=\begin{bmatrix}I&TI\\0&I\end{bmatrix},\qquad
+B_d=\begin{bmatrix}\tfrac12T^2I\\TI\end{bmatrix}.
 \tag{8}
 $$
 
-When the recovered contacts realize $M_c=M_c^{\rm des}-\widehat M_{G,h}^{\rm ff}$,
-
-$$
-\dot e_h=u_\theta+d_\theta,\qquad d_\theta=w_\theta-\widehat M_{G,h}^{\rm ff},
-\tag{9}
-$$
-
-a **first-order** integrator that is exact under exact moment recovery, with no locked-inertia-to-attitude approximation. A desired attitude, when required, enters through the reference $k_{G,d}$ via an outer regulator (e.g. $k_{G,d}=-K_\theta\,\log(RR_d^\top)^\vee$), whose local validity is a property of that loop, not of the port. The two body channels thus differ in order — second-order on CoM error, first-order on angular-momentum error.
-
-Neither (6) nor (9) is the true plant: the recovered force and moment are realized only up to a **realization residual** (Section VI), kept explicit rather than folded into $d$. Writing $r_b=[r_c^\top,r_h^\top]^\top$, the realized body port obeys
-
-$$
-\ddot e_c=u_c+d_c+r_c,\qquad
-\dot e_h=u_\theta+d_\theta+r_h,
-\tag{6$'$}
-$$
-
-with $r_b=0$ exactly when the requested centroidal wrench and moment are feasibly recovered. Stacking the second-order CoM channel and the first-order angular-momentum channel,
-
-$$
-x_b=[e_c^\top,\dot e_c^\top,e_h^\top]^\top,\quad
-u_b=[u_c^\top,u_\theta^\top]^\top,\quad
-d_b=[d_c^\top,d_\theta^\top]^\top,
-$$
-
-the exact-ZOH construction of [1] at period $T_b$ (inputs $u_b,d_b,r_b$ held over each interval) gives
-
-$$
-x_{b,k+1}=A_bx_{b,k}+B_b(u_{b,k}+d_{b,k}+r_{b,k}),
-\tag{10}
-$$
-
-$$
-A_b=
-\begin{bmatrix}I_3&T_bI_3&0\\0&I_3&0\\0&0&I_3\end{bmatrix},
-\qquad
-B_b=
-\begin{bmatrix}
-\tfrac12T_b^2I_3&0\\
-T_bI_3&0\\
-0&T_bI_3
-\end{bmatrix}.
-\tag{11}
-$$
-
-The pair $(A_b,B_b)$ is constant; mass, centroidal inertia, contact locations, and contact mode appear only in wrench recovery and constraints.
-
-**Corollary 1 (body-port representation).** The translational CoM channel and the task port are second-order ports, so Theorem 1 applies to them with $M_p=mI_3$ and $M_p=\Lambda_t$, respectively. The body port additionally contains the distinct first-order centroidal-angular-momentum channel $\dot e_h=u_\theta+d_\theta+r_h$. Its exact-ZOH transition is the lower block of (11), which is likewise independent of contact mode in the requested coordinates, but it is **not** an instance of Theorem 1. Mass, centroidal inertia, contact locations, friction, and center-of-pressure limits enter the recovery map and feasible input set, not $(A_b,B_b)$. The realized body port equals the requested model up to the realization residual $r_b$ of Section VI and coincides with it when $r_b=0$.
-
-**Proof.** Substituting (5) into (4) gives (6) and (8) into (7) gives (9); stacking yields a block-diagonal generator (double integrator $\oplus$ first-order integrator) whose exact ZOH is (11). The quantities $m,A_G,p_i,\rho$ enter only the wrench recovery and recovery constraint (12)–(14), and the requested-versus-recovered gap is the residual $r_b$ of Section VI. $\square$
-
-### B. Contact-Wrench Recovery and MPC
-
-For stacked contact forces $f=[f_1^\top,\ldots,f_{n_c}^\top]^\top$, define
-
-$$
-\mathcal G_\rho(c,p_i)f=
-\begin{bmatrix}
-\sum_i f_i\\
-\sum_i(p_i-c)\times f_i
-\end{bmatrix}.
-\tag{12}
-$$
-
-The nominal centroidal wrench is
-
-$$
-W_b^{\rm nom}(u_b)=
-\begin{bmatrix}
-m(\ddot c_d-g)+mu_c\\
-\dot k_{G,d}+u_\theta
-\end{bmatrix}.
-\tag{13}
-$$
-
-When the controller has an external-wrench feedforward estimate, its effective contact reference is
-
-$$
-W_{b,\mathrm{con}}^{\rm des}(u_b)
-=W_b^{\rm nom}(u_b)-\widehat W_{G,h}^{\rm ff}
-\qquad (13b)
-$$
-
-otherwise $\widehat W_{G,h}^{\rm ff}=0$. Section VII defines the physical wrench and its controller-used estimate. Recovery enforces
-
-$$
-\mathcal G_\rho f=W_{b,\mathrm{con}}^{\rm des}(u_b)+s_W,
-\tag{14}
-$$
-
-where $s_W$ is a penalized wrench residual, zero under exact recovery. It maps to the body-port residual of (6$'$): force part $r_c=m^{-1}s_W^{\rm (force)}$ [m/s$^2$], matching the second-order CoM channel; moment part $r_h=s_W^{\rm (moment)}$ [N$\cdot$m], matching the *first-order* angular-momentum channel, whose native units are torque (Eq. 7–9), not angular acceleration — so no inertia rescaling of $r_h$ is needed or correct here. Under a scheduled contact sequence $\mathcal G_{\rho_j}$ is re-formed per mode while $(A_b,B_b)$ stay unchanged.
-
-Under the prediction–realization separation the body MPC predicts only the canonical state transition; it does not duplicate $M$, $J_c$, contact forces, or joint torques across the horizon. It is nevertheless constrained by the current physical capability, and that constraint is obtained from the whole-body QP the realizer is *already solving* — not from a second optimization.
-
-**The solved form of the realizer.** Eliminating the slacks $s_W,s_t^{\rm QP}$ of (22) against their quadratic penalties turns the realizer into the weighted problem actually solved,
-
-$$
-\min_{z}\ \tfrac12 z^\top P z+\big(q_0+Q_u\,u\big)^\top z
-\quad\text{s.t.}\quad
-Ez=e,\qquad Cz\le c,
-\tag{14b}
-$$
-
-with $z=[\ddot q^\top,\tau^\top,\lambda^\top]^\top$, $E z=e$ the rigid-body dynamics and rigid-contact rows, and $Cz\le c$ the actuator bounds, friction pyramid, unilateral-force and one-step joint limits — all of which remain **hard**. The stacked residual command $u=[u_b^\top,u_t^\top]^\top$ enters (14b) only through the *linear* term, via the CoM-acceleration, centroidal-wrench and end-effector-acceleration targets; the Hessian $P$ does not depend on $u$. This is the structural fact the rest of the section rests on, and it is a property of the eliminated form (14b), not of the slack form (22).
-
-**Authority from one local KKT solve.** Let $\mathcal A_k$ index the rows of $Cz\le c$ active at the current solution $z_0=z_k^\star(u_0)$ — identified from the solver's dual variables, a row being active when it sits at its bound and its multiplier exceeds a threshold $\varepsilon_\lambda$. Define $\widetilde C_{\mathcal A_k}=[E^\top,C_{\mathcal A_k}^\top]^\top$, where the equality rows are always active. On the *critical region* where $\mathcal A_k$ is unchanged, the solution and active multipliers are affine in the command increment $\delta u=u-u_0$. Their sensitivities solve
-
-$$
-\begin{bmatrix}P & \widetilde C_{\mathcal A_k}^{\!\top}\\ \widetilde C_{\mathcal A_k} & 0\end{bmatrix}
-\begin{bmatrix}K\\ L\end{bmatrix}
-=
-\begin{bmatrix}-\,Q_u\\ 0\end{bmatrix},
-\qquad
-z_k^\star(u)=z_0+K\delta u,
-\qquad
-\nu_{\mathcal A_k}(u)=\nu_{\mathcal A_k,0}+L_\nu\delta u .
-\tag{14c}
-$$
-
-The nominal whole-body QP supplies $z_0$ — hence the feedforward $\tau_{\rm ff},\lambda_{\rm ff}$ — and (14c) supplies only the sensitivity $K$; partitioning it gives the input maps $K_\tau,K_\lambda$, so that
-
-$$
-\tau=\tau_0+K_\tau\delta u,\qquad
-\lambda=\lambda_0+K_\lambda\delta u .
-\tag{14d}
-$$
-
-The fixed-active-set critical region is explicitly the intersection
-
-$$
-C_{\overline{\mathcal A}_k}(z_0+K\delta u)\le c_{\overline{\mathcal A}_k},
-\qquad
-\nu_{\mathcal A_k,0}+L_\nu\delta u\ge0.
-\qquad (14e)
-$$
-
-The sign condition in (14e) applies only to multipliers of active **inequality** rows; equality multipliers have no sign constraint. **Mapped constraints.** The implementation maps (14e) through (14d), then adds selected torque, friction, normal-force margin, and realization-tolerance rows. The tolerance $\epsilon_r$ is a configuration-dependent design parameter, not derived from first principles; the evaluation of Section X uses $\epsilon_{r,b}=0.35$ m/s$^2$ for the body port and $\epsilon_{r,t}=0.50$ m/s$^2$ for the task port. It translates the inequalities from $\delta u$ back to the absolute residual command $u$ before passing them to the MPC:
-
-$$
-\widehat{\mathcal U}_k=\{u:\ H_k u\le h_k\}.
-\qquad (14f)
-$$
-
-The query uses a validation-triggered fallback policy. When the nominal point exceeds a realization tolerance, or a critical-region or configured physical-margin row is negative, the snapshot is rejected rather than zero-clamped and the predictor receives a fixed fallback box. That fallback limits command magnitude, but does not itself certify the realization tolerance at the rejected snapshot; the whole-body QP remains the layer that enforces modeled hard physical constraints. Within an accepted critical region, (14c) gives the exact affine QP response; ray continuation extends this description across adjacent regions.
-
-**Beyond one cell: piecewise-affine continuation.** The published set (14f) is, in essence, a local critical-region model of the active set $\mathcal A_k$. But an active-set change is not necessarily a failure of realization: when a contact force saturates, another can take over and the request can still be met. The residual-tolerance-feasible set can therefore span several critical regions, and (14f) can refuse much of it.
-
-The remedy uses no new machinery. Along a ray $u=t\,e$, the solution is affine until one of exactly two events occurs: an inactive row of $Cz\le c$ reaches its bound (a constraint **enters** $\mathcal A_k$), or an active row's multiplier reaches zero (a constraint **leaves**). Both events are available in closed form from a local KKT system, whose primal block gives $\mathrm dz/\mathrm du$ and whose *dual* block gives $\mathrm d\nu/\mathrm du$; the first event along the ray is the smaller of the two breakpoints. At that point $\mathcal A_k$ is updated, a new KKT system is solved, and the walk continues. Under Proposition 2's assumptions, the tolerance crossing is exact *on that ray*. The walk costs one local KKT solve per region traversed and **no additional whole-body QP solves**.
-
-The single-cell set is refreshed inside the $200$ Hz optimization node at a cost of $\approx0.7$ ms in the static mapping study, against a substantially slower offline repeated-QP numerical reference (Section X-E). In the prototype, the KKT system is assembled and solved after the OSQP result. For split body/task MPCs a **body-priority allocation** is used: the body slice is computed with the task request held at nominal, and the task port then receives the remaining local capacity $H_tu_t\le h_t-H_{tb}u_b^\star$ from a joint sensitivity.
-
-Authority may be refreshed at every update; the set is frozen over the horizon, so the transition matrices $(A_b,B_b)$ and the predictor's condensed **cost** Hessian $\Psi$ (the quadratic form of (15), which depends only on $A_b,B_b,Q_b,R_b$ and the horizon, never on the robot) stay constant while only the constraint rows change. The invariant *cost* matrix $\Psi$ must not be confused with the *constraint* matrix $H_k$, which is exactly what moves. For a scheduled contact switch a transition window uses $\widehat{\mathcal U}_{\rm tr}=\widehat{\mathcal U}_{\rm DS}\cap\widehat{\mathcal U}_{\rm SS}$ to retain mutually compatible requests.
-
-The body MPC is therefore
-
-$$
-\begin{aligned}
-\min_{U_b}\quad&
-\sum_{j=0}^{N_b-1}
-\left(
-\|x_{b,j}\|_{Q_b}^2+
-\|u_{b,j}+\hat d_{b,k}\|_{R_b}^2
-\right)
-+\|x_{b,N_b}\|_{S_b}^2\\
-\text{s.t.}\quad&
-x_{b,j+1}=A_bx_{b,j}+B_b(u_{b,j}+\hat d_{b,k}),\\
-&u_{b,j}\in\widehat{\mathcal U}_{b,k}.
-\end{aligned}
-\tag{15}
-$$
-
-No robot-specific quantity enters the state transition or cost; current mechanics enter only through $\widehat{\mathcal U}_{b,k}$ and through recovery and residual after the first command. Contact transitions thus schedule admissible geometry while leaving $(A_b,B_b)$ unchanged.
-
-**Why the realization residual does not appear in (15).** The realized plants (10), (20) carry $r$; the predictors do not, and this is deliberate. The residual is not an exogenous signal but a function of the decision variable, $r=r(u)$, zero inside the realizable set and growing outside it; the constraint $u_{b,j}\in\widehat{\mathcal U}_{b,k}$ **is** the predictor's representation of it, so carrying an additive $r$ term as well would double-count the same physics — and the realizer reports $r$ only after execution in any case. Whatever the frozen local set fails to prevent splits in two: its matched, slowly-varying part is indistinguishable from a disturbance, so the observer of Section VIII converges to an **effective disturbance** $d^{\rm eff}=d+r_{\rm matched}$ and cancels it; the unmatched part must be independently bounded before the ISS consequence of Section IX applies. Thus (15) predicts the *requested* dynamics and confines physical infeasibility to the constraint set and the logged residual.
-
-The input-centered penalty is essential: for a constant estimated disturbance the cancelling equilibrium is $u_b=-\hat d_b$, so penalizing $\|u_b+\hat d_b\|$ rather than $\|u_b\|$ avoids reintroducing a steady-state offset.
+The pair $(A_d,B_d)$ is the fixed double integrator; mass, inertia, contact geometry, and contact phase enter only the recovery of $F_c^{\rm des}$ and the realizer's feasible set, never $(A_d,B_d)$. Under a scheduled contact sequence the recovery map is re-formed per mode while $(A_d,B_d)$ stay unchanged, and the recovery gap is logged as the realization residual $d_{\rm real}$ of Section VII.
 
 ---
 
-## V. Task Interaction Port
+## V. Interaction Estimation and Prediction
 
-The task port is a **translational three-dimensional** end-effector port, not a fixed-base arm model. Thus $J_t\in\mathbb R^{3\times n_v}$ and $F_h^{\rm ext}\in\mathbb R^3$ is an external hand **force**; a free hand moment, when present, belongs only to the six-dimensional centroidal feedforward of Section VII. In (2), $M(q)$ is the full floating-base mass matrix, including the unactuated base and all actuated joints, and $J_{c,\rho}$ is the active whole-body contact Jacobian. Using the contact-consistent inverse associated with mode $\rho$ (after reducing $J_{c,\rho}$ to independent rows; otherwise the inverse denotes a regularized generalized inverse),
-
-$$
-\bar M_\rho^{-1}
-=M^{-1}-M^{-1}J_{c,\rho}^\top
-(J_{c,\rho}M^{-1}J_{c,\rho}^\top)^{-1}
-J_{c,\rho}M^{-1},
-\tag{16}
-$$
-
-the task inertia is
-
-$$
-\Lambda_t=(J_t\bar M_\rho^{-1}J_t^\top)^{-1}.
-\tag{17}
-$$
-
-Thus $\Lambda_t$ already contains the floating-base, stance-contact, and arm–body inertial coupling of the full constrained system, without assuming the arm is isolated from the base. A known *external* hand wrench can be included in the body reference as described in Section VII; external-force mismatch and unmodeled coupling enter $d_{h,t}$ and the pure actuation residual of (18b).
-
-Projecting the constrained rigid-body dynamics into the task coordinates gives the contact-consistent task-space dynamics
-
-$$
-\Lambda_t\,\ddot x_t+\mu_{t,\rho}=F_t^{\rm act}+F_h^{\rm ext}+r_{t,\rm dyn},
-\tag{17b}
-$$
-
-where $\mu_{t,\rho}$ is the task-space bias obtained by contact-consistent projection of the full constrained rigid-body dynamics, $F_t^{\rm act}$ is the task-space wrench *actually* produced by the joint torques, $F_h^{\rm ext}$ is the physical external task force, and $r_{t,\rm dyn}$ lumps contact-consistency and higher-priority null-space couplings. For $e_t=x_t-x_{t,d}$, the controller **requests** the actuator wrench
-
-$$
-F_t^{\rm cmd}=F_{t,\rm ff}+\Lambda_tu_t-\widehat F_h^{\rm ff},\qquad
-F_{t,\rm ff}=\Lambda_t\ddot x_{t,d}+\mu_{t,\rho},
-\tag{18}
-$$
-
-equivalently the acceleration request $\ddot x_t^{\rm req}=\ddot x_{t,d}+u_t$. Define the external-force modeling mismatch and the **pure actuation realization residual** separately:
-
-$$
-\widetilde F_h=F_h^{\rm ext}-\widehat F_h^{\rm ff},\qquad
-d_{h,t}=\Lambda_t^{-1}(\widetilde F_h+r_{t,\rm dyn}),
-\qquad
-r_t=\Lambda_t^{-1}(F_t^{\rm act}-F_t^{\rm cmd}).
-\tag{18b}
-$$
-
-Substituting (18) into (17b) gives the realized task port
-
-$$
-\ddot e_t=u_t+d_{h,t}+r_t.
-\tag{19}
-$$
-
-Here $d_{h,t}$ is the observer-cancelled external/model disturbance and $r_t$ is the pure actuation realization residual; they are kept distinct, as for the body port. Exactly as for the body port (10), the *realized* task port discretizes by exact ZOH as
-
-$$
-x_{t,k+1}=A_tx_{t,k}+B_t(u_{t,k}+d_{h,t,k}+r_{t,k}),
-\tag{20}
-$$
-
-with
-
-$$
-A_t=\begin{bmatrix}I_3&T_tI_3\\0&I_3\end{bmatrix},
-\qquad
-B_t=\begin{bmatrix}\tfrac12T_t^2I_3\\T_tI_3\end{bmatrix},
-\tag{20b}
-$$
-
-the canonical three-dimensional exact-ZOH double-integrator pair.
-
-By Corollary 1 the task port is the same instance of Theorem 1 with $M_p=\Lambda_t$. For a fixed active contact mode with $J_{c,\rho}M^{-1}J_{c,\rho}^\top$ and $J_t\bar M_\rho^{-1}J_t^\top$ nonsingular on the operating set, the *requested* end-effector port is the canonical model (20) with a constant exact-ZOH pair; configuration and contact mode enter through $\Lambda_t$, the feedforward $\mu_{t,\rho}$, the load estimate $\widehat F_h^{\rm ff}$, and the feasible set, not through $(A_t,B_t)$. Concretely, the constrained inverse (16) gives the contact-consistent inertia $\Lambda_t$ (17), and substituting the commanded force (18) into (17b) gives (19). The QP acceleration-tracking slack in (22) is a model-side optimization quantity; it equals the physical execution mismatch only under explicit model-matching conditions.
-
-Like the body port, the task MPC retains the canonical transition pair and minimizes $\sum_j\!\big(\|x_{t,j}\|_{Q_t}^2+\|u_{t,j}+\hat d_{t,k}\|_{R_t}^2\big)+\|x_{t,N_t}\|_{S_t}^2$. Its constraint is not a fixed end-effector acceleration box. The same joint KKT sensitivity (14c) that produced the body maps also produces the task maps $K_{\tau,t},K_{\lambda,t}$, at no extra solve. Under the body-priority allocation, the body command $u_{b,k}^\star$ is committed first and consumes part of the shared actuator and contact budget; the task port then receives what remains,
-
-$$
-\widehat{\mathcal U}_{t,k}
-=\{u_t:\ H_{t,k}\,u_t\le h_{t,k}-H_{tb,k}\,u_{b,k}^\star\}.
-\tag{21}
-$$
-
-The rows of (21) are the same physical limits mapped through $\tau=\tau_{\rm ff}+K_{\tau,b}u_b^\star+K_{\tau,t}u_t$ and the contact-force map, expressing the authority left after the committed body request. This body-priority allocation makes the task capacity explicit and naturally contracts it near a task singularity or torque boundary; an invalid nominal task snapshot invokes the same conservative fallback policy.
-
----
-
-## VI. Whole-Body Interaction Realizer
-
-The two MPCs output a body request (the effective contact wrench $W_{b,\mathrm{con}}^{\rm des}$, realized by contact forces) and a task request (the end-effector acceleration $\ddot x_{t,d}+u_t^\star$, realized by joint torques). The task is imposed as an acceleration with an exposed QP tracking slack $s_t^{\rm QP}$, while the body request stays a wrench because the unilateral/friction/CoP constraints act on wrenches. This layer predicts no future states — it is an instantaneous projection of both requests onto the generalized accelerations, contact wrenches, and joint torques satisfying the floating-base dynamics and constraints, not a second MPC.
-
-Let $S_j$ select the actuated joint coordinates from $q$, and let $\tau_{\rm ref}$ be a nominal torque used only for regularization, such as the previous command or a gravity-compensating inverse-dynamics torque. With polyhedral friction pyramids, the whole-body interaction realizer is the convex instantaneous inverse-dynamics QP
-
-$$
-\begin{aligned}
-\min_{\ddot q,\tau,\lambda,s_W,s_t^{\rm QP}}\quad&
-\|s_W\|_{W_b}^2
-+\|s_t^{\rm QP}\|_{W_t}^2
-+\|\tau-\tau_{\rm ref}\|_{W_\tau}^2\\
-\text{s.t.}\quad&
-M\ddot q+h=S^\top\tau+J_c^\top\lambda+J_t^\top\widehat F_h^{\rm ff},\\
-&J_c\ddot q+\dot J_c\dot q=0,\\
-&\mathcal G_\rho\lambda=W_{b,\mathrm{con}}^{\rm des}+s_W,\\
-&J_t\ddot q+\dot J_t\dot q=\ddot x_{t,d}+u_t^\star+s_t^{\rm QP},\\
-&\lambda\in\mathcal F_\rho,\quad
-\tau_{\min}\le\tau\le\tau_{\max},\\
-&q_j^+=S_j(q+\Delta t\dot q+\tfrac12\Delta t^2\ddot q),\\
-&q_{j,\min}+\epsilon\le q_j^+\le q_{j,\max}-\epsilon.
-\end{aligned}
-\tag{22}
-$$
-
-The physical plant contains $F_h^{\rm ext}$, while the QP contains only $\widehat F_h^{\rm ff}$. The two exclusive controller modes are defined in Section VII: measured-force feedforward supplies the measured estimate, whereas observer-only rejection sets $\widehat F_h^{\rm ff}=0$ and leaves the actual force in $\widetilde F_h$. The two QP slacks are $s_W=\mathcal G_\rho\lambda-W_{b,\mathrm{con}}^{\rm des}$ (a six-dimensional wrench residual) and $s_t^{\rm QP}=(J_t\ddot q+\dot J_t\dot q)-(\ddot x_{t,d}+u_t^\star)$ (a model-side task-acceleration tracking slack). They are not pure actuation residuals. The physical execution mismatch is instead $\varepsilon_t^{\rm exec}=\ddot x_t^{\rm meas}-\ddot x_t^{\rm req}=d_{h,t}+r_t$, with equality to $s_t^{\rm QP}$ only under model matching. The body wrench slack maps as $r_b=\mathcal D_b s_W$, with $\mathcal D_b=\operatorname{diag}(m^{-1}I_3,I_3)$. The joint-limit row's $\tfrac12\Delta t^2\ddot q$ term makes the one-step check depend on the decision variable.
-
-With a friction-pyramid approximation $\mathcal F_\rho$ is polyhedral and (22) is a convex QP solvable by operator splitting [14]; exact Coulomb cones make it a second-order cone program. Balance can be made hard ($s_W=0$) or soft (large $W_b$), and task tracking is softened through $s_t^{\rm QP}$ when the two requests conflict.
-
-The realizer has two current-sample roles, and it performs **one** QP solve to serve both. Solving (14b) yields the torques applied this sample and the nominal feedforward $z_0=(\ddot q_0,\tau_{\rm ff},\lambda_{\rm ff})$; a KKT sensitivity system (14c), assembled from that solution and its identified active set, then yields the local input maps and the model (14f) published to the predictors. The realizer does not run a second whole-body QP to answer the capability query. Having executed the first stacked request it reports
-
-$$
-u_k^{\rm req},\qquad
-u_k^{\rm real},\qquad
-\varepsilon_k^{\rm exec}=u_k^{\rm real}-u_k^{\rm req},
-\tag{22b}
-$$
-
-together with the nominal torques and wrenches, the friction/CoP/torque/joint margins, and the active-constraint class. Under the normalized port model, $\varepsilon_k^{\rm exec}=d_k+r_k$; it is not the pure actuation residual $r_k$ of (18b). These quantities distinguish three events that must not be conflated: the predictor reaching its admissible boundary, the realizer trading the request through $s_W$ or $s_t^{\rm QP}$, and a final numerical safety clip.
-
-The authority query uses current measured/estimated state and known references. For a scheduled contact transition, the contact plan supplies the candidate mode geometry and the state-dependent query is refreshed at each update. The instantaneous realizer remains the final modeled-constraint layer.
-
----
-
-## VII. Known External-Wrench Feedforward
-
-The body-port model distinguishes the physical external wrench from the value used by the controller. Let $F_h^{\rm ext}$ denote the actual hand force in the plant and define
-
-$$
-\widehat F_h^{\rm ff}=
-\begin{cases}
-F_h^{\rm meas}, & \text{measured-force feedforward mode},\\
-0, & \text{observer-only rejection mode},
-\end{cases}
-\qquad
-\widetilde F_h=F_h^{\rm ext}-\widehat F_h^{\rm ff}.
-\tag{23}
-$$
-
-Thus observer-only rejection does **not** set the physical force to zero; it omits that force from the controller model and lets the observer address $\widetilde F_h$. The corresponding controller-used wrench about the CoM is
-
-$$
-\widehat M_{G,h}^{\rm ff}
-=(x_h-c)\times\widehat F_h^{\rm ff}+\widehat M_h^{\rm ff},
-\qquad
-\widehat W_{G,h}^{\rm ff}=
-\begin{bmatrix}
-\widehat F_h^{\rm ff}\\
-\widehat M_{G,h}^{\rm ff}
-\end{bmatrix}.
-\tag{23a}
-$$
-
-The effective **contact** wrench reference introduced in (13b) is therefore
-
-$$
-W_{b,\mathrm{contacts}}^{\rm des}(u_b)
-=W_b^{\rm nom}(u_b)-\widehat W_{G,h}^{\rm ff}
-=W_{b,\mathrm{con}}^{\rm des}(u_b).
-\tag{23b}
-$$
-
-Thus the contacts supply the wrench required after the controller's modeled hand wrench has acted on the robot. This is reference feedforward, not an additional predictive model and not an authority-query result. The force mismatch $\widetilde F_h$, including all of $F_h^{\rm ext}$ in observer-only mode, remains in the disturbance and residual account of Sections IV, VI, and VIII.
-
-The distinction between external loading and internal motion is essential. A free-space arm motion is generated by joint torques and is already represented by the unified inverse-dynamics QP through its generalized acceleration and associated CoM motion. Equation (23b) therefore corrects only measured or planned *external* hand wrenches, avoiding double counting of internal dynamics. The supplementary material reports a translational known-force sanity check that instantiates this correction.
-
----
-
-## VIII. Disturbance Estimation and Contact-Event Detection
-
-Following the integrating-disturbance principle for offset-free regulation under a persistent matched disturbance [16], and its instantiation in [1], each normalized port model augments its state with a constant disturbance:
+The disturbance $d_{\rm eff}$ is not commanded; it is estimated from what has already become observable. Each task channel augments its state with a random-walk disturbance and is tracked by a steady-state Kalman filter:
 
 $$
 \begin{bmatrix}x_{k+1}\\d_{k+1}\end{bmatrix}
-=
-\begin{bmatrix}A&B\\0&I\end{bmatrix}
+=\begin{bmatrix}A_d&B_d\\0&I\end{bmatrix}
 \begin{bmatrix}x_k\\d_k\end{bmatrix}
-+
-\begin{bmatrix}B\\0\end{bmatrix}u_k
-+
-\begin{bmatrix}0\\I\end{bmatrix}w_k.
-\tag{24}
++\begin{bmatrix}B_d\\0\end{bmatrix}v_k
++\begin{bmatrix}0\\I\end{bmatrix}w_k ,
+\tag{9}
 $$
 
-Here $w_k$ is the disturbance random-walk process noise. The observer receives only the port error. A matched realization residual is therefore indistinguishable from an external disturbance at that port, and the estimated quantity is the **effective** disturbance $d^{\rm eff}=d+r_{\rm matched}$ from Section IV. The observer is not an identifier of the physical disturbance source. Offset-free regulation additionally requires detectability, convergence for a constant effective disturbance, and feasibility of the cancelling request.
+with random-walk process noise $w_k$ and the measured task error as output. The estimate $\hat d_{k|k}$ aggregates the matched interaction, realization, and model effects; the filter is an *effect* estimator, not a source identifier, and measured contact force enters only as an interpretable diagnostic. A matched realization residual is therefore indistinguishable from an external interaction at the same channel and is absorbed into $\hat d_{\rm eff}$.
 
-The feedforward and recovery terms require generalized velocity. A hardware implementation must obtain it from a filtered estimate, such as a low-order filter or observer-based differentiator, rather than raw encoder differences. Its phase lag and noise must be included in the observer and closed-loop robustness evaluation; they are not removed merely by the update rate.
-
-If the assumed contact mode no longer matches the plant, the resulting prediction error can appear in the innovation. We therefore define the normalized innovation statistic
+Over the MPC horizon the residual is propagated as a constant,
 
 $$
-\eta_k=\nu_k^\top S_k^{-1}\nu_k.
-\tag{25}
+\hat d_{k+i|k}=\hat d_{k|k},\qquad i=0,\dots,N-1 .
+\tag{10}
 $$
 
-A detector would declare a candidate mode change only when $\eta_k$ exceeds a calibrated threshold for $n_d$ consecutive samples and the candidate contact is geometrically plausible. This rule is deliberately only a trigger for a contact hypothesis: at the centroidal port, different external wrenches and contact changes can produce indistinguishable aggregate disturbances without additional kinematic or contact information.
-
-The augmented disturbance observer and innovation statistic are evaluated with planned support transitions. The controller updates the QP contact mode from the contact schedule and confirms each transition with authority and kinematic readiness checks. The innovation statistic provides a natural basis for an event-driven extension with contact relaxation and independently measured event timing.
+This is deliberately not a terrain preview: it extrapolates the currently observed mismatch forward rather than forecasting unseen terrain. Section X-D audits this one-step-persistent rollout against the nominal $\hat d=0$ model. The estimator matrices are held fixed across contact events, so a phase change is a change of measured disturbance, not of the estimator model; a persistently large innovation (Section VIII) flags a possible contact-mode mismatch instead.
 
 ---
 
-## IX. Properties of the Floating-Base Extension
+## VI. Constrained Interaction-Dynamics MPC
 
-The normalized predictor, nominal offset-free regulation, and impedance interpretation build on [1]. The floating-base extension introduced here supplies the missing current-state authority query: it extracts a local command-to-realization model from the active-mode whole-body QP without changing the requested port dynamics.
+The correction $v$ is chosen by an offset-free MPC on the fixed model (7):
 
-**Proposition 1 (conditional local affine model).** Fix state, reference, and contact mode, and let $z_0=z_k^\star(u_0)$ solve (14b) with active set $\mathcal A_k$. Let $\delta u=u-u_0$. If the active gradients $C_{\mathcal A_k}$ have full row rank, strict complementarity holds, and $P$ is positive definite on the null space of $C_{\mathcal A_k}$, then there is a critical region about $\delta u=0$ on which $z_k^\star(u_0+\delta u)=z_0+K\delta u$. The KKT system (14c) determines $K$ and the active-multiplier sensitivity. Enforcing primal feasibility of inactive rows and dual-sign feasibility of active inequalities defines that critical region. Adding mapped torque, friction, unilateral-force, and realization-tolerance rows produces the published polyhedron $H_k u\le h_k$ in the absolute command coordinate. Thus, within that same critical region, membership in the mapped set implies the specified componentwise realization tolerance.
+$$
+\begin{aligned}
+\min_{v_0,\dots,v_{N-1}}\quad&
+\sum_{j=0}^{N-1}\Big(\|x_j\|_Q^2+\|v_j+\hat d_k\|_R^2\Big)+\|x_N\|_S^2\\
+\text{s.t.}\quad&
+x_{j+1}=A_dx_j+B_d\big(v_j+\hat d_k\big),\\
+&v_{\min}\le v_j\le v_{\max}.
+\end{aligned}
+\tag{11}
+$$
 
-**Justification.** With a fixed active set, (14b) is an equality-constrained QP whose KKT system is affine in $\delta u$. The stated regularity conditions make that system nonsingular on the relevant subspace. The primal solution, multipliers, and residual are consequently affine until an active-set change. The tolerance rows retain faithful realization as an explicit property alongside the physical constraints enforced by the QP.
+Penalizing $\|v_j+\hat d_k\|$ rather than $\|v_j\|$ is what makes the regulation offset-free: for a constant estimated disturbance the cost-minimizing steady state is $v_\infty=-\hat d_{{\rm eff},\infty}$, so the cancelling correction incurs no penalty and the task error can reach zero without an infinitely stiff task gain. This is the interaction alternative to impedance, which instead accepts a persistent deflection proportional to the interaction. The bounds $[v_{\min},v_{\max}]$ are fixed acceleration limits, not a per-sample capability set; the physical limits are enforced downstream by the realizer, and an infeasible correction appears as a realization residual rather than a predictor constraint violation.
 
-**Proposition 2 (conditional ray continuation).** Consider a ray $u=u_0+t e$. If LICQ and strict complementarity hold on each visited critical region, only finitely many noncoincident active-set breakpoints occur, and the current active set is identified correctly, then continuation reproduces the QP solution and residual exactly along that ray up to the first tolerance crossing. The returned scalar boundary is exact only for $\{t:\lVert r_k(u_0+t e)\rVert_\infty\le\epsilon_r\}$ on that ray.
-
-**Justification.** In each critical region, inactive slack and active multipliers are affine in $t$. The first zero identifies the next boundary; re-solving the KKT system gives the next affine piece. The resulting ray boundaries are packaged as an axis-aligned command model for MPC.
-
-Feasibility of independently computed coordinate-ray boundaries does not imply feasibility of their Cartesian combinations. The resulting axis-aligned box is therefore an empirical command model for the evaluated predictor, not a certified inner approximation of the full local authority set.
-
-**Regulation consequence.** For a fixed mode with a constant, matched effective disturbance $d^{\rm eff}=d+r_{\rm matched}$, a convergent detectable observer, and an authority-feasible cancelling request $-d^{\rm eff}$, the matched realization residual is cancelled together with the physical disturbance. Section X evaluates the corresponding transient task-port response.
-
-For bounded mismatch, if the requested-model closed loop is input-to-state stable as in [1] and $\sup_k\lVert r_k\rVert\le\varepsilon$, the realized error inherits the nominal transient plus an ultimate bound proportional to $\varepsilon$. The local results require well-conditioned port quantities, a feasible nominal QP, an informative state/contact/reference estimate, and the regularity conditions stated above. Section XI discusses high-dimensional coupling and hybrid-transition extensions.
+Only the first correction $v_k^\star$ is applied, and the horizon is re-solved at the next MPC update. Because $(A_d,B_d,Q,R,S)$ never change, the condensed MPC Hessian is constant and (11) is a small fixed-size QP, independent of robot configuration and contact phase.
 
 ---
 
-## X. Multirate Architecture and Evaluation
+## VII. Whole-Body Realization
 
-This section evaluates local authority geometry, continuation relative to a single active-set map, scheduled contact-transition readiness, and a forward-transfer execution trial. All reported runs use the Unitree G1 MuJoCo model and the torque-level QP of Section VI.
-
-### A. Implemented Multirate Architecture
-
-The implementation separates torque holding from model-based optimization:
-
-- **1 kHz servo:** holds the last optimized torque, optionally adds joint impedance, and clips to controller torque limits. It performs no optimization or model update.
-- **200 Hz node:** reads one synchronized state, updates the models and observers, solves the body predictor, allocates residual capacity to the task predictor, solves one active-mode whole-body QP, and publishes torque and the current authority query. Candidate-mode readiness at a scheduled transition is the explicit exception and needs a seed QP.
-- **Decimated continuation:** the tighter ray-continuation query is rate-limited and published as a lower-rate authority update.
-
-The body and task predictors share the same state and model update, with the explicit ordering $u_b(k)\to u_t(k)\to\tau(k)$. This body-priority ordering resolves shared capacity before the 200 Hz QP realizes the combined request.
-
-### B. Authority Query Used in Evaluation
-
-The residual command $u$ enters the whole-body QP only through objective *linear* terms, and its Hessian $P$ of (14b) does not depend on $u$. On the current active-set cell the solution is therefore affine,
+The realizer executes the requested task acceleration $\ddot y_d+v_k^\star$ at the current sample. It is an instantaneous inverse-dynamics/contact QP, not a second predictor. Let $\tau_{\rm ref}$ be a regularization torque (previous command or gravity compensation), $J_y$ the task Jacobian, and $\mathcal F_\rho$ the polyhedral friction set for the active mode:
 
 $$
-z(u)=z_0+K\delta u,\qquad
-\nu_{\rm act}(u)=\nu_{{\rm act},0}+L_\nu\delta u,\qquad
-\begin{bmatrix}P & \widetilde C_{\rm act}^\top\\ \widetilde C_{\rm act} & 0\end{bmatrix}
-\begin{bmatrix}K\\ L\end{bmatrix}
-=\begin{bmatrix}-\,Q_u\\ 0\end{bmatrix},
-\tag{26}
+\begin{aligned}
+\min_{\ddot q,\tau,\lambda,s}\quad&
+\|s_{\rm task}\|_{W_t}^2+\|s_W\|_{W_b}^2+\|\tau-\tau_{\rm ref}\|_{W_\tau}^2\\
+\text{s.t.}\quad&
+M\ddot q+h=S^\top\tau+J_c^\top\lambda,\\
+&J_c\ddot q+\dot J_c\dot q=0,\\
+&J_y\ddot q+\dot J_y\dot q=\ddot y_d+v_k^\star+s_{\rm task},\\
+&\lambda\in\mathcal F_\rho,\quad \tau_{\min}\le\tau\le\tau_{\max},\\
+&q_{j,\min}+\epsilon\le S_j\!\big(q+\Delta t\,\dot q+\tfrac12\Delta t^2\ddot q\big)\le q_{j,\max}-\epsilon .
+\end{aligned}
+\tag{12}
 $$
 
-where $\delta u=u-u_0$ and $\widetilde C_{\rm act}$ stacks equality rows with active inequality rows. The critical region retains inactive-row primal feasibility and $\nu_{{\rm act},0}+L_\nu\delta u\ge0$ for active inequalities; equality multipliers are unconstrained in sign. One local KKT sensitivity solve thus yields $\tau=\tau_{\rm ff}+K_\tau\delta u$ and $\lambda=\lambda_{\rm ff}+K_\lambda\delta u$ after the realizer solve. Substituting these into the limits the realizer already enforces — actuator bounds, friction pyramid, unilateral normal force — gives
+Body and swing-foot objectives are soft, so an unrealizable request produces a measurable task-acceleration slack $s_{\rm task}$ rather than a hard infeasibility. With the measured task acceleration $\ddot y^{\rm meas}$, the realization residual
 
 $$
-H_k u\le h_k .
-\tag{27}
+d_{{\rm real},k}\approx\ddot y^{\rm meas}_k-\big(\ddot y_d+v_k^\star\big)
+\tag{13}
 $$
 
-A negative critical-region margin rejects the snapshot as numerically inconsistent. A negative configured physical-margin row likewise rejects the snapshot rather than being zero-clamped; both cases use the controller's validation-triggered fallback box, which limits command magnitude but does not guarantee the rejected snapshot's realization tolerance. As established in Section IX, (27) is local to the active-set cell. The following experiments therefore compare it against offline repeated-QP numerical queries and always retain the modeled QP as the instantaneous constraint-enforcement layer.
+is finite-differenced and returned to the estimator as the observable realization component of $d_{\rm eff}$. The realizer enforces the modeled multibody, contact, friction, unilateral-force, and torque limits as hard constraints; it is the layer that keeps the executed motion physically admissible regardless of the predictor. With a friction-pyramid approximation (12) is a convex QP solvable by operator splitting [14]; exact Coulomb cones make it a second-order cone program.
 
-### C. Prototype Timing Status
+The realizer runs at the high (simulated $500$ Hz) rate and the MPC at $100$ Hz, and the applied torque is held between realizer updates. Section X-H reports the measured wall-clock cost of this QP, which does not yet meet the simulated schedule.
 
-The feedback implementation uses one whole-body QP per 200 Hz update rather than the repeated-QP numerical reference. In the freshly regenerated five-repeat, $600$-update microbenchmark, the Python node had a $2.39$ ms median, $3.40$ ms p99, $6.51$ ms maximum, and a $0.10\%$ deadline-miss fraction. Thus the prototype normally executes the predictor and whole-body-QP path within the $5$ ms period, but does not demonstrate a hard 200 Hz deadline guarantee. The timing benchmark measures the node path without a continuation update; the whole-body QP is the largest median component ($1.33$ ms), dominated by Python matrix assembly. Continuation costs roughly $11$--$14$ ms and is therefore decimated; compiled assembly and asynchronous publication are direct implementation paths for higher-rate deployment.
+---
 
-### D. Authority Geometry Changes While Requested Dynamics Stay Fixed
+## VIII. Contact-Phase Consistency and Innovation Monitoring
 
-Table I tests the central separation: payload, feedforward, and support mode change the available residual-command authority but not the requested normalized dynamics. The canonical pair $(A,B)$ and condensed predictor cost Hessian $\Psi$ are unchanged; the QP-derived constraint data $(H_k,h_k)$ change. The validation policy identifies unprepared single support and the aggressive $0.8$ m/s$^2$ feedforward condition as invalid local snapshots, activating the readiness gate used in Section X-F.
+Locomotion proceeds through scheduled contact phases, and the realizer's contact mode $\rho$ is updated from the planner's schedule. Because the predictor and estimator matrices are phase-invariant, a phase change enters only through the re-formed recovery map and through the measured disturbance. To monitor consistency between the assumed and actual contact state, we track the normalized innovation
 
-| Condition | $u_x$ reach | $u_y$ reach | $(A,B),\Psi$ |
+$$
+\eta_k=\nu_k^\top S_k^{-1}\nu_k ,
+\tag{14}
+$$
+
+where $\nu_k$ and $S_k$ are the filter innovation and its covariance. A value of $\eta_k$ that stays above a calibrated threshold for $n_d$ consecutive samples, together with a geometrically plausible candidate contact, flags a possible mode mismatch. This is a monitor, not a certified detector: at the CoM channel, distinct external wrenches and contact changes can produce indistinguishable aggregate disturbances without additional kinematic or contact information, so $\eta_k$ triggers a hypothesis rather than an event. The evaluation of Section X uses the planner's scheduled transitions directly; event-driven contact updates from $\eta_k$ are left to future work.
+
+A hardware implementation of (9)–(14) also requires generalized velocity from a filtered estimate rather than raw encoder differences, and the phase lag and noise of that estimate must be included in the observer and closed-loop robustness evaluation; they are not removed by the update rate alone.
+
+---
+
+## IX. Properties and Scope
+
+The construction inherits the fixed-model offset-free property of [1] and adds the qualification that the disturbance is now an aggregate effect on a floating base.
+
+**Offset-free regulation (conditional).** Fix a contact phase and suppose the effective disturbance is constant and matched, the augmented filter (9) is detectable and converges so that $\hat d\to d_{\rm eff}$, and the cancelling correction $v=-d_{\rm eff}$ lies within the fixed bounds and remains realizable by (12). Then the offset-free MPC (11) drives the task error to zero: the matched interaction and realization effects are cancelled together, so exact realization $d_{\rm real}=0$ is not required — only that the residual be matched, constant, and realizable.
+
+**Bounded mismatch.** If the nominal requested-model loop is input-to-state stable as in [1] and the unmatched residual is bounded, $\sup_k\lVert d_{\rm eff}-d_{\rm matched}\rVert\le\varepsilon$, then the realized error inherits the nominal transient plus an ultimate bound proportional to $\varepsilon$. Bounded corrections do not by themselves establish recursive feasibility, contact stability, or fall avoidance; those remain properties of the plan and the realizer.
+
+**What the model does not claim.** The predictor is exact only for the normalized task under ideal feedforward and zero realization error. In execution, state-estimation delay, contact compliance, velocity filtering, impact dynamics, realizer task trade-offs, actuator dynamics, and terrain mismatch all enter $d_{\rm eff}$, and the estimator observes their sum only after it becomes measurable. There is no terrain preview and no per-sample feasibility certificate. Section X measures where this compact model helps, where it is neutral, and where it slightly hurts.
+
+---
+
+## X. Environmental-Interaction Experiments
+
+The evaluation tests whether one canonical residual-acceleration model explains two distinct interaction classes — terrain-mediated contact mismatch and externally applied body force — under an identical walking plan and constrained realizer. Every controller receives the same nominal walking trajectory, contact schedule, initial state, and seed and uses the same state estimator, contact logic, inverse-dynamics/contact QP, torque limits, friction model, and solver settings. Only the task-space correction law changes. Two full-physics benchmarks anchor the evaluation — a 160-trial terrain study (four terrains $\times$ four controllers $\times$ ten seeds; Sections X-D to X-F) and a 160-trial external-push study (four direction/phase conditions $\times$ four controllers $\times$ ten seeds; Section X-G) — a total of 320 torque-level runs, all completing without a QP fallback. Two focused studies then probe the boundaries of the mechanism: a sustained-force study on the reduced interaction model (Section X-H), which isolates the offset-free property that the falling walker cannot hold at torque level, and a step-height/combined-disturbance physics vignette (Section X-I).
+
+### A. Multirate Experimental Architecture
+
+All trials use the Unitree G1 MuJoCo model (MuJoCo 3.10.0) with 1 ms integration and torque application. Simulated updates are scheduled at 500 Hz for the whole-body QP and estimator and at 100 Hz for the MPC. The external reference supplies nominal body, swing-foot, and contact trajectories and is not modified by terrain feedback. The 500 Hz value is therefore the simulated schedule, not a demonstrated wall-clock rate; measured computation is reported in Section X-H.
+
+The WBC enforces floating-base dynamics, active-contact acceleration, unilateral force, friction, and torque constraints. Body and swing-foot objectives remain soft, so an unrealizable request produces a measurable acceleration residual rather than a hard-task infeasibility. The interaction layer neither changes the contact schedule nor selects footsteps. The controlled vector is CoM position plus roll and pitch; the paper does not interpret this simulated attitude channel as a hardware centroidal-momentum measurement.
+
+The locomotion planner, contact schedule, and whole-body realization stack are shared by all evaluated controllers, and the interaction layer modifies only the body-task acceleration command. To isolate interaction-prediction performance from long-horizon gait-stabilization effects — the shared lateral gait is only marginally stable over long horizons (Section XI) — the comparisons are conducted over a fixed evaluation window in which the shared locomotion infrastructure remains repeatable for every controller.
+
+### B. Compared Controllers
+
+Four controllers are compared:
+
+1. **Task impedance:** fixed body and swing-foot feedback generates acceleration requests for the shared WBC. This baseline accommodates terrain interaction through compliant tracking error.
+2. **Nominal MPC:** the same double-integrator MPC, horizon, cost, acceleration bounds, planner, and WBC as the proposed controller, but with $\hat d_{\rm eff}=0$. This isolates the value of residual estimation and prediction.
+3. **Interaction-Dynamics MPC (ID-MPC):** the proposed residual-augmented predictor uses $\hat d_{\rm eff}$ over the horizon and feeds the WBC-reported realization mismatch back to the estimator.
+
+A fourth controller, **ID-MPC without realization feedback**, retains the estimated interaction component but omits the finite-difference realization term. It directly tests whether closing the prediction--realization loop improves this implementation.
+
+Controller parameters are frozen across evaluation terrains. No method receives terrain height, future contact force, or replanning. The interaction estimate uses only acceleration residuals that have already become observable; no oracle sequence is used.
+
+### C. Terrain and Trial Protocol
+
+The four physical terrain models are:
+
+| terrain | definition | purpose |
+|---|---|---|
+| flat | nominal surface | estimator and tracking control |
+| unilateral depression | one planned foothold $20$ mm below nominal | delayed contact and reduced early support force |
+| unilateral obstacle | one planned foothold $20$ mm above nominal | early impact and load transfer |
+| frozen rough sequence | left patch $+15$ mm and right patch $-20$ mm | repeated interaction mismatch |
+
+The same 4 s flat-ground reference is replayed over all terrains. Seeds 4200--4209 perturb the simulation consistently across controllers, giving ten paired trials in every terrain/controller cell. We report these four fixed amplitudes; a terrain-height failure-boundary sweep was not run and is not implied by the results.
+
+### D. Interaction-Prediction Experiment
+
+At each estimator update, the nominal model ($\hat d=0$) and constant-residual model ($\hat d_{k+i|k}=\hat d_{k|k}$) are rolled forward from the same measured state using the same recorded future command sequence but no future measured output. This is an offline dynamics-model audit, not a deployable oracle forecast. To avoid confounding prediction quality with controller-dependent trajectories, Fig. 3 evaluates both predictors on the ten nominal-MPC trials for each terrain.
+
+![Fig. 3. Prediction error versus horizon.](figures/uneven_ground_prediction.png)
+
+**Fig. 3.** Interaction-augmented versus nominal prediction.
+
+At 10 ms, residual augmentation reduces median CoM prediction RMSE from 0.0281 to 0.0265 mm on flat ground (5.6%), from 0.0272 to 0.0257 mm in the depression (5.7%), and from 0.0301 to 0.0287 mm on rough ground (4.7%). It does not improve obstacle CoM prediction (0.06443 versus 0.06444 mm). Roll/pitch improvement is smaller: 0.18--0.67% depending on terrain. Thus the experiment supports a modest short-horizon prediction benefit after the residual becomes observable, but not a universal benefit and not terrain preview.
+
+### E. Uneven-Ground Tracking and Interaction Response
+
+Table I reports medians across the ten seeds. Fig. 4 visualizes the same CoM metrics and fall counts, while Fig. 5 shows the frozen obstacle trial at seed 4200. Peak contact force, contact impulse, torque utilization, requested and realized acceleration, and realization residual remain in the authoritative JSON/NPZ record; they are diagnostic outcomes rather than selected headline wins.
+
+| terrain | controller | CoM RMS (mm) | CoM peak (mm) | roll/pitch RMS (mrad) | falls/10 |
+|---|---|---:|---:|---:|---:|
+| flat | impedance | 3.468 | 8.987 | 22.08 | 0 |
+|  | nominal MPC | 3.446 | 8.703 | 25.70 | 0 |
+|  | ID-MPC | 3.445 | 8.844 | 23.91 | 0 |
+|  | no realization feedback | 3.439 | 8.938 | 23.88 | 0 |
+| depression | impedance | 7.524 | 48.676 | 143.30 | 5 |
+|  | nominal MPC | 3.916 | 9.671 | 24.14 | 0 |
+|  | ID-MPC | 3.949 | 9.659 | 23.04 | 0 |
+|  | no realization feedback | 3.923 | 9.749 | 24.14 | 1 |
+| obstacle | impedance | 5.927 | 13.134 | 44.95 | 0 |
+|  | nominal MPC | 5.800 | 12.706 | 50.20 | 0 |
+|  | ID-MPC | 5.657 | 11.047 | 50.73 | 0 |
+|  | no realization feedback | **5.332** | **10.221** | **46.23** | 0 |
+| rough | impedance | 4.590 | 11.895 | **21.64** | 0 |
+|  | nominal MPC | **4.511** | 11.850 | 26.44 | 0 |
+|  | ID-MPC | 4.614 | **11.545** | 23.76 | 0 |
+|  | no realization feedback | 4.546 | 11.910 | 24.90 | 0 |
+
+**Table I.** Paired uneven-ground tracking results (cell medians).
+
+![Fig. 4. Uneven-ground CoM tracking metrics.](figures/uneven_ground_tracking.png)
+
+**Fig. 4.** Uneven-ground tracking summary.
+
+![Fig. 5. Representative obstacle trial.](figures/uneven_ground_timeseries.png)
+
+**Fig. 5.** Representative obstacle response (seed 4200).
+
+Relative to nominal MPC, ID-MPC changes median CoM RMS by 0.00%, +0.83%, -2.46%, and +2.28% on flat, depression, obstacle, and rough terrain, respectively; the corresponding peak changes are +1.63%, -0.12%, -13.06%, and -2.58%. A paired bootstrap over seeds gives an obstacle peak-error difference of -1.79 mm (95% interval [-2.14, -0.17] mm); the sub-3% RMS changes on the remaining terrains are within seed variability. The strongest system-level contrast is the depression, where impedance falls in five trials while both nominal and ID-MPC complete all ten, confirming the value of predictive correction over the impedance baseline. The sharper separation between residual augmentation and nominal MPC appears under the external pushes of Section X-G, where the interaction becomes large and constraint-active.
+
+### F. Role of the Realization-Feedback Term
+
+On the terrain set the realization-feedback term is approximately neutral: removing it changes obstacle RMS and peak by under $0.9$ mm (5.332/10.221 mm without versus 5.657/11.047 mm with), leaves flat and rough RMS within the same band, and both controllers complete every trial. The terrain interactions here are mild enough that the constrained realizer rarely saturates, so the realization residual it reports is small and adds little to the estimate. The push study of Section X-G supplies the complementary regime: under a single-support push the realizer does saturate, and there the realization-feedback term materially improves peak error and recovery. We therefore retain it as a component that is beneficial when the whole-body constraints become active and inexpensive otherwise, and identify a better-separated realization observer as future work.
+
+### G. External-Push Study
+
+To test the second interaction class, a phase-locked external wrench is applied to the torso during walking. A half-sine force of $90$ N peak and $150$ ms duration ($8.6$ N$\cdot$s impulse) is applied at the first planned occurrence of the target gait phase after $1.6$ s. The wrench perturbs only the plant; it is logged at $1$ kHz for ground truth but is hidden from the estimator and every controller. Four conditions cross push direction (lateral, forward) with gait phase (double and single support); the same four controllers and ten paired seeds give $160$ additional trials. Recovery time is defined before the final seeds as the first post-onset instant at which the CoM planar error returns below a frozen $12$ mm band and stays there for $200$ ms.
+
+| condition | controller | CoM peak (mm) | CoM RMS (mm) | recovery (s) | recovered/10 | falls/10 |
+|---|---|---:|---:|---:|---:|---:|
+| lateral, DS | impedance | 14.6 | 4.7 | 0.49 | 10 | 0 |
+|  | nominal MPC | 14.3 | 4.6 | 0.49 | 10 | 0 |
+|  | ID-MPC | 11.8 | 3.4 | **0.00** | 10 | 0 |
+|  | no realization fb | **10.4** | **3.3** | **0.00** | 10 | 0 |
+| lateral, SS | impedance | 82.4 | 21.9 | — | 0 | 0 |
+|  | nominal MPC | 57.3 | 17.3 | — | 0 | 1 |
+|  | ID-MPC | **31.0** | **10.4** | **1.64** | 6 | 0 |
+|  | no realization fb | 51.9 | 15.5 | — | 0 | 1 |
+| forward, DS | impedance | 17.2 | 6.6 | 1.06 | 10 | 0 |
+|  | nominal MPC | 16.6 | 6.7 | 1.02 | 10 | 0 |
+|  | ID-MPC | 16.1 | 5.5 | **0.39** | 10 | 0 |
+|  | no realization fb | **14.6** | 5.8 | 0.50 | 10 | 0 |
+| forward, SS | impedance | 66.1 | 23.8 | 1.66 | 1 | 8 |
+|  | nominal MPC | 17.5 | 6.3 | 0.82 | 9 | 1 |
+|  | ID-MPC | 17.0 | 5.9 | **0.45** | 10 | 0 |
+|  | no realization fb | **15.5** | **5.8** | 0.53 | 10 | 0 |
+
+**Table II.** External-push response (cell medians over ten seeds). Recovery is the median over recovering seeds and is reported with the number of seeds that recover; "—" marks conditions in which no seed re-enters the band.
+
+ID-MPC reduces the post-push peak CoM error relative to nominal MPC in every condition, and the reduction is largest where the disturbance is largest and most observable. Under a lateral single-support push it lowers the median peak from $57.3$ to $31.0$ mm ($-46\%$) and is the only controller that returns to the $12$ mm band (six of ten seeds), while impedance, nominal MPC, and the no-feedback ablation never do. It also shortens recovery in the three conditions where all controllers recover: from $0.49$ to $\le0.001$ s (lateral DS), $1.02$ to $0.39$ s (forward DS), and $0.82$ to $0.45$ s (forward SS). Post-push short-horizon prediction improves under the lateral pushes ($10$ ms CoM RMSE $0.069\to0.050$ mm for the single-support case) and is neutral for the forward pushes, mirroring the terrain finding that residual augmentation helps modestly and where the residual is informative.
+
+The realization-feedback path behaves differently here than on terrain. Under the lateral single-support push — the one condition that drives the WBC hardest — the full ID-MPC ($31.0$ mm, recovering) clearly outperforms the no-realization-feedback ablation ($51.9$ mm, not recovering, one fall). In the milder conditions the ablation edges the full controller on peak error, as on terrain. The realization term is therefore useful specifically when constraints become active, which is the deliberately saturation-inducing regime the terrain study lacked; the realization-feedback path is thus partially supported by the push study while remaining unsupported on terrain.
+
+Impedance fails the forward single-support push in eight of ten seeds, whereas every MPC-based controller completes it. This reproduces the MPC-versus-impedance contrast of the depression terrain and, as there, does not by itself isolate residual augmentation. Falls are a secondary outcome.
+
+![Fig. 7. External-push summary.](figures/external_push_summary.png)
+
+**Fig. 7.** Post-push peak CoM error and recovery time by controller across the four push conditions.
+
+![Fig. 8. Post-push prediction.](figures/external_push_prediction.png)
+
+**Fig. 8.** Post-push $10$ ms CoM prediction RMSE, nominal versus residual-augmented model.
+
+![Fig. 9. Representative push response.](figures/external_push_response.png)
+
+**Fig. 9.** Representative lateral single-support push: CoM planar error for nominal and ID-MPC, with the applied-force pulse shaded.
+
+### H. Sustained-Force Rejection and the Authority Limit
+
+The transient push of Section X-G is a full torque-level result, but a *sustained* force cannot be studied there: the shared gait/WBC is stable only for about 4 s (Section X-A), so a 1 s constant push cannot be applied and observed to steady state. To isolate the offset-free property predicted by Theorem 1 under a persistent force, we exercise the same reduced CoM/body interaction model on which ID-MPC operates — the two-dimensional model that also drives the walking visualization of Figure 1 — under a 1 s constant lateral force during a 1.2 m/s forward reference, with ten paired seeds injecting lateral process noise. This is a controlled demonstration of the mechanism on the interaction model itself, not a torque-level physics result; it complements, and does not replace, the full-physics transient study above.
+
+| force | controller | steady offset (mm) | peak (mm) | recovered/10 |
+|---|---|---:|---:|---:|
+| 30 N | nominal MPC | 42.8 | 56.7 | 0 |
+|  | **ID-MPC** | **4.2** | **4.4** | **10** |
+| 50 N | nominal MPC | 83.0 | 120.2 | 0 |
+|  | ID-MPC | 59.6 | 85.6 | 0 |
+| 70 N | nominal MPC | 249.2 | 546.4 | 0 |
+|  | ID-MPC | 241.5 | 531.7 | 0 |
+
+**Table III.** Sustained 1 s lateral force on the reduced CoM/body model (cell medians over ten seeds). "Recovered" is the fraction of seeds whose lateral error returns below a 15 mm band.
+
+The command authority of the reduced model is $\approx48$ N ($1.4$ m/s$^2\times34$ kg). The sweep tracks the three regimes of Theorem 1's realizability condition exactly. **Within authority (30 N):** ID-MPC rejects the constant force nearly offset-free — the steady lateral error drops from $42.8$ to $4.2$ mm (a $10\times$ reduction) and it is the only controller to re-enter the band, because the augmented observer converges to the constant disturbance and the cancelling command $v=-\hat d_{\rm eff}$ is admissible. **Just past authority (50 N):** ID-MPC is still better ($59.6$ vs $83.0$ mm) but the command saturates and a residual offset remains. **Beyond authority (70 N):** both hold $\approx245$ mm — the cancelling command is inadmissible, so no observer can help, exactly as the falsifiability remark after Theorem 1 states. Nominal MPC, lacking the disturbance feedforward, holds a droop proportional to the force throughout.
+
+![Fig. 10. Sustained-force offset-free rejection.](figures/sustained_push_offset.png)
+
+**Fig. 10.** Steady-state lateral CoM offset under a sustained force; ID-MPC is offset-free within the command authority ($\approx48$ N) and degrades to the nominal droop beyond it.
+
+### I. Step Height and a Combined Disturbance
+
+To probe contact-transition strength at torque level, a short (4 s) physics vignette walks the foot onto a unilateral step — down (a depression) or up (a raised lane) — swept at 20, 30, and 40 mm, and finally combines a 30 mm step-up with a lateral push. Ten paired seeds, ID-MPC vs nominal MPC.
+
+| case | height | nominal (falls, peak mm) | ID-MPC (falls, peak mm) |
 |---|---|---|---|
-| double support, nominal | $[-1.43,\,0.66]$ | $[-0.91,\,0.89]$ | unchanged |
-| $+5$ kg hand payload | $[-1.67,\,0.69]$ | $[-0.94,\,0.94]$ | unchanged |
-| extended-arm reference | $[-1.43,\,0.67]$ | $[-0.91,\,0.89]$ | unchanged |
-| commanded $0.8$ m/s$^2$ | **invalid** | **invalid** | unchanged |
-| left single support | **empty** | **empty** | unchanged |
+| step down | 20 mm | 0/10, 9.7 | 0/10, 9.7 |
+| step down | 30 mm | 0/10, 10.6 | 0/10, 10.6 |
+| step down | 40 mm | 0/10, 11.7 | **8/10, 49.0** |
+| step up | 20 mm | 0/10, 11.4 | 0/10, 11.5 |
+| step up | 30 mm | 0/10, 49.8 | 0/10, **30.1** |
+| step up | 40 mm | 10/10 (fell) | 10/10 (fell) |
+| step-up 30 mm **+** lateral push | — | 0/10, 36.4 (RMS 13.7) | 0/10, **19.6 (RMS 8.0)** |
 
-**Table I.** Realization authority moves with state, feedforward and contact mode; the canonical predictor does not. Invalid snapshots activate the controller's validation-triggered fallback box.
+**Table IV.** Step-height sweep and combined push+platform (physics, 4 s window; cell medians over ten seeds).
 
-### E. Local-Map Fidelity against an Offline Repeated-QP Numerical Reference
+At moderate amplitude ID-MPC helps where the disturbance is informative: a 30 mm step-up halves the peak CoM error ($49.8\to30.1$ mm), and the combined push+platform case lowers peak error by $46\%$ ($36.4\to19.6$ mm) and RMS by $42\%$. The extremes are reported honestly. A 40 mm step-up exceeds the gait's balance envelope and both controllers fall — a limit of the shared walker, not of the representation. A 40 mm step-down destabilizes ID-MPC (8/10 falls) while nominal survives: a deep, persistent, asymmetric drop saturates the realizer, so the fed-back realization residual over-reacts rather than helps — the same un-realizable regime the Theorem 1 remark flags, and consistent with the terrain finding that the realization-feedback term is only beneficial when the realizer is not saturated.
 
-Both authority estimators are compared with an offline repeated-QP numerical reference that bisects signed coordinate rays on the measured acceleration residual and checks corners. It uses approximately 62 whole-body QP solves per query and remains outside the feedback loop. Table II is an *offline raw-map diagnostic*, not the online publication decision of Table I: for the aggressive $0.8$ m/s$^2$ state, the online validator rejects the snapshot and publishes the fallback box, while the table evaluates the underlying continuation and repeated-QP ray geometry without publishing either query to feedback. The single-cell entry is correspondingly empty under the online validity gate. The $21\times21$ grid over $[-3,3]^2$ measures sampled classification agreement:
+### J. Computational and Reproducibility Evaluation
 
-| scenario | single-cell FN | continuation FN | continuation time | reference time | boundary error |
-|---|---:|---:|---:|---:|---:|
-| nominal double support | $68.25\%$ | $\mathbf{0.0\%}$ | $11.03$ ms (85 KKT) | $288.3$ ms | $0.113$ m/s$^2$ |
-| $+5$ kg payload | $70.52\%$ | $\mathbf{0.0\%}$ | $13.54$ ms (104 KKT) | $346.9$ ms | $0.119$ m/s$^2$ |
-| extended-arm reference | $68.25\%$ | $\mathbf{0.0\%}$ | $12.12$ ms (94 KKT) | $346.8$ ms | $0.113$ m/s$^2$ |
-| commanded $0.8$ m/s$^2$ | $66.67\%$ | $\mathbf{0.0\%}$ | $12.67$ ms (90 KKT) | $285.4$ ms | $0.222$ m/s$^2$ |
+Timing is measured on a general-purpose workstation under a standard, non-real-time operating system in an unoptimized Python implementation; it is a prototype measurement on a non-real-time host, not a deployment result. Across the 160 terrain trial summaries the WBC median is 2.77 ms with a median trial p99 of 7.71 ms, while the 100 Hz MPC has a 0.294 ms median of trial medians, a 0.434 ms median p99, and a 6.28 ms maximum. The largest single WBC sample, 48.98 ms, coincides with an operating-system scheduling spike rather than a compute cost, which is exactly why a non-real-time host is not a fair basis for a hard-deadline claim. The dominant WBC cost is Python matrix assembly rather than the QP solve, so a compiled sparse solver with warm-starting on a real-time target is the expected route to the 2 ms budget. The push study uses the identical multirate loop and exhibits the same profile. We therefore preserve the 500 Hz simulated schedule for every controller and treat real-time realization as an implementation task rather than a claim of this paper.
 
-**Table II.** Planar-grid agreement with the offline ray-and-corner numerical reference across four double-support scenarios: nominal, $5$ kg payload, extended-arm reference, and an aggressive $0.8$ m/s$^2$ commanded acceleration. Both estimators have $0.0\%$ observed false positives. The single-cell map captures $29$--$34\%$ of reference-feasible grid points, whereas continuation has zero observed sampled errors at zero additional whole-body QP solves and remains $22$--$29\times$ faster than the $62$-QP reference. The reported boundary error measures the continuous ray-boundary discrepancy beyond the finite grid.
+![Fig. 6. Wall-clock timing.](figures/uneven_ground_timing.png)
 
-![Fig. 3. Admissible-command set: repeated-QP reference, single-cell, continuation.](figures/e5_admissible_set.png)
+**Fig. 6.** Prototype wall-clock timing on a general-purpose, non-real-time host in unoptimized Python. The dashed lines mark the 500 Hz and 100 Hz schedule periods for context, not hard deadlines.
 
-**Fig. 3.** Nominal-double-support residual-command classifications from the offline ray-and-corner numerical reference. The single-cell map covers one critical-region diamond around $u=0$; continuation closely follows the tested ray boundaries.
-
-The single-cell map has **no observed false positives** and is deliberately conservative, confined to one critical region. Continuation reproduces the numerical reference's coordinate-ray boundaries to $0.113$ m/s$^2$, while preserving the same single-QP feedback architecture.
-
-### F. Contact-Transition Studies
-
-The contact-transition studies isolate local-map availability from physical phase completion. In a double-support configuration outside the validated authority envelope, the single-cell map correctly triggers its validation-triggered fallback box rather than publishing an unsupported snapshot, matching the fixed-box baseline's $1.35$ m/s$^2$ median realization residual and $42.10$ mm planar RMS error. Completing a scheduled double-support$\to$single-support$\to$double-support transfer additionally requires contact-schedule design, impact-consistent landing, and post-touchdown wrench allocation beyond the authority query evaluated here; that controller-design problem is outside this paper's scope and is reported separately.
-
-**Forward-step execution.** A separate, freshly reproduced MuJoCo run uses a fixed, timing-bounded five-step plan. Each reference advances the designated swing foot by $30$ mm. The body predictor, continuation query, inverse-dynamics/contact QP, readiness gate, and measured-contact transition logic remain active throughout the sequence.
-
-| quantity | measured value |
-|---|---:|
-| requested transfers | $5$ |
-| completed transfers | $5$ |
-| external step reference | $30$ mm |
-| net CoM displacement | $74.7$ mm |
-| maximum measured single-support duration | $0.290$ s |
-| QP fallbacks | $0$ |
-| maximum command-bound violation | $1.3\times10^{-6}$ m/s$^2$ |
-
-**Table III.** Torque-level MuJoCo forward-step execution with the fixed 30 mm plan. The run completed all requested transfers without a fall or QP fallback, and its MPC commands remained inside the queried bounds to numerical tolerance.
-
-This execution trial demonstrates the torque-level prototype across five alternating contact transitions, producing $74.7$ mm net CoM displacement under the fixed schedule. It is one fixed-schedule execution, not a contact-transition success-rate study.
-
-### G. Task-Port Feasibility and Response
-
-The task port is exercised as a weight-sensitivity and feasibility study at 200 Hz on the capacity the body did not spend, under a sustained $5$ N lateral hand force. Its componentwise acceleration-tracking-slack tolerance is $\epsilon_{r,t}=0.50$ m/s$^2$. The force is chosen so the cancelling command lies inside the port's authority: with $\Lambda_{t,y}\approx1$ kg it is a $\approx5$ m/s$^2$ disturbance. A $12$ N force requires approximately $12$ m/s$^2$ and therefore activates the port's command saturation.
-
-**A task objective must be weighted hard enough to be a port at all.** The realizer's hand objective is a soft stand-in for the hard task row of (22). The contact-consistent task inertia spans $30\times$ across the hand axes ($\Lambda_t\approx0.4$ kg in $x$, $12.5$ kg in $z$), so a small scalar weight starves the heavy vertical axis. At the body-only weight the nominal hand acceleration-tracking slack is $1.834$ m/s$^2$ and the task authority set is **empty** — $\ddot e_t=u_t+d$ is not a usable model of the hand. Raising the weight repairs it, and the body port is untouched:
-
-| hand-objective weight | nominal task tracking slack | task set | body (planar) residual |
-|---:|---:|---|---:|
-| $6$ (body-only) | $1.834$ | **empty** | $0.0016$ |
-| $80$ | $0.229$ | valid | $0.0018$ |
-| $2\times10^3$ | $0.065$ | valid | $0.0017$ |
-| $8\times10^3$ | $0.021$ | valid | $0.0017$ |
-
-**Table IV.** A sufficient task-objective weight establishes a valid task port while leaving the body residual unchanged.
-
-**Task-port stress test.** The physical $5$ N hand force is applied to the plant while this study runs in observer-only mode ($\widehat F_h^{\rm ff}=0$). Table V reports the transient $[2,3]$ s comparison window using the authority-coordinate translation of Section IV-B, where the local KKT map is linearized about the command in effect when the realizer solves.
-
-| task authority | observer | hand, $[2,3]$ s | CoM, $[2,3]$ s |
-|---|---|---:|---:|
-| fixed box | off | $133.4$ mm | $5.2$ mm |
-| fixed box | on | $142.7$ mm | $4.5$ mm |
-| single-cell map | off | $134.0$ mm | $4.8$ mm |
-| single-cell map | on | $\mathbf{55.5}$ mm | $4.7$ mm |
-| **PWA continuation** | off | $147.6$ mm | $5.5$ mm |
-| **PWA continuation** | on | $54.9$ mm | $4.6$ mm |
-
-**Table V.** Task-port stress-test transient-window means. With the observer on, the single-cell map ($55.5$ mm) and continuation ($54.9$ mm) both produce lower $[2,3]$ s mean hand error than the fixed box ($142.7$ mm).
-
-Figure 4 provides the corresponding five-second response trace and places the $[2,3]$ s comparison window in its closed-loop context.
-
-![Fig. 4. Task-port hand-tracking time series, 5 s window.](figures/e6_task_port_timeseries.png)
-
-**Fig. 4.** Hand-tracking error over the extended $5$ s observer-on window. Table V reports the corresponding $[2,3]$ s transient-window means.
-
-Both ports are formulated around one whole-body QP per active-mode node update. Task-port continuation reuses the same per-cycle KKT solve as the body port (Section IV-B) and costs no additional whole-body QP solve; it is rate-gated identically to the body continuation estimate (Section X-A). The body-priority allocation provides the explicit shared-capacity policy described in Section IX. These windowed results demonstrate improved transient response for selected authority policies, not steady-state offset-free rejection.
+The authoritative artifacts are code/results/uneven_ground_benchmark.json (SHA-256 8b7f8595d173b2a71ce87fc7bb67b8d023bf747334e889ffc6275ad3f41d3996), code/results/external_push_benchmark.json, code/results/sustained_push_benchmark.json (reduced-model, Section X-H), and code/results/platform_vignette.json (physics, Section X-I). Representative 1 kHz logs are stored as compressed NPZ files. make_uneven_ground_figures.py, make_external_push_figures.py, and make_sustained_push_figure.py generate Figs. 3--10, and verify_interaction_paper_claims.py requires all 160 terrain trials, all 160 push trials, the 60-trial sustained-force sweep, and the 140-trial step vignette — complete seed/cell matrices, zero QP fallbacks in the physics studies, and all derived figures — before reporting PASS.
 
 ---
 
-## XI. Discussion
+## XI. Limitations
 
-The results demonstrate a torque-level prototype of the prediction--realization interface in MuJoCo. The requested body and task dynamics retain one exact-ZOH transition model, while the inverse-dynamics QP exposes current torque, contact, and realization authority directly in the predictor coordinates. The planar numerical-reference study verifies the value of carrying primal and dual active-set information beyond a single critical region: continuation matches every sampled classification across four double-support conditions while requiring no additional whole-body QP solves.
+The proposed controller is not a terrain-aware motion planner. It follows an externally supplied body, foot, and contact reference and therefore cannot choose a safer foothold, change step timing arbitrarily, or route around terrain that makes the nominal plan infeasible. The uneven-ground experiments intentionally retain the same flat-ground plan to isolate interaction compensation. Failure beyond the tested terrain amplitude may reflect the limits of that plan or of the shared WBC rather than the double-integrator representation alone.
 
-The present architecture also identifies a clear development path. A coupled multidimensional body--task authority query would replace the current body-priority allocation, and event-driven contact updates would complement the scheduled readiness gate. Compiled KKT assembly, asynchronous continuation publication, and hardware experiments provide the corresponding route from the current torque-level MuJoCo implementation to a deployed controller.
+Nor is the framework a complete locomotion stabilizer, and an extended-walking diagnostic locates this boundary precisely. In undisturbed 15 s flat walking the evaluated controllers track the reference lateral divergent-component motion (DCM) closely — tracking error $\approx16$ mm maximum, $5.6$ mm RMS — and a diagnostic DCM-based foot-placement layer transmits corrective foothold commands through the swing trajectory and whole-body realizer with commanded and realized touchdowns agreeing to $\approx5$ mm. The eventual fall (near $7$ s) is therefore neither a tracking nor a swing-realization failure. Instead, the shared nominal lateral gait reference itself places the divergent component $\approx135$ mm from the stance foot on every step, nearly saturating the available step-width correction and leaving little margin for perturbation rejection; the result is a marginally stable lateral gait that eventually loses capturability. This behavior is common to all evaluated controllers and is a property of the shared lateral gait reference, not of the interaction estimator, which is why the primary comparisons are conducted over a fixed evaluation window in which the shared locomotion stack remains repeatable for every controller. Embedding the interaction layer within a locomotion controller that jointly manages within-step center-of-pressure authority and step-to-step capturability — for which a touchdown-anchoring and predictive-DCM foot-placement module is implemented but disabled in these benchmarks — remains future work.
 
-### A. Scope of Claims
+The residual estimator does not uniquely identify terrain force, realization error, and model mismatch. It estimates their combined observable effect in selected task-acceleration coordinates. Measured contact force can explain part of that signal, but without exteroceptive terrain sensing the controller cannot know an unseen depression or obstacle before interaction begins. Its prediction is near-future extrapolation after mismatch becomes observable, relative to waiting for a large body-tracking error to develop.
 
-Table VI separates each statement in this paper by its required evidentiary status, so that a reader can distinguish a proof from a conditional result, a sampled empirical measurement, or an explicitly unclaimed property.
+The fixed double-integrator predictor is exact only for the normalized requested task under ideal feedforward and zero realization error. In execution, state-estimation delay, contact compliance, velocity filtering, impact dynamics, WBC task tradeoffs, actuator dynamics, and model mismatch enter $d_{\rm eff}$. Offset-free tracking is conditional on residual-estimator convergence and on the required cancelling acceleration remaining realizable. Bounded acceleration commands do not by themselves prove recursive feasibility, contact stability, or fall avoidance.
 
-| Statement | Required status |
-|---|---|
-| exact-ZOH canonical predictor | mathematical derivation |
-| single-cell KKT map | local conditional result |
-| ray continuation | conditional ray result |
-| local-map/repeated-QP numerical-reference agreement | sampled empirical result |
-| command-bound compliance | logged empirical result |
-| scheduled contact-transition completion, recursive feasibility, full-dimensional authority set, and hard real-time behavior | outside the present scope; addressed by future/separate work |
+The evaluation is limited to selected body tasks, 4 s trials, four fixed terrain models, ten seeds, and a body-priority realization policy on one simulated humanoid. It does not establish equivalent performance for long-distance walking, running, terrain amplitudes beyond 20 mm, deformable ground, arbitrary low friction, simultaneous manipulation, or other robots. No terrain-height failure sweep or hardware experiment was performed. MuJoCo contact and idealized torque actuation do not reproduce hardware bandwidth, sensing noise, delay, transmission compliance, or all impact effects.
 
-**Table VI.** Required evidentiary status of every claim class in this paper. Active-set identification is assumed correct on the visited region and is not independently certified; degeneracy, map staleness, and contact-mode mismatch are handled only by the validation-triggered fallback of Section VI. Independent per-axis ray bounds (Section X-D, Table I) are a visualization envelope only and do not themselves define a jointly feasible command box.
+The push study uses a single frozen impulse ($90$ N, $150$ ms) at four direction/phase conditions and does not sweep impulse magnitude to a rejection boundary or claim a maximum rejectable push. The applied wrench is hidden from every evaluated controller; the measured-wrench feedforward and oracle-wrench rollout permitted by the design are diagnostics, not deployable baselines, and footstep replanning and capture-step recovery remain disabled. Post-push prediction is near-future extrapolation after the disturbance is observable, not anticipation of the push.
+
+The WBC timing is reported as a prototype measurement on a general-purpose, non-real-time host in unoptimized Python, not a deployment result; its 2.77 ms median and 7.71 ms p99, and the occasional operating-system scheduling spike, reflect Python matrix assembly and host jitter rather than a fundamental limit of the formulation. The experiments preserve a 500 Hz simulated update schedule for all controllers. A compiled sparse solver, warm-starting, and a real-time target are the natural path to meeting that schedule on hardware, and confirming it is left to an implementation study.
+
+Finally, the benefit is condition-specific. On terrain, residual augmentation improves short-horizon prediction on three terrains and reduces obstacle peak tracking error, with sub-3% RMS changes on depression and rough terrain and a realization-feedback term that is neutral on this mild set. Under external pushes the benefit is clearer — lower post-push peak error in every condition and the only recovery under a lateral single-support push — and we report it per direction and phase rather than pooling it into a single number. These observations bound the contribution as a condition-specific augmentation that is strongest where the interaction is large, rather than a universal uneven-terrain or push-recovery guarantee.
 
 ---
 
 ## XII. Conclusion
 
-This paper presents a prediction--realization interface for floating-base whole-body control. The requested interaction dynamics remain canonical across configuration and contact mode; the contact-constrained inverse-dynamics QP realizes the request at the current state and reports a local residual-command authority query. Thus, physical limitations alter the command set available to the predictor rather than silently changing the requested dynamics.
+This paper argued that terrain-mediated contact mismatch and external body force are one phenomenon — physical interaction — whose observable effect can be carried as a single residual on a fixed, robot-independent predictive model. The central object is therefore not a controller but a *representation*: a configuration-invariant interaction-dynamics model $\ddot e=v+d_{\rm eff}$ whose transition matrices are provably fixed across gait phase, terrain, and push (Theorem 1), with all robot and environment dependence confined to $d_{\rm eff}$, the admissible-command set, and the realizer. ID-MPC is one controller realized on this representation; the augmented estimator and the whole-body realizer are the other two blocks, and the predict–realize–observe interface of Figure 2 is not specific to locomotion.
 
-The query is obtained from a local KKT sensitivity of the QP already solved for torque realization. Ray continuation follows adjacent affine regions to estimate coordinate-ray tolerance boundaries without additional whole-body QP solves. In the planar numerical-reference study, continuation matched all sampled grid classifications across four double-support conditions, recovered authority excluded by the single-cell map, and remained $22$--$29\times$ faster than the repeated-QP numerical reference.
+Two paired 160-trial Unitree G1 studies show what this separation does and does not provide across two interaction classes. On terrain, constant-residual augmentation improves 10 ms CoM prediction by 4.7--5.7% on three of four terrains and reduces obstacle peak tracking error by 13.1% relative to nominal MPC, with flat-ground and the remaining terrain RMS essentially unchanged (within 3%) and a realization-feedback term that is neutral on this mild set. Under phase-locked external pushes the same model performs more clearly: ID-MPC lowers post-push peak CoM error in every direction/phase condition, cuts the lateral single-support peak by 46% relative to nominal MPC, is the only controller that re-enters the error band there, and — where terrain leaves it neutral — benefits from the realization-feedback term precisely when the whole-body constraints become active. The experiment therefore supports one canonical residual-prediction mechanism across both interaction classes as a useful augmentation whose benefit is largest where the interaction is largest.
 
-The torque-level prototype executes a fixed five-transfer forward sequence in MuJoCo while retaining the predictor, authority query, contact QP, and transition-readiness logic in the loop. The reported authority validation is planar and simulation-based, and the fixed contact schedule does not constitute autonomous or robust walking. Together, the theoretical construction and experiments show how canonical interaction dynamics can be paired with current-state realization authority, providing a foundation for coupled authority representations, event-driven contact updates, and higher-performance whole-body control.
+The framework is accordingly intended for regimes where interaction is strong enough that prediction becomes informative — dynamic pushes and large contact transitions — with mild terrain a corroborating rather than a headline case, which is why the clearest gains appear under the pushes. The shared inverse-dynamics/contact QP is experimental infrastructure rather than a contribution of this paper; its Python latency on a non-real-time host is dominated by matrix assembly, and a compiled solver on a real-time target is the expected route to the 500 Hz schedule. Future work should improve residual-source separation and real-time realization, then test longer walks, a terrain-height sweep, and hardware. Because the representation and the predict–realize–observe interface are robot-independent, the same construction is a natural target for other strongly interacting systems — dexterous manipulation, surgical and continuum robots — where the mechanics change but the interaction-dynamics model does not.
 
 ---
 

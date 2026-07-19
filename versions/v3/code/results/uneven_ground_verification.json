@@ -1,0 +1,43 @@
+{
+  "status": "PASS",
+  "dataset": "uneven_ground_benchmark.json",
+  "sha256": "8b7f8595d173b2a71ce87fc7bb67b8d023bf747334e889ffc6275ad3f41d3996",
+  "trials": 160,
+  "cells": 16,
+  "qp_fallbacks": 0,
+  "wbc_median_of_trial_medians_ms": 2.774520995444618,
+  "mpc_median_of_trial_medians_ms": 0.2938329998869449,
+  "obstacle_interaction_minus_nominal_peak_median_mm": -1.7931374877062654,
+  "obstacle_peak_paired_bootstrap_95pct_mm": [
+    -2.1449912017696278,
+    -0.17470368372340417
+  ],
+  "figures": [
+    "uneven_ground_tracking.png",
+    "uneven_ground_prediction.png",
+    "uneven_ground_timeseries.png",
+    "uneven_ground_timing.png"
+  ],
+  "push_dataset": "external_push_benchmark.json",
+  "push_sha256": "194c1a5ba79861830bc5da9350393f898fc1a12d4814639029b75757517ded39",
+  "push_trials": 160,
+  "lateral_ss_nominal_peak_mm": 57.27055813591231,
+  "lateral_ss_interaction_peak_mm": 31.01127873368905,
+  "push_figures": [
+    "external_push_summary.png",
+    "external_push_prediction.png",
+    "external_push_response.png"
+  ],
+  "sustained_dataset": "sustained_push_benchmark.json",
+  "sustained_sha256": "7991481ad4c8c937f95019df0bfb67b5f5bdec1ef93a852e370aabb8cfae1d01",
+  "sustained_30N_offset_mm": {
+    "nominal": 42.78858886829757,
+    "interaction": 4.229332361522328
+  },
+  "platform_dataset": "platform_vignette.json",
+  "platform_sha256": "9b280ce43243b8fe7bb9603c074f27eaf8fa3af06e20fd32e36e386522641ce8",
+  "step_up_30mm_peak_mm": {
+    "nominal": 49.83934347085881,
+    "interaction": 30.072844041517165
+  }
+}

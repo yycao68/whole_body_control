@@ -152,7 +152,7 @@ def measured_foot_contacts(model: mujoco.MjModel, data: mujoco.MjData) -> np.nda
             body_names.append(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, bid) or "")
         left = any("left_ankle" in n or "left_foot" in n for n in body_names)
         right = any("right_ankle" in n or "right_foot" in n for n in body_names)
-        floor = any(n == "floor" for n in geom_names)
+        floor = any(n == "floor" or n.startswith("terrain_") for n in geom_names)
         if floor and left:
             out[0] = True
         if floor and right:
@@ -176,7 +176,7 @@ def friction_margin(model: mujoco.MjModel, data: mujoco.MjData, mu: float = 0.9)
             geom_names.append(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or "")
             bid = model.geom_bodyid[gid]
             body_names.append(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, bid) or "")
-        floor = any(name == "floor" for name in geom_names)
+        floor = any(name == "floor" or name.startswith("terrain_") for name in geom_names)
         foot = any("ankle" in name or "foot" in name for name in body_names)
         if not (floor and foot):
             continue
@@ -317,6 +317,7 @@ class InverseDynamicsQPRealizer:
         self.task_weight = 6.0
         self.task_acc_clip = 18.0     # hand acceleration clip [m/s^2]
         self.wrench_weight = 80.0     # Eq. (22) body-slack priority
+        self.com_task_weight = 40.0
         # When False, the friction-pyramid and joint-torque limits are dropped
         # from the recovery QP (unconstrained recovery, for the H5 ablation).
         self.constraints_on = True
@@ -327,6 +328,7 @@ class InverseDynamicsQPRealizer:
         # QP (their squared norms are the corresponding least-squares terms)
         # but reconstructed and logged after every solve.
         self.exact_realizer = exact_realizer
+        self.enforce_one_step_joint_limits = bool(exact_realizer)
         self.last_status = "not_solved"
         self.last_eq_residual = np.inf          # rigid-body dynamics-equality residual
         self.last_body_acc_residual = np.inf    # ||Jcom qdd - com_acc_des|| (realized - requested)
@@ -701,6 +703,7 @@ class InverseDynamicsQPRealizer:
         centroidal_moment_residual_des: np.ndarray | None = None,
         external_hand_force_ff: np.ndarray | None = None,
         contact_force_z_max_override: dict[str, float] | None = None,
+        attitude_acc_correction: np.ndarray | None = None,
     ):
         self._yaw_dq_du = None
         self._body_dq_du = None
@@ -742,12 +745,15 @@ class InverseDynamicsQPRealizer:
             mujoco.mj_jacSubtreeCom(model, data, Jcom, self.root_body)
             C_com = np.zeros((3, n))
             C_com[:, :self.nv] = Jcom
-            self._add_ls(P, q, C_com, np.clip(com_acc_des, -35.0, 35.0), 40.0)
+            self._add_ls(
+                P, q, C_com, np.clip(com_acc_des, -35.0, 35.0),
+                self.com_task_weight,
+            )
             # u_c enters the QP only through objective targets, so dq/du is a sum
             # of -w * C^T (dtarget/du) over every objective whose target depends
             # on u.  This is the CoM-acceleration term; the exact realizer adds a
             # centroidal-wrench term below.  The map is affine only off the clip.
-            self._com_dq_du = -40.0 * C_com[:2, :].T
+            self._com_dq_du = -self.com_task_weight * C_com[:2, :].T
             self._com_clipped = bool(np.any(np.abs(np.asarray(com_acc_des)[:2]) >= 35.0))
             self.last_com_acc_des = np.asarray(com_acc_des, dtype=float).copy()
             # Vertical height stays stiff (weight 8). Torso attitude uses a
@@ -760,6 +766,10 @@ class InverseDynamicsQPRealizer:
                         8.0)
             C_att = np.zeros((3, n)); C_att[:, 3:6] = np.eye(3)
             attitude_acc_des = -42.0 * rpy - 9.0 * data.qvel[3:6]
+            if attitude_acc_correction is not None:
+                attitude_acc_des[:2] += np.asarray(
+                    attitude_acc_correction, dtype=float
+                ).reshape(2)
             # The legacy controller leaves yaw to this fixed PD target.  A
             # centroidal yaw-moment controller instead owns the yaw channel
             # through the contact-wrench objective below; retaining both
@@ -956,7 +966,7 @@ class InverseDynamicsQPRealizer:
         Aeq_extra = np.vstack(foot_eq_rows) if foot_eq_rows else None
         beq_extra = np.concatenate(foot_eq_targets) if foot_eq_targets else None
         qdd_lb = qdd_ub = None
-        if self.exact_realizer:
+        if self.exact_realizer and self.enforce_one_step_joint_limits:
             # One-step actuated-joint position row of (22), expressed as qdd
             # bounds and intersected with the generic acceleration bounds.
             eps = 1e-3
@@ -1085,6 +1095,17 @@ def run_trial(
 
     command_layer = G1CommandLayer()
     realizer = InverseDynamicsQPRealizer(model, exact_realizer=exact_realizer)
+    # The revised uneven-terrain study regulates locomotion body coordinates;
+    # a simultaneous hand trajectory is outside its scope and competes with
+    # stance attitude during single support.  Keep the legacy hand benchmark
+    # for fixed-support scenarios only.
+    if scenario in ("walk", "contact_switch"):
+        realizer.task_weight = 0.0
+        realizer.com_task_weight = 400.0
+        # Do not intersect a newly activated rigid-touchdown equality with the
+        # optional one-step position invariant set.  Torque, acceleration, and
+        # the model's joint limits remain in force.
+        realizer.enforce_one_step_joint_limits = False
     body_mpc = NormalizedMPC(dim=2, dt=COMMAND_DT, horizon=35, q_pos=55.0, q_vel=12.0, r=0.08, u_max=np.array([3.5, 3.0]))
     task_mpc = NormalizedMPC(dim=3, dt=COMMAND_DT, horizon=18, q_pos=100.0, q_vel=10.0, r=0.12, u_max=np.array([4.5, 4.5, 4.5]))
     body_obs = RandomWalkDisturbanceObserver(dim=2, dt=COMMAND_DT, q_d=0.05, r_y=1.5e-4)
@@ -1099,10 +1120,11 @@ def run_trial(
 
     q_nom = TORQUE_STAND_CTRL.copy()
     qd_ref = np.zeros_like(q_nom)
-    if exact_realizer:
-        # The keyframe is initially above the floor.  Establish physical sole
-        # contacts with the validated soft-contact realizer before enabling the
-        # hard contact equalities of the Eq. (22) path.
+    if scenario in ("walk", "contact_switch") or exact_realizer:
+        # The keyframe starts 7--11 mm above the floor.  Establish physical sole
+        # contacts before freezing stance targets or starting the gait clock.
+        # This is required for both soft and exact walking realizers; otherwise
+        # the soft path incorrectly anchors airborne virtual sole points.
         warm = InverseDynamicsQPRealizer(model, exact_realizer=False)
         warm_com = robot_com(model, data)
         warm_height = float(data.qpos[2])
@@ -1141,12 +1163,15 @@ def run_trial(
         z_c = float(com0[2] - ground_z_walk)
         left0 = data.site_xpos[left_sid][:2].copy()
         right0 = data.site_xpos[right_sid][:2].copy()
-        step_len = 0.05 if scenario == "walk" else 0.0
-        quasi_static_switch = exact_realizer and scenario == "contact_switch"
+        # This file supplies only a conservative shared reference for controller
+        # comparisons; fast gait generation is outside the paper's scope.
+        step_len = 0.03 if scenario == "walk" else 0.0
+        quasi_static_switch = scenario == "contact_switch"
         dcm_plan = DCMWalk(left0, right0, step_len, n_steps=12, z_c=z_c,
-                        t_step=0.60 if quasi_static_switch else 0.36,
-                        t_ds=0.20 if quasi_static_switch else 0.12,
-                        t_settle=0.8)
+                        t_step=1.20 if quasi_static_switch else 0.80,
+                        t_ds=1.00 if quasi_static_switch else 0.55,
+                        t_settle=1.0,
+                        zmp_y_scale=1.0 if quasi_static_switch else 0.85)
         walk_body_mpc = NormalizedMPC(dim=2, dt=COMMAND_DT, horizon=35,
                                     q_pos=90.0, q_vel=16.0, r=0.05, u_max=np.array([6.0, 6.0]))
 
@@ -1325,7 +1350,9 @@ def run_trial(
             rpy,
             com_acc_des=np.array([body_acc_des[0], body_acc_des[1], 0.0]),
             swing_task=swing_task,
-            attitude_weight=60.0 if exact_realizer else 8.0,
+            attitude_weight=(240.0 if exact_realizer else 120.0)
+                            if scenario in ("walk", "contact_switch")
+                            else (60.0 if exact_realizer else 8.0),
         )
         mujoco.mj_step(model, data)
         mujoco.mj_forward(model, data)
