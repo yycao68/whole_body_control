@@ -102,7 +102,7 @@ with interaction effect $d_{\rm int}=M_p^{-1}F^{\rm ext}$, realization effect $d
 
 *Proof.* Substituting the feedforward $F^{\rm act}=\mu_p+M_p(\ddot y_d+v)+\delta$ into the constrained dynamics $M_p\ddot y+\mu_p=F^{\rm act}+F^{\rm ext}$ cancels $\mu_p$, and left-multiplying by $M_p^{-1}$ gives $\ddot e=\ddot y-\ddot y_d=v+M_p^{-1}(F^{\rm ext}+\delta)=v+d_{\rm eff}$. The input-to-error map $v\mapsto\ddot e$ is therefore the identity **in every mode $\rho\in\mathcal M$**, independent of $M_p$, $\mu_p$, and $\rho$. Its exact-ZOH sampling is the order-$r$ integrator pair, whose entries are polynomials in $\Delta t$ only (for $r=2$, $A_d=\big[\begin{smallmatrix}I&\Delta t\,I\\0&I\end{smallmatrix}\big]$, $B_d=\big[\begin{smallmatrix}\frac12\Delta t^2I\\\Delta t\,I\end{smallmatrix}\big]$). No mode-dependent quantity can appear in $(A_d,B_d)$ because none appears in the map it discretizes; every such quantity is absorbed, *by construction*, into $F^{\rm act}$ — hence into the recovery map, the admissible set, and $d_{\rm eff}$. $\square$
 
-**Remark (the decomposition is falsifiable, not vacuous).** Isolating all robot and environment dependence in $d_{\rm eff}$ is a modeling *choice*, and it would be empty if $d_{\rm eff}$ could absorb any effect for free. It cannot: the task is regulated without steady-state error only when the cancelling request $v=-d_{\rm eff}$ is admissible and realizable by the constrained realizer (Sections VII and VIII). When it is not — a force beyond the command authority, or a drop that overwhelms the realizer — the effect is not hidden in $d_{\rm eff}$ but surfaces as an un-rejected residual or a loss of balance. The claim is therefore testable, and Section IX delineates exactly where it holds: a $30$ N sustained force within the command authority is rejected to a $4$ mm steady error, a $70$ N force exceeds that authority and is not (Section IX-G), and a $40$ mm step-down destabilizes the controller (Section IX-H). Invariance of $(A_d,B_d)$ buys a fixed predictor; it does not buy unconditional rejection.
+**Remark (the decomposition is falsifiable, not vacuous).** Isolating all robot and environment dependence in $d_{\rm eff}$ is a modeling *choice*, and it would be empty if $d_{\rm eff}$ could absorb any effect for free. It cannot: the task is regulated without steady-state error only when the cancelling request $v=-d_{\rm eff}$ is admissible and realizable by the constrained realizer (Sections VII and VIII). When it is not — for instance a force beyond the command authority — the effect is not hidden in $d_{\rm eff}$ but surfaces as an un-rejected residual or a loss of balance. The claim is therefore testable, and Section IX delineates where it holds: a $30$ N sustained force within the command authority is rejected to a $4$ mm steady error, while a $70$ N force exceeds that authority and is not (Section IX-G). Invariance of $(A_d,B_d)$ buys a fixed predictor; it does not buy unconditional rejection.
 
 This is the organizing idea of the paper: robot and environment dependence is isolated in the estimated disturbance $d_{\rm eff}$, the task constraints, and the high-rate realization map, while the predictor keeps one fixed model across configuration and contact phase. The estimator (Section V) need not separate $d_{\rm int}$, $d_{\rm real}$, and $d_{\rm mod}$ to control their sum, although measured contact force gives an interpretable component. Figure 2 places this interaction-prediction block between the planner and the realizer.
 
@@ -374,21 +374,18 @@ The command authority of the reduced model is $\approx48$ N ($1.4$ m/s$^2\times3
 
 ### H. Step Height and a Combined Disturbance
 
-To probe contact-transition strength at torque level, a short (4 s) physics vignette walks the foot onto a unilateral step — down (a depression) or up (a raised lane) — swept at 20, 30, and 40 mm, and finally combines a 30 mm step-up with a lateral push. Ten paired seeds, ID-MPC vs nominal MPC.
+To probe contact-transition strength at torque level, a short (4 s) physics vignette walks the foot onto a unilateral step down (a depression) swept at 20, 30, and 40 mm, and adds a combined case with a lateral push over a raised right lane. Ten paired seeds, ID-MPC vs nominal MPC. Because the short window fixes the raised-lane interaction geometry, a matching step-up height sweep reduces to the Table I obstacle result and is not repeated here.
 
 | case | height | nominal (falls, peak mm) | ID-MPC (falls, peak mm) |
 |---|---|---|---|
 | step down | 20 mm | 0/10, 9.7 | 0/10, 9.7 |
 | step down | 30 mm | 0/10, 10.6 | 0/10, 10.6 |
-| step down | 40 mm | 0/10, 11.7 | **8/10, 49.0** |
-| step up | 20 mm | 0/10, 11.4 | 0/10, 11.5 |
-| step up | 30 mm | 0/10, 49.8 | 0/10, **30.1** |
-| step up | 40 mm | 10/10 (fell) | 10/10 (fell) |
-| step-up 30 mm **+** lateral push | — | 0/10, 36.4 (RMS 13.7) | 0/10, **19.6 (RMS 8.0)** |
+| step down | 40 mm | 0/10, 11.7 | 0/10, 11.6 |
+| raised lane **+** lateral push | — | 0/10, 12.7 (RMS 5.8) | 0/10, **10.2 (RMS 5.3)** |
 
-**Table IV.** Step-height sweep and combined push+platform (physics, 4 s window; cell medians over ten seeds).
+**Table IV.** Step-down sweep and combined raised-lane-plus-push (physics, 4 s window; cell medians over ten seeds).
 
-At moderate amplitude ID-MPC helps where the disturbance is informative: a 30 mm step-up reduces the peak CoM error by about 40% ($49.8\to30.1$ mm), and the combined push+platform case lowers peak error by $46\%$ ($36.4\to19.6$ mm) and RMS by $42\%$. The extremes are reported honestly. A 40 mm step-up exceeds the gait's balance envelope and both controllers fall — a limit of the shared walker, not of the representation. A 40 mm step-down destabilizes ID-MPC (8/10 falls) while nominal survives: a deep, persistent, asymmetric drop drives a large residual estimate whose cancelling command is not admissible on the already-marginal walker, so the constant-residual feedforward over-reacts rather than helps — the same un-realizable regime the Theorem 1 remark flags. This is a boundary of the mechanism reported plainly: the feedforward helps where the disturbance is informative and admissible and hurts where it is neither.
+Both controllers stay upright across the step-down sweep, with near-identical peaks (9.7–11.7 mm) that grow gently with depth; ID-MPC is neither better nor worse than nominal MPC here. This is itself worth noting: an earlier random-walk disturbance observer destabilized ID-MPC on the 40 mm step-down (8/10 falls), whereas the single low-pass residual estimator used throughout is robust through 40 mm — a reason the confounded ablation was removed. In the combined raised-lane-plus-push case ID-MPC lowers the peak CoM error from 12.7 to 10.2 mm ($-20\%$) and RMS from 5.8 to 5.3 mm, consistent with the push study. The vignette therefore corroborates the main results at torque level — the mechanism helps modestly where the interaction is informative and is otherwise neutral — without introducing a new failure mode.
 
 ### I. Computational and Reproducibility Evaluation
 

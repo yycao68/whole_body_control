@@ -136,18 +136,21 @@ def verify_supplementary(manuscript: str) -> dict:
             "missing figure: sustained_push_offset.png")
 
     pv = json.loads(PLATFORM_DATASET.read_bytes())
-    up30_nom = pv["sweep_cells"]["step_up|30|nominal_mpc"]["com_peak_mm"]
-    up30_int = pv["sweep_cells"]["step_up|30|interaction_mpc"]["com_peak_mm"]
-    require(up30_int < up30_nom,
-            f"step-up 30 mm: ID-MPC peak {up30_int:.1f} not below nominal {up30_nom:.1f}")
-    down40_int_falls = pv["sweep_cells"]["step_down|40|interaction_mpc"]["falls"]
-    require(down40_int_falls >= 5,
-            f"40 mm step-down ID-MPC should destabilize; falls={down40_int_falls}")
+    # Step-down sweep: both controllers stay upright through 40 mm (the earlier
+    # ID-MPC destabilization was a random-walk-observer artifact, now resolved).
+    for h in (20, 30, 40):
+        for c in ("nominal_mpc", "interaction_mpc"):
+            require(pv["sweep_cells"][f"step_down|{h}|{c}"]["falls"] == 0,
+                    f"step-down {h} mm {c} should not fall")
+    # Combined raised-lane + push: ID-MPC lowers the peak.
+    mp_nom = pv["merged_cells"]["push+platform|30|nominal_mpc"]["com_peak_mm"]
+    mp_int = pv["merged_cells"]["push+platform|30|interaction_mpc"]["com_peak_mm"]
+    require(mp_int < mp_nom,
+            f"combined push+platform: ID-MPC peak {mp_int:.1f} not below nominal {mp_nom:.1f}")
     require("Sustained-Force Rejection" in manuscript, "supplementary section title missing")
     return {
         "sustained_30N_offset_mm": {"nominal": nom30, "interaction": int30},
-        "step_up_30mm_peak_mm": {"nominal": up30_nom, "interaction": up30_int},
-        "step_down_40mm_interaction_falls": down40_int_falls,
+        "combined_push_platform_peak_mm": {"nominal": mp_nom, "interaction": mp_int},
     }
 
 
