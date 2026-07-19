@@ -1,5 +1,5 @@
 # Fdb version 4
-["pdflatex"] 1784498256.48772 "wbc_v3.tex" "wbc_v3.pdf" "wbc_v3" 1784498258.36531 0
+["pdflatex"] 1784498734.99767 "wbc_v3.tex" "wbc_v3.pdf" "wbc_v3" 1784498736.88222 0
   "/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/base/8r.enc" 1165713224 4850 80dc9bab7f31fb78a000ccfed0e27cab ""
   "/usr/local/texlive/2026/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/local/texlive/2026/texmf-dist/fonts/tfm/adobe/courier/pcrr8r.tfm" 1136768653 1292 bd42be2f344128bff6d35d98474adfe3 ""
@@ -106,8 +106,8 @@
   "figures/uneven_ground_timeseries.png" 1784479264.58295 270020 ea1ee180a0c314a88423f8a404cff5dd ""
   "figures/uneven_ground_timing.png" 1784479264.64348 65319 9147651c7b552256e3ab768e0433a99e ""
   "figures/uneven_ground_tracking.png" 1784479264.26799 64331 fed9c73aafa27b553f0e6ffc0e1afc64 ""
-  "wbc_v3.aux" 1784498258.25952 7406 41e1705b6acb89d9ceb29929e828f15d "pdflatex"
-  "wbc_v3.tex" 1784498163.04963 61821 c712d61fa63b659bcfc01accb0b45026 ""
+  "wbc_v3.aux" 1784498736.78337 7406 41e1705b6acb89d9ceb29929e828f15d "pdflatex"
+  "wbc_v3.tex" 1784498722.01284 62408 8c0048469106b8db74e22d3156c61dc2 ""
   (generated)
   "wbc_v3.aux"
   "wbc_v3.log"
