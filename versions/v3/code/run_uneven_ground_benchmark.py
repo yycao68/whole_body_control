@@ -225,7 +225,8 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
               platform_start_x: float = 0.025,
               platform_end_x: float = 0.065,
               capture_gain: tuple[float, float] | None = None,
-              stabilizer: StabilizerParams | None = None) -> tuple[dict, dict]:
+              stabilizer: StabilizerParams | None = None,
+              phase_sync: bool = False) -> tuple[dict, dict]:
     # ``stabilizer`` enables the shared, controller-independent capture-point gait
     # stabilizer (capture_point.py): discrete touchdown anchoring + one-step
     # predicted-touchdown DCM foot placement.  It reads only the physical CoM
@@ -338,6 +339,9 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
     last_swing_xy = None
     last_swing_nominal_xy = None
     pending_nominal_xy = None
+    synced_swing = None
+    if phase_sync:
+        plan.reset_sync()
     stab = (CapturePointStabilizer(omega=plan.omega, params=stabilizer)
             if stabilizer is not None else None)
     mpc_ms, wbc_ms = [], []
@@ -373,8 +377,14 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
 
     for k in range(n):
         t = k * SIM_DT
-        sample = plan.sample(t)
         measured = measured_foot_contacts(model, data)
+        if phase_sync:
+            sw_idx = 1 if synced_swing == "right" else 0
+            swing_down = bool(measured[sw_idx]) if synced_swing is not None else False
+            sample = plan.sample_synced(SIM_DT, swing_down)
+            synced_swing = sample.swing
+        else:
+            sample = plan.sample(t)
         if last_swing is not None and sample.swing is None and pending_foot is None:
             pending_foot, pending_xy, pending_since = last_swing, last_swing_xy.copy(), t
             pending_nominal_xy = (last_swing_nominal_xy.copy()

@@ -80,6 +80,41 @@ class DCMReferenceProvider:
                 self.dcm_initial[k + 1] - self.zmp[k]
             ) * np.exp(-self.omega * dt)
 
+        # Phase-synchronized playback state (used only by sample_synced).
+        self._pt = 0.0        # reference phase time (decoupled from the clock)
+        self._wait = False    # frozen at a single-support boundary awaiting touchdown
+
+    def reset_sync(self) -> None:
+        self._pt = 0.0
+        self._wait = False
+
+    def sample_synced(self, dt: float, swing_down: bool) -> "ReferenceSample":
+        """Advance the reference by gait *phase*, not the wall clock, and
+        re-synchronize the single-support boundary to measured touchdown.
+
+        ``swing_down`` is the measured contact of the current swing foot. The
+        reference DCM is held at the step's capture point (the segment-boundary
+        value) if the foot lands late, and snapped forward if it lands early, so
+        the reference stays phase-consistent with the actual contact sequence
+        instead of drifting on the clock. ``sample`` is left untouched.
+        """
+        if self._wait:
+            if swing_down:            # late touchdown finally occurred
+                self._wait = False
+                self._pt += dt
+        else:
+            self._pt += dt
+            k, _, _ = self._segment(self._pt)
+            single_support = self.side[k] != "both"
+            boundary = self.times[min(k + 1, len(self.times) - 1)]
+            ss_start = self.times[k] + self.double_support_time
+            if single_support and swing_down and ss_start <= self._pt < boundary:
+                self._pt = boundary   # early touchdown: snap phase forward
+            elif single_support and self._pt >= boundary and not swing_down:
+                self._pt = boundary - 1e-6   # freeze at the capture point
+                self._wait = True
+        return self.sample(self._pt)
+
     def _segment(self, t: float) -> tuple[int, float, float]:
         for k in range(len(self.zmp) - 1):
             if self.times[k] <= t < self.times[k + 1]:
