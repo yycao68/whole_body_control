@@ -1,0 +1,40 @@
+{
+  "status": "PASS",
+  "dataset": "uneven_ground_benchmark.json",
+  "sha256": "da87a08b198abfa82d05eae0e028cea4a484c41a31d5022d5066ca554cb2b4d1",
+  "reported_controllers": [
+    "impedance",
+    "nominal_mpc",
+    "interaction_mpc"
+  ],
+  "obstacle_interaction_vs_nominal_peak_pct": -6.976215915320033,
+  "realizer": "soft (exact_realizer=False)",
+  "estimator": "single FilteredAccelerationResidualEstimator",
+  "paper_figures": [
+    "multirate_architecture.png",
+    "prediction_realization_concept.png",
+    "uneven_ground_prediction.png",
+    "uneven_ground_tracking.png",
+    "uneven_ground_timeseries.png",
+    "external_push_summary.png",
+    "external_push_response.png",
+    "uneven_ground_timing.png"
+  ],
+  "continuous_video": "continuous_flat_idmpc.mp4",
+  "continuous_video_sha256": "56648b7f1a11d572f6c6733031285d91ed2fe576b4b61982712759099f3735db",
+  "continuous_video_lateral_rms_mm": 4.680868034005387,
+  "continuous_video_lateral_peak_mm": 10.632684743780235,
+  "continuous_video_lateral_mean_mm": -1.4776325510153792,
+  "continuous_video_final_second_lateral_rms_mm": 3.081054074380771,
+  "push_dataset": "external_push_benchmark.json",
+  "push_sha256": "1b74c4453e084d951447e90d09a1a20d752a80322c4ae7c0c5410a6996096bd3",
+  "lateral_ss_nominal_peak_mm": 15.99636468060503,
+  "lateral_ss_interaction_peak_mm": 12.378460041245862,
+  "push_interaction_vs_nominal_peak_pct": {
+    "lateral/double_support": -14.03298619758902,
+    "lateral/single_support": -22.617042756881734,
+    "forward/double_support": -6.226790694082938,
+    "forward/single_support": -13.665126038614371
+  },
+  "push_max_torque_utilization": 0.7189448787556028
+}

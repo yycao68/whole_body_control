@@ -1,0 +1,88 @@
+{
+  "controller": "interaction_mpc",
+  "terrain": "flat",
+  "seed": 4300,
+  "duration_requested_s": 15.0,
+  "duration_completed_s": 14.999999999997126,
+  "fell": false,
+  "qp_fallbacks": 0,
+  "forward_travel_m": 0.23096373181913063,
+  "com_xyz_rms_mm": 4.520631492224222,
+  "com_xyz_peak_mm": 10.632684743780235,
+  "lateral_error_rms_mm": 4.680868034005387,
+  "lateral_error_peak_mm": 10.632684743780235,
+  "lateral_error_mean_mm": -1.4776325510153792,
+  "lateral_error_final_second_rms_mm": 3.081054074380771,
+  "lateral_error_final_second_mean_mm": 2.213009293314923,
+  "roll_pitch_rms_rad": 0.03999096126954151,
+  "max_abs_roll_pitch_rad": 0.09611355147318677,
+  "realization_residual_rms_mps2": 3.0822189573205288,
+  "realization_residual_peak_mps2": 32.2602991891274,
+  "peak_contact_force_n": 441.2710569774691,
+  "contact_impulse_ns": 4983.792474495754,
+  "max_torque_utilization": 0.4102761181514616,
+  "min_friction_margin": -1.6048178785629528,
+  "obstacle_contacted": false,
+  "obstacle_contact_during_settling": false,
+  "obstacle_first_contact_s": null,
+  "prediction": {
+    "1": {
+      "horizon_ms": 1.0,
+      "n": 1500,
+      "nominal_com_rmse_mm": 0.0024712537883855037,
+      "augmented_com_rmse_mm": 0.0024723115310558786,
+      "nominal_roll_pitch_rmse_mrad": 0.15970518233993897,
+      "augmented_roll_pitch_rmse_mrad": 0.15975728890390625
+    },
+    "5": {
+      "horizon_ms": 5.0,
+      "n": 1500,
+      "nominal_com_rmse_mm": 0.01443922728562053,
+      "augmented_com_rmse_mm": 0.01440817476584038,
+      "nominal_roll_pitch_rmse_mrad": 0.8002863436530059,
+      "augmented_roll_pitch_rmse_mrad": 0.801569390751786
+    },
+    "10": {
+      "horizon_ms": 10.0,
+      "n": 1499,
+      "nominal_com_rmse_mm": 0.03645847061077275,
+      "augmented_com_rmse_mm": 0.03633434908900177,
+      "nominal_roll_pitch_rmse_mrad": 1.593926793800512,
+      "augmented_roll_pitch_rmse_mrad": 1.5989523307217326
+    }
+  },
+  "timing": {
+    "wbc": {
+      "n": 7480,
+      "median_ms": 3.6305620160419494,
+      "p99_ms": 11.325891765882261,
+      "max_ms": 17.753457999788225,
+      "deadline_ms": 2.0,
+      "deadline_miss_fraction": 1.0
+    },
+    "mpc": {
+      "n": 1495,
+      "median_ms": 0.2708330284804106,
+      "p99_ms": 0.3747874998953193,
+      "max_ms": 0.4867499810643494,
+      "deadline_ms": 10.0,
+      "deadline_miss_fraction": 0.0
+    }
+  },
+  "video": "versions/v3/code/results/continuous_flat_idmpc.mp4",
+  "schema_version": 1,
+  "kind": "torque_level_continuous_flat_video",
+  "root_assist": false,
+  "planner": {
+    "n_steps": 12,
+    "step_length": 0.03,
+    "step_time": 1.4,
+    "double_support_time": 1.0,
+    "settle_time": 1.0,
+    "lateral_zmp_scale": 1.0,
+    "smooth_double_support": true,
+    "zmp_transfer_time": 0.05,
+    "smooth_lateral_only": false
+  },
+  "video_sha256": "56648b7f1a11d572f6c6733031285d91ed2fe576b4b61982712759099f3735db"
+}
