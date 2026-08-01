@@ -1,0 +1,46 @@
+{
+  "nominal": {
+    "rmse_N": 0.1339075524194922,
+    "peak_err_N": 0.15316624725776393,
+    "false_pos_rate": 0.0,
+    "fell": null
+  },
+  "turning": {
+    "rmse_N": 0.1408581886124087,
+    "peak_err_N": 0.1668914583730646,
+    "false_pos_rate": 0.0,
+    "fell": null
+  },
+  "diagonal": {
+    "rmse_N": 0.14044652387618026,
+    "peak_err_N": 0.15808089048405283,
+    "false_pos_rate": 0.0,
+    "fell": null
+  },
+  "step_up_30": {
+    "rmse_N": 0.15055595344238634,
+    "peak_err_N": 0.21842579974496548,
+    "false_pos_rate": 0.0,
+    "fell": 2.55
+  },
+  "step_down_30": {
+    "rmse_N": 0.13373236876357386,
+    "peak_err_N": 0.15316624725770467,
+    "false_pos_rate": 0.0,
+    "fell": null
+  },
+  "impulse_120": {
+    "rmse_N": 9.668503426581124,
+    "peak_err_N": 115.61733029722826,
+    "detect_delay_s": 0.0,
+    "decay_s": 0.18999999999999995,
+    "fell": null
+  },
+  "sustained_12": {
+    "rmse_N": 1.0057283329498061,
+    "peak_err_N": 11.611916032273761,
+    "detect_delay_s": 0.014000000000000234,
+    "track_rmse_N": 1.0184076524804595,
+    "fell": null
+  }
+}

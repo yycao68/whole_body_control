@@ -1,0 +1,46 @@
+{
+  "bias_sweep": {
+    "-5": {
+      "nominal_roll": 6.8633770492518575,
+      "sustained8N_offset": 14.812348071551884,
+      "transient300_falls": 20
+    },
+    "-3": {
+      "nominal_roll": 6.8633770492518575,
+      "sustained8N_offset": 17.350093637914775,
+      "transient300_falls": 18
+    },
+    "0": {
+      "nominal_roll": 6.8633770492518575,
+      "sustained8N_offset": 20.20066169640967,
+      "transient300_falls": 15
+    },
+    "3": {
+      "nominal_roll": 6.8633770492518575,
+      "sustained8N_offset": 394.1032392878533,
+      "transient300_falls": 15
+    },
+    "5": {
+      "nominal_roll": 6.8633770492518575,
+      "sustained8N_offset": 25.75442256728892,
+      "transient300_falls": 19
+    }
+  },
+  "noise": {
+    "0": {
+      "nominal_roll": 6.8633770492518575,
+      "sustained8N_offset": 20.20066169640967,
+      "transient300_falls": 15
+    },
+    "3": {
+      "nominal_roll": 6.790306051100951,
+      "sustained8N_offset": 18.902829765263736,
+      "transient300_falls": 9
+    },
+    "6": {
+      "nominal_roll": 6.790306051100951,
+      "sustained8N_offset": 17.957582772153025,
+      "transient300_falls": 10
+    }
+  }
+}

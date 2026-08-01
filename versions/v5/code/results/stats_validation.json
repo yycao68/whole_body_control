@@ -1,0 +1,52 @@
+{
+  "n_seeds": 40,
+  "transient": {
+    "280": {
+      "policy_falls": 24,
+      "wrench_falls": 6,
+      "policy_only_fall": 20,
+      "wrench_only_fall": 2,
+      "mcnemar_p": 0.00012111663818359375
+    },
+    "300": {
+      "policy_falls": 40,
+      "wrench_falls": 23,
+      "policy_only_fall": 17,
+      "wrench_only_fall": 0,
+      "mcnemar_p": 1.52587890625e-05
+    },
+    "320": {
+      "policy_falls": 40,
+      "wrench_falls": 37,
+      "policy_only_fall": 3,
+      "wrench_only_fall": 0,
+      "mcnemar_p": 0.25
+    }
+  },
+  "sustained": {
+    "8": {
+      "policy_med": 451.6500687490467,
+      "policy_iqr": [
+        431.9210750456452,
+        487.174210230433
+      ],
+      "wrench_med": 20.20066169640967,
+      "wrench_iqr": [
+        6.983426461476235,
+        28.69646364121247
+      ]
+    },
+    "12": {
+      "policy_med": 720.7751218900867,
+      "policy_iqr": [
+        700.6803267369017,
+        753.8066759904228
+      ],
+      "wrench_med": 280.4896169877072,
+      "wrench_iqr": [
+        233.18812494555004,
+        327.0516004097113
+      ]
+    }
+  }
+}

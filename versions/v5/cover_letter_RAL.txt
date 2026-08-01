@@ -1,0 +1,19 @@
+Dear Editor-in-Chief,
+
+Please consider our manuscript, "Interaction Dynamics: A Physical-Interaction Reasoning Layer for Humanoid Robots," for publication in IEEE Robotics and Automation Letters. This is a journal-only submission, without a conference-presentation option.
+
+A legged robot in contact with the world must cope with two qualitatively different kinds of disturbance: a transient push, which is best absorbed by stepping toward the fall, and a sustained force, which must instead be resisted by stepping against it. These two responses are opposite in sign, yet center-of-mass kinematics alone cannot tell them apart online, since a recovered push and a standing force leave the same lateral offset. Existing interaction controllers (impedance, admittance) assume a single interaction mode is always present and regulate its magnitude; they do not address the online decision of which mode is acting.
+
+Our manuscript addresses this decision problem directly. We estimate the external wrench from the horizontal CoM linear-momentum residual and use its magnitude and persistence to arbitrate, through a confidence gate and a persistence-weighted blend, between a predictive capture command and an integral hold. The resulting Interaction Dynamics layer sits between a frozen reinforcement-learning walking policy and the robot, biasing only the policy's velocity command, so it requires no retraining and no whole-body inverse-dynamics realization of the correction (which we show can destabilize a strong learned policy). On a simulated Unitree G1, the layer reduces single-support push falls at 280 N from 24/40 to 2/40 (McNemar p < 1e-4, with no paired trial made worse) and holds an 8 N sustained force to within 1 mm of a dedicated hold specialist, while leaving nominal walking unchanged. A six-stage validation study additionally reports an oracle ablation, sensing-robustness sweeps, and a capture-amplification failure mode we discovered and fixed during development.
+
+We believe the manuscript is a good fit for RA-L's scope at the intersection of legged locomotion, physical human/environment interaction, and learning-based control, and that its combination of a wrench-based mode-arbitration layer with a frozen learned policy will interest the journal's readership working on both model-based and learned locomotion controllers.
+
+This manuscript extends the fixed-base "Interaction Dynamics" framework of our earlier work (Cao and Tang, arXiv:2606.08281) to a floating-base humanoid platform; the representation, estimator, and confidence/persistence arbitration are substantially redeveloped for locomotion and are validated on a different system, and no text or results are shared between the two manuscripts. The present work has not been published or submitted elsewhere, and all authors have approved this submission.
+
+Full implementation details (controller equations, parameters, and a per-step algorithm listing) are provided as supplementary material.
+
+Thank you for your consideration.
+
+Sincerely,
+Yongyan Cao
+yongyancao@gmail.com

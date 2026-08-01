@@ -1,0 +1,26 @@
+{
+  "policy": {
+    "transient_300N_latSS_falls": 10,
+    "sustained_8N_offset_mm": 403.6412087713576
+  },
+  "capture-specialist": {
+    "transient_300N_latSS_falls": 3,
+    "sustained_8N_offset_mm": 1091.3573153047805
+  },
+  "hold-specialist": {
+    "transient_300N_latSS_falls": 10,
+    "sustained_8N_offset_mm": 17.219644839168772
+  },
+  "CoM-only-unified": {
+    "transient_300N_latSS_falls": 4,
+    "sustained_8N_offset_mm": 765.8381494903822
+  },
+  "wrench-unified": {
+    "transient_300N_latSS_falls": 3,
+    "sustained_8N_offset_mm": 115.23442638827156
+  },
+  "oracle-unified": {
+    "transient_300N_latSS_falls": 3,
+    "sustained_8N_offset_mm": 28.727730692628697
+  }
+}

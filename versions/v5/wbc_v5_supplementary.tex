@@ -1,0 +1,104 @@
+\documentclass[journal]{IEEEtran}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage[noend]{algpseudocode}
+\usepackage{algorithm}
+
+\graphicspath{{code/figures/}}
+
+\begin{document}
+
+\title{Supplementary Material for ``Interaction Dynamics: A Physical-Interaction Reasoning Layer for Humanoid Robots''}
+
+\author{Yongyan~Cao%
+\thanks{Y.~Cao (e-mail: yongyancao@gmail.com).}}
+
+\markboth{Preprint --- Interaction Dynamics (Supplementary Material)}{Cao: A Physical-Interaction Reasoning Layer for Humanoid Robots}
+
+\maketitle
+
+\section{Controller Equations and Parameters}
+\label{app:impl}
+
+The simulation runs at 500~Hz and the layer at 50~Hz ($\Delta t=0.02$~s). The planar-CoM error is $e=c_{xy}-c_{xy}^{\rm ref}$ with a deadband-shrunk error $e_{\rm eff}=e\,\max(0,\|e\|-\delta)/\|e\|$. The external force $\hat F_{\rm ext}$ is estimated by the horizontal wrench estimator of the main paper, low-passed at $5$~Hz.
+
+\textbf{Confidence gate.} During quiescence ($\|e\|<\delta$) an EWMA tracks the wrench-noise power, $\sigma_f^2\!\leftarrow\!(1-\alpha)\sigma_f^2+\alpha\|\hat F_{\rm ext}\|^2$ with $\alpha=1-e^{-2\pi f_\sigma\Delta t}$, and $F_{\rm cap}=F_{\rm floor}+k_\sigma\sqrt{\sigma_f^2}$. The latch is
+\begin{equation}
+g\leftarrow\begin{cases}
+1,& \|\hat F_{\rm ext}\|>F_{\rm cap},\\
+\max(0,\,g-\Delta t/\tau_g),& \|\hat F_{\rm ext}\|\le F_{\rm cap}\ \wedge\ \|e\|<1.5\delta,\\
+g,&\text{otherwise},
+\end{cases}
+\label{eq:gate}
+\end{equation}
+so capture stays engaged through a long recovery ($\|e\|\ge1.5\delta$) and releases only once recovered.
+
+\textbf{Persistence.} A wrench timer, decaying at twice the fill rate,
+\begin{equation}
+t_F\leftarrow\begin{cases}t_F+\Delta t,&\|\hat F_{\rm ext}\|>F_{\rm th},\\ \max(0,t_F-2\Delta t),&\text{else,}\end{cases}
+\quad p=\mathrm{clip}\!\Big(\tfrac{t_F-\tau_0}{\tau_r},0,1\Big).
+\label{eq:persist}
+\end{equation}
+
+\textbf{Capture and hold.} $a_e$ is the first input of a horizon-$N$ MPC on $\ddot e=a_e+\hat d_{\rm eff}$ minimizing $\sum_j(q_p\|e_j\|^2+q_v\|\dot e_j\|^2+r\|a_{e,j}\|^2)$ s.t.\ $\|a_e\|\le a_{\max}$; then $u_{\rm cap}=-k_{\rm map}\,a_e$ (so $k_{\rm map}$, in seconds, maps task acceleration to a velocity-command bias). The hold uses a $p$-gated leaky integral $e_I\!\leftarrow\!0.98\,e_I+p\,e_{\rm eff}\Delta t$, $u_{\rm hold}=-k_p e_{\rm eff}-k_i e_I$, and the output is
+\begin{equation}
+u=\mathrm{sat}_{v_{\max}}\!\Big(\mathrm{slew}\big[(1-p)\,g\,u_{\rm cap}+p\,u_{\rm hold}\big]\odot s_{\rm axis}\Big),
+\label{eq:out}
+\end{equation}
+added to the frozen policy's walk command. Parameters are in Table~\ref{tab:params}.
+
+\begin{table}[t]
+\caption{Layer parameters (as implemented).}
+\label{tab:params}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lll}
+\hline
+symbol & meaning & value\\
+\hline
+$\Delta t$ & control period & 0.02 s (50 Hz)\\
+$\delta$ & error deadband & 0.03 m\\
+$F_{\rm floor}$ & force floor & 1.0 N\\
+$k_\sigma$ & confidence margin & 3.0\\
+$f_\sigma$ & noise-tracker bandwidth & 0.3 Hz\\
+$\tau_g$ & gate-release window & 1.6 s\\
+$F_{\rm th}$ & persistence threshold & 3.0 N\\
+$\tau_0,\tau_r$ & persistence delay, ramp & 0.4 s, 0.4 s\\
+$N$ & MPC horizon & 20 (0.4 s)\\
+$q_p,q_v,r$ & MPC weights & 15, 100, 0.05\\
+$a_{\max}$ & MPC accel bound & 6 m/s$^2$\\
+$k_{\rm map}$ & accel$\rightarrow$cmd map & 0.12 s\\
+$k_p,k_i$ & hold P, I & 3.0, 8.0\\
+$s_{\rm axis}$ & $(x,y)$ channel scale & (0.2, 1.0)\\
+$v_{\max}$, slew & bias clamp, rate limit & 0.6 m/s, 6.0 m/s$^2$\\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{algorithm}[t]
+\caption{Confidence-gated capture--hold arbitration (per 50~Hz step)}
+\label{alg:layer}
+\begin{algorithmic}[1]
+\State $\hat F_{\rm ext}\gets m\ddot c_{xy}-\sum_i F_{i,xy}$ \Comment{estimate; low-pass 5 Hz}
+\If{$\|e\|<\delta$} update $\sigma_f^2$ (EWMA); \Return $u=0$ \Comment{quiescent}
+\EndIf
+\State $F_{\rm cap}\gets F_{\rm floor}+k_\sigma\sqrt{\sigma_f^2}$; update latch $g$ by \eqref{eq:gate}
+\State update persistence $p$ by \eqref{eq:persist}
+\State $a_e\gets\mathrm{MPC}(e_{\rm eff},\dot e,\hat d_{\rm eff})$; $u_{\rm cap}\gets-k_{\rm map}a_e$
+\State $u_{\rm hold}\gets-k_p e_{\rm eff}-k_i e_I$ \Comment{$e_I$: $p$-gated leaky integral}
+\State $u\gets(1-p)\,g\,u_{\rm cap}+p\,u_{\rm hold}$; then $\odot s_{\rm axis}$, slew-limit, saturate \eqref{eq:out}
+\State add $u$ to the policy's velocity command
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{Floor-corrected sustained drift.} For seed $i$ and force $F$, $D_i(F)=|\bar o_i(F)-\bar o_i(0)|$, where $\bar o_i(F)$ is the settled lateral CoM offset from the recorded reference and $\bar o_i(0)$ the same-seed no-force run; we report the median [IQR] over seeds. Same-seed subtraction cancels the gait-sway/reference-phase floor ($\sim$30~mm).
+
+\textbf{Why a persistent bias does not fire the gate.} A constant foot-force bias $b$ is absorbed by $\sigma_f$: during quiescence the EWMA drives $\sigma_f^2\!\to\!b^2$, so $F_{\rm cap}\!\to\!F_{\rm floor}+k_\sigma b\approx16$~N at $b=5$~N, far above the bias---hence $\|\hat F_{\rm ext}\|=b$ never crosses $F_{\rm cap}$ and capture is not engaged. Sustained rejection is unaffected because the hold path is deviation-driven and ungated. A slowly-updated bias estimate $\mu_F$ with the gate on $\|\hat F_{\rm ext}-\mu_F\|$ would separate bias from force explicitly; we note this as the cleaner design for hardware.
+
+\end{document}

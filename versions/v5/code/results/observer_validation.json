@@ -1,0 +1,46 @@
+{
+  "nominal|finite-diff": {
+    "rmse_N": 0.1339075524194922,
+    "peak_err_N": 0.15316624725776393,
+    "false_pos_rate": 0.0
+  },
+  "nominal|observer": {
+    "rmse_N": 0.7033853846813842,
+    "peak_err_N": 7.024194307465526,
+    "false_pos_rate": 0.0037837837837837837
+  },
+  "step_down_30|finite-diff": {
+    "rmse_N": 0.13373236876357386,
+    "peak_err_N": 0.15316624725770467,
+    "false_pos_rate": 0.0
+  },
+  "step_down_30|observer": {
+    "rmse_N": 0.7240958943203134,
+    "peak_err_N": 7.02419430746577,
+    "false_pos_rate": 0.004054054054054054
+  },
+  "impulse_120|finite-diff": {
+    "rmse_N": 9.668503426581124,
+    "peak_err_N": 115.61733029722826,
+    "detect_delay_s": 0.0,
+    "decay_s": 0.18999999999999995
+  },
+  "impulse_120|observer": {
+    "rmse_N": 9.281838803689434,
+    "peak_err_N": 115.15460242801575,
+    "detect_delay_s": 0.0,
+    "decay_s": 0.18400000000000016
+  },
+  "sustained_12|finite-diff": {
+    "rmse_N": 1.0057283329498061,
+    "peak_err_N": 11.611916032273761,
+    "detect_delay_s": 0.014000000000000234,
+    "track_rmse_N": 1.0184076524804595
+  },
+  "sustained_12|observer": {
+    "rmse_N": 1.2809855815611033,
+    "peak_err_N": 12.603676496923908,
+    "detect_delay_s": 0.014000000000000234,
+    "track_rmse_N": 1.3532347467160966
+  }
+}

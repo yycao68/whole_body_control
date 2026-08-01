@@ -1,0 +1,449 @@
+\documentclass[journal]{IEEEtran}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage[noend]{algpseudocode}
+\usepackage{algorithm}
+
+\graphicspath{{code/figures/}}
+
+\newtheorem{proposition}{Proposition}
+\newtheorem{lemma}{Lemma}
+
+\begin{document}
+
+\title{Interaction Dynamics: A Physical-Interaction Reasoning Layer for Humanoid Robots}
+
+\author{Yongyan~Cao%
+\thanks{Y.~Cao (e-mail: yongyancao@gmail.com).}}
+
+\markboth{Preprint --- Interaction Dynamics}{Cao: A Physical-Interaction Reasoning Layer for Humanoid Robots}
+
+\maketitle
+
+\begin{abstract}
+A walking robot must cope with physical contact of very different kinds. A brief push injects momentum and is best absorbed by stepping toward the fall to capture it, whereas a sustained force, such as a lean or a payload, must be resisted by stepping against it. These two responses have opposite sign, yet center-of-mass (CoM) kinematics cannot distinguish the cases online, because a recovered push and a standing force leave the same lateral offset. What separates them is whether a force is still acting, which is not a kinematic quantity. We estimate the external force from the horizontal CoM momentum residual and use it to choose the response. The resulting Interaction Dynamics layer sits between a frozen reinforcement-learning walking policy and the robot and biases the policy's velocity command. A confidence gate engages the layer only when the estimated wrench rises above its own measured noise floor, and a persistence timer blends a predictive capture command with an integral hold. On a simulated Unitree G1, the layer cuts single-support push falls at 280~N from 24/40 to 2/40 (McNemar $p<10^{-4}$, with no paired trial made worse) and holds a sustained 8~N force to 13~mm of lateral drift, against 12~mm for a dedicated hold controller, while nominal walking is unchanged. We read the layer as a fast, short-horizon interface for physical interaction that sits below motion planning and above whole-body control.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Interaction dynamics, external-wrench estimation, humanoid locomotion, push recovery, physical human--robot interaction, model-based physical AI, interaction-mode arbitration, confidence-based mode selection.
+\end{IEEEkeywords}
+
+\section{Introduction}
+\label{sec:intro}
+
+\IEEEPARstart{A}{legged} robot in the physical world is continuously subject to \emph{external interaction}: hands push on it, tools and payloads load it, and the terrain applies contact forces that differ from those the motion plan assumed. Such interaction is heterogeneous. A shove in a crowd is a \textbf{transient impulse}---a brief, high force that injects momentum and then vanishes. A person leaning on the robot, a wind load, or a persistent contact is a \textbf{sustained force}---a low, standing force that must be continuously resisted. These two modes are not merely different in magnitude; they demand \emph{opposite} control actions. To recover from a transient push, a biped must step \emph{toward} the direction of the fall so that a foot lands under the accelerating CoM (a capture step). To hold position against a sustained force, it must instead lean and step \emph{against} the force. Applying the transient response to a sustained force amplifies the drift; applying the sustained response to a transient push fails to arrest the momentum.
+
+This paper makes three observations that, together, motivate a new layer in the control stack.
+
+\textbf{Observation 1 (the discrimination problem).} The correct interaction mode cannot be inferred from CoM kinematics alone. A transient push and a sustained force can leave the \emph{same} persistent lateral displacement: after a push, a biped recovers balance at a translated position, so its CoM error stays nonzero indefinitely---indistinguishable, from position and velocity alone, from a standing force. The distinguishing information is \emph{whether an external force is still acting}, which is not a kinematic quantity.
+
+\textbf{Observation 2 (the representation).} Despite this heterogeneity, all external interaction shares one representation. In selected task coordinates, after nominal dynamic compensation, the tracking error obeys a fixed double integrator driven by a single \emph{interaction residual} $d_{\rm eff}$ that aggregates the external wrench, realization error, and model mismatch. This model is invariant across configuration and contact mode: interaction becomes a \emph{predictive state} on a shared model, rather than a property to be re-modeled per contact.
+
+\textbf{Observation 3 (the time scale).} Physical-interaction control and perception work on different time scales and solve different problems. Perception and planning reason about the world and the task, for example by recognizing terrain, predicting a person's intent, or replanning footholds, over tens to hundreds of milliseconds. Reacting to a force cannot wait for that loop: the response must be immediate, and it needs only the estimated interaction, not a world model. This argues for a short-time-scale layer below planning and above the actuators, whose job is to manage physical interaction while the slower loops update. The same split organizes a model-based Physical AI stack, in which perception and planning reason about the world while a fast interaction layer handles the physical interaction itself; the two are complementary rather than competing.
+
+This makes the control problem one of mode selection rather than force regulation. Classical interaction controllers, such as impedance and admittance schemes, assume that a single interaction is always present and regulate its magnitude. Here the mode is unknown and must be inferred online: the layer must first decide whether an external interaction is present, and then which regime it is, before it can act. The external-force estimate is what makes both decisions possible, and it is the information that center-of-mass kinematics lack.
+
+We call this layer \textbf{Interaction Dynamics}. Fig.~\ref{fig:arch} places it in a model-based Physical AI hierarchy.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{architecture}
+\caption{Interaction Dynamics as the fast physical-interaction layer between planning and the whole-body realizer. It estimates the external 
+wrench, arbitrates capture vs.\ hold through a two-level confidence mechanism, and modulates the frozen policy's walk command; the falling-rate 
+cue $\dot\theta_{\rm fall}$ returns upward through a \emph{proposed}, unevaluated planner interface.}
+\label{fig:arch}
+\end{figure}
+
+The layer carries out this decision in three steps. It estimates the external wrench and how long it has persisted,
+decides whether a real interaction is present and whether it is transient or sustained, and applies the corresponding correction: defer to 
+the policy, capture, or hold. The estimator, the confidence gate, and the persistence classifier are thus parts of one pipeline rather than 
+separate additions. Section~\ref{sec:rep} sets up the representation, Section~\ref{sec:est} the estimator, and Section~\ref{sec:control} the 
+gating and control; Section~\ref{sec:val} evaluates the result.
+
+The layer does not replace perception or planning; it provides stability during the interval before a new plan is available. When the disturbance exceeds the layer's authority, the state it exposes, such as a falling angle whose rate shows that stabilization authority is running out, is the signal a higher layer needs to widen the stance, slow down, replan footsteps, or abandon a task.
+
+To make the contribution about interaction and not about locomotion, we deliberately treat 
+locomotion as a \textbf{frozen validation platform}: we take an off-the-shelf pretrained RL
+walking policy \cite{r16} for a Unitree G1, freeze it, and never tune it during any interaction experiment.
+The interaction layer sits on top and modulates the policy's walk command. A natural 
+alternative---realizing the interaction correction through a whole-body inverse-dynamics/contact QP, 
+as classical interaction control would---turns out to \emph{destabilize} a strong learned policy, 
+because the policy's balance is a closed-loop property of its own control law; we report this as a 
+negative result that motivates the command-modulation coupling.
+
+This paper makes four contributions.
+\begin{enumerate}
+\item \emph{Problem formulation.} We show that transient and sustained interactions call for opposite command-space recovery actions under a shared locomotion interface, and that CoM kinematics alone cannot tell the two apart online.
+\item \emph{Method.} A wrench-gated persistence arbitration that blends a predictive capture command with an integral hold and drives a frozen learned policy through its native velocity-command interface. The external-force estimate from the CoM linear-momentum residual is the enabling signal, and the fixed configuration-invariant model (Lemma~\ref{lem:model}, adapted from \cite{r1}) is the substrate.
+\item \emph{Properties.} Capture-path transparency, so the layer reduces to the frozen policy when disengaged and cannot start the capture runaway, and a bounded augmentation command under bounded estimation error (Propositions~\ref{prop:gate}--\ref{prop:bounded}).
+\item \emph{Evaluation.} A paired humanoid study on a Unitree G1 with specialist, CoM-only, and oracle ablations, statistical push and sustained-force tests, sensing-robustness sweeps, and a discovered-and-fixed failure mode.
+\end{enumerate}
+
+\section{Related Work}
+\label{sec:related}
+
+\textbf{Locomotion control.} Convex MPC \cite{r2,r3,r13}, whole-body inverse dynamics and hierarchical QPs \cite{r4,r5,r7,r9}, and unified whole-body MPC \cite{r10} embed contact and support in the predictive model. We instead predict a fixed double-integrator task model and add a thin layer atop a frozen controller.
+
+\textbf{Push recovery and reactive stepping.} Recovery from a shove is classically posed through the capture point and the divergent component of motion \cite{r20,r21}, with reactive stepping placing a foot to arrest momentum \cite{r22}. These target the transient case and assume a model-based stepping controller. We keep such capture behavior for transients, add an explicit sustained-force mode, select between them online, and act through a learned policy's command interface rather than a dedicated stepping controller.
+
+\textbf{External-force and momentum observers.} External forces can be estimated without force sensing through generalized-momentum observers \cite{r14,r15}, used for collision detection and reaction on manipulators and, more recently, humanoids \cite{r25}. We use the CoM \emph{linear}-momentum residual not as a collision flag but as a confidence and persistence signal that drives mode selection.
+
+\textbf{Layering on a frozen policy.} Adding a model-based correction to a fixed learned policy connects to residual reinforcement learning \cite{r23} and to supervisory and multiple-model control, where a higher-level logic switches or blends among controllers \cite{r24}. Our layer is a supervisory arbitration in this sense: a confidence gate and a persistence classifier blend two hand-designed corrections without retraining the policy.
+
+\textbf{Interaction control and positioning.} Impedance and admittance control \cite{r6,r11,r12} assume a single, always-present interaction and regulate its magnitude; we treat which mode is present as the unknown. The fixed-model representation and its offset-free regulation for fixed-base contact were developed in \cite{r1}, and we carry them onto a floating base. Wrench estimation, confidence gating, persistence-based blending, and command-space augmentation are individually known; the contribution is their combination into an interaction layer that arbitrates transient capture against sustained hold on a frozen humanoid walker.
+
+\section{Interaction Dynamics: The Representation}
+\label{sec:rep}
+
+\subsection{Floating-base model and task residual}
+\label{sec:rep-model}
+
+With generalized coordinates $q=[q_b^\top,q_j^\top]^\top$ (floating base and actuated joints), the dynamics are
+\begin{equation}
+M(q)\ddot q+h(q,\dot q)=S^\top\tau+J_c^\top\lambda+w_{\rm ext},
+\label{eq:dyn}
+\end{equation}
+with contact wrenches $\lambda$ and external interaction $w_{\rm ext}$. Let $y$ collect selected task coordinates (here planar CoM position) and $e=y-y_d$ the tracking error against a nominal plan. Under a well-conditioned task inertia and nominal feedforward, the realized error obeys the \textbf{canonical interaction model}
+\begin{equation}
+\ddot e=a_e+d_{\rm eff},\qquad d_{\rm eff}=d_{\rm int}+d_{\rm real}+d_{\rm mod},
+\label{eq:model}
+\end{equation}
+where $a_e$ is the commanded task-acceleration correction, $d_{\rm int}=M_p^{-1}F^{\rm ext}$ the task-acceleration effect of the external interaction, $d_{\rm real}$ the realization discrepancy, and $d_{\rm mod}$ the model residual.
+
+\begin{lemma}[fixed requested-task predictor]
+\label{lem:model}
+For a task of relative degree $r$ whose requested coordinate is held fixed across a set of contact modes, the exact zero-order-hold transition pair of \eqref{eq:model} is the order-$r$ integrator-chain pair $(A_d,B_d)$, a function of the sample period and $r$ alone. Robot mechanics, contact geometry, and environment enter only $d_{\rm eff}$ and the admissible-command set, never $(A_d,B_d)$. A contact switch changes the residual and the recovery map but leaves the prediction matrices invariant. (Under a well-conditioned task inertia and exact nominal feedforward; the integrator-chain result follows as in \cite{r1}, carried to the floating base.)
+\end{lemma}
+
+\emph{Why the fixed model suffices.} The prediction pair $(A_d,B_d)$ describes only how a task coordinate and its rates evolve under a commanded task acceleration over one sample---pure integrator-chain kinematics, which know nothing of the robot. Everything that \emph{is} robot- and contact-specific---the mass matrix, Coriolis and gravity terms, contact Jacobians, and the external wrench---enters only through the acceleration actually produced, i.e.\ through $d_{\rm eff}$ and the set of admissible commands. Changing the robot, the terrain, or the contact state therefore changes \emph{what correction is needed and whether it is reachable}, but not the integrator that maps command to motion. This is why a single normalized model can carry interactions that would otherwise each demand a separate, contact-dependent model.
+
+\emph{How accurate is the representation?} Under the assumptions of Lemma~\ref{lem:model}, namely nominal dynamic compensation and task-space projection, the model $\ddot e = a_e + d_{\rm eff}$ is \textbf{exact}, not a linearization: it is a definition of $d_{\rm eff}$ as whatever acceleration the dynamics produce beyond $a_e$. Approximation enters only through imperfect compensation and unmodeled dynamics, and it does not corrupt the prediction matrices; it is absorbed into the model-residual term $d_{\rm mod}\subseteq d_{\rm eff}$, where the estimator and controller treat it exactly as they treat an external force. The integrator structure is thus an exact coordinate identity under the stated input definition; its \emph{predictive} usefulness, however, is conditional---on the residual being observable and sufficiently persistent over the control horizon, and on the policy-mediated command map (Section~\ref{sec:realize}) remaining locally consistent. A large or rapidly varying $d_{\rm mod}$ leaves the identity intact but can make the fixed model uninformative for prediction.
+
+Thus interaction is a \emph{predictive state} on a shared, fixed model. A distinction matters here: for \emph{control}, the capture law cancels the aggregate residual and need not separate its parts; for \emph{mode classification}, the force component must be isolated. Writing $d_{\rm eff}=\underbrace{m^{-1}F_{\rm ext}}_{d_{\rm int}}+(d_{\rm real}+d_{\rm mod})$, the transient-vs-sustained decision keys on $d_{\rm int}$ alone---an aggregate acceleration residual cannot tell a persistent external force from a persistent realization or model bias---and the linear-momentum estimator of Section~\ref{sec:est} recovers exactly this component, $\hat d_{\rm int}=m^{-1}\hat F_{{\rm ext},xy}$. The representation is a modeling \emph{choice}, and a falsifiable one: the task is regulated to zero steady error only when the cancelling correction $a_e=-d_{\rm eff}$ is admissible and realizable; a force beyond the command authority surfaces as an un-rejected residual or loss of balance, not as a free relabeling.
+
+\subsection{The transient/sustained dichotomy}
+\label{sec:dichotomy}
+
+The residual model \eqref{eq:model} is symmetric in $d_{\rm eff}$, but the \emph{appropriate correction} is not (Fig.~\ref{fig:dichotomy}). Consider a lateral disturbance.
+
+\textbf{Transient impulse.} The force acts briefly, injecting CoM velocity; afterward $d_{\rm int}\!\to\!0$ but the momentum persists. The stabilizing action is to command the walking layer \emph{toward} the error velocity, placing the swing foot under the falling CoM (capture). The sign of the useful correction is $+\dot e$.
+
+\textbf{Sustained force.} The force persists; without action the CoM drifts continuously. The stabilizing action is to command \emph{against} the error and add an integral term for offset-reducing rejection. The sign is $-e-\!\int\! e$.
+
+These are opposite---more precisely, under the evaluated velocity-command interface the effective command-space recovery actions have opposite signs (this need not hold for an ankle/hip strategy or a pure force-regulation objective). Moreover (Observation~1), $e$ and $\dot e$ do not distinguish the two: a transient push leaves a lasting position offset (recovery at a translated stance), so a persistence test on the \emph{deviation} misfires. The distinguishing variable is the external wrench itself, which is present under a sustained force and absent (after the pulse) under a transient one---even while the CoM is still recovering. Sections~\ref{sec:est}--\ref{sec:control} build the estimator and the arbitration around exactly this variable.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{model_dichotomy}
+\caption{The representation and the dichotomy. \emph{Top:} interaction lumps into one residual $d_{\rm eff}$ on a fixed double integrator $\ddot e = a_e + d_{\rm eff}$. \emph{Bottom:} the same-signed error demands \textbf{opposite-sign} responses---capture \emph{toward} the motion ($+\dot e$) for a transient, integral hold \emph{against} it for a sustained force. The discriminator is $d_{\rm eff}$'s \emph{persistence}, not its sign. The lower panels are conceptual illustrations, not measured responses.}
+\label{fig:dichotomy}
+\end{figure}
+
+\section{External-Wrench Estimation}
+\label{sec:est}
+
+\textbf{CoM linear-momentum residual.} Newton's law for the CoM $c$ (mass $m$, gravity $g$, contact forces $F_{{\rm contact},i}$) \cite{r8} is $m\ddot c=mg+\sum_i F_{{\rm contact},i}+F_{\rm ext}$, hence
+\begin{equation}
+F_{\rm ext}=m(\ddot c-g)-\textstyle\sum_i F_{{\rm contact},i}.
+\label{eq:newton}
+\end{equation}
+We use only the \textbf{horizontal} components, where gravity has no component, so the term $mg$ drops out \emph{exactly}:
+\begin{equation}
+\hat F_{{\rm ext},xy}=m\,\ddot c_{xy}-\textstyle\sum_i F_{{\rm contact},i,xy}.
+\label{eq:fext}
+\end{equation}
+Here \eqref{eq:fext} uses simulation-clean CoM acceleration and contact forces (Section~\ref{sec:val}); on hardware, CoM acceleration and velocity require a floating-base state estimator (joint kinematics plus the model), not a single IMU, and the contact wrenches are measured with bias and noise---so a hardware observer is future implementation, not claimed here. To avoid differentiating a noisy CoM velocity, \eqref{eq:fext} may equivalently be realized as a filtered linear-momentum-residual observer $\dot{\hat l}=\sum_iF_i+\hat F_{\rm ext}$ with $\hat F_{\rm ext}=L(l-\hat l)$ and $l=m\dot c$; the residual $L(l-\hat l)$ both estimates the external force and drives the observer, giving $\dot{\hat F}_{\rm ext}=L(F_{\rm ext}-\hat F_{\rm ext})$---a first-order low-pass of the true force (shown for scalar or commuting $L$; a general matrix gain gives $\dot{\tilde l}=F_{\rm ext}-L\tilde l$ with $\hat F_{\rm ext}=L\tilde l$, $\tilde l=l-\hat l$). We found the two forms produce comparable estimates in simulation (V6).
+
+\textbf{Interaction confidence.} The estimator is only useful to the arbitration if it (i) does not read normal contact transitions or commanded acceleration as external force, and (ii) cleanly separates transient from sustained. We verify both in V1 below. The key property is that $|\hat F_{\rm ext}|$ spikes and then decays below the detection threshold within about 0.2~s (Table~\ref{tab:estimator}), and toward zero within about 0.6~s, after a transient pulse, even while the robot is still recovering; under a sustained force it stays near the applied magnitude. This is the persistence signal that the kinematics could not provide, and the confidence mechanism of Section~\ref{sec:control} is built on it.
+
+\section{Confidence-Gated Interaction Control}
+\label{sec:control}
+
+This section builds the \textbf{reasoning and action} stages of the pipeline. We separate the layer's \emph{controller state} from what it merely reports upward. The control law acts on
+\begin{equation}
+x_I=[\,\hat F_{\rm ext}^\top,\; p,\; g\,]^\top,
+\label{eq:istate}
+\end{equation}
+the estimated external wrench (Section~\ref{sec:est}) with the persistence $p\in[0,1]$ and gate $g\in\{0,1\}$ produced below. A separate report vector $z_I=[\theta_{\rm fall},\,\dot\theta_{\rm fall}]^\top$---the base falling angle and its rate, an \emph{instability cue} (Section~\ref{sec:discussion})---does \emph{not} enter the control law; the full interaction packet sent upward is $\mathcal I=(x_I,z_I)$. The interaction layer is then the map $u=\pi_I(x_I)$ from the controller state to a velocity-command bias, factored into observe $\to$ estimate $\to$ reason $\to$ act. The layer reasons over $x_I$ with two confidence decisions before acting: the confidence gate and the persistence classifier below are the two decisions of a single reasoning process---\emph{is the interaction real?} and \emph{which regime is it?}---whose output selects the interaction action. The bias $u\in\mathbb{R}^2$ is added to the frozen policy's walk command, so the policy recovers by \emph{placing its feet}---the mechanism it is strong at. A deadband and rate limit keep the layer out of the nominal loop (bias $\approx 0$ when undisturbed, so nominal walking is unchanged). Two candidate corrections are available:
+
+\textbf{Capture} $u_{\rm cap}=-k_{\rm map}\,a_e$, where $a_e$ is the acceleration chosen by a normalized predictive controller on \eqref{eq:model} \cite{r1}; commanding the policy in the CoM error-velocity direction steps it toward the fall, so the realized CoM acceleration opposes the disturbance.
+
+\textbf{Hold} $u_{\rm hold}=-k_p\,e-k_i\!\int\! e$, stepping against the disturbance with an integral term \cite{r19}. Whether this yields \emph{zero} steady offset depends on the policy-command loop admitting integral action; we therefore call it an integral (offset-reducing) hold and assess residual offset empirically (V4).
+
+The controller arbitrates between them with a \textbf{two-level interaction-confidence mechanism}. The exact gate and persistence updates, all parameters, and a per-step listing are in the supplementary material.
+
+\subsection{Level 1 --- interaction-confidence gate}
+\label{sec:gate}
+
+\emph{Is there a real external interaction at all?} Capture (interaction-oriented behavior) is enabled only when the wrench estimate rises a statistical margin above its own noise floor; otherwise the layer defers to the policy's internal stabilization. Let $\sigma_f$ be an online estimate of the $|\hat F_{\rm ext}|$ noise level (an RMS magnitude, not a zero-mean standard deviation), updated by an exponential moving average of $|\hat F_{\rm ext}|^2$ only during quiescent walking ($\|e\|<$ deadband). The confidence threshold is
+\begin{equation}
+F_{\rm cap}=F_{\rm floor}+k_\sigma\,\sigma_f,
+\label{eq:fcap}
+\end{equation}
+with $F_{\rm floor}$ a minimum meaningful force (estimator resolution) and $k_\sigma$ a noise-scaled margin. We use ``confidence'' operationally: $k_\sigma$ sets how many noise RMS above the floor triggers engagement, not a formal false-alarm probability under a distribution model. The gate $g\in\{0,1\}$ latches to 1 when $|\hat F_{\rm ext}|>F_{\rm cap}$, is held open while the robot is still recovering ($\|e\|>1.5\times$ deadband) so that a long capture recovery keeps full capture even after the transient force has vanished, and decays only once recovered. Sub-threshold noise never latches the gate, so capture cannot amplify unclassified drift. Because $\sigma_f$ is estimated online, $F_{\rm cap}$ self-adjusts to the measured quiescent noise floor rather than being a tuned constant---an online noise-scaled threshold, demonstrated here against injected process noise (Section~\ref{sec:val}, Table~\ref{tab:selfcal}); adaptation to bias, nonstationary, or impact-correlated noise is untested.
+
+\begin{proposition}[capture-path transparency]
+\label{prop:gate}
+The layer is disengaged, $u=0$, on any interval where the CoM error stays within the deadband ($\|e\|<\delta$); there the closed loop is exactly the frozen policy, so nominal walking is unchanged. When the layer is engaged ($\|e\|\ge\delta$) but the wrench estimate is sub-threshold ($g=0$), the capture term drops out of \eqref{eq:blend}, leaving $u=p\,u_{\rm hold}$: the capture positive-feedback path is inactive, so a sub-threshold drift cannot trigger the runaway of the ungated law (the validation lessons in Section~\ref{sec:val}). Full transparency while engaged ($u=0$ with $\|e\|\ge\delta$) additionally requires $p=0$, $e_{\rm eff}=0$, and a reset integral.
+\end{proposition}
+
+Nominal-walking transparency thus comes from the deadband, and the gate adds capture-path transparency by keeping the momentum-capturing term off until a real force is confidently detected. Section~\ref{sec:val} confirms both: the layer stays out of the nominal loop, and $F_{\rm cap}$ is not crossed by noise.
+
+\begin{proposition}[bounded augmentation command]
+\label{prop:bounded}
+Suppose the horizontal wrench-estimation error is bounded, $\|\hat F_{\rm ext}-F_{\rm ext}\|\le\varepsilon_F$, with the noise floor calibrated so that $F_{\rm cap}\ge\varepsilon_F$. Then: (i) with no true external force ($F_{\rm ext}=0$), nominal walking keeps the CoM within the deadband, so $u=0$ and the augmented trajectory equals the nominal-policy trajectory (and $|\hat F_{\rm ext}|\le\varepsilon_F\le F_{\rm cap}$ keeps capture ungated even if the deadband is briefly crossed by noise); and (ii) whenever the layer is engaged, the command bias is bounded, $\|u\|\le u_{\max}$, by the saturation and rate limit. The augmentation therefore cannot request unbounded velocity, and the \emph{algebraic} command blow-up of the ungated capture law is prevented.
+\end{proposition}
+
+Part~(ii) does not bound the state. A bounded velocity-command bias can still integrate into unbounded position drift, so closed-loop state boundedness is not implied; it depends on the frozen policy's own stability, which we check empirically. The evidence is in the validation lessons below: the no-force lateral drift falls from 1539~mm for the ungated law to about 95~mm once the gate is calibrated. The proposition bounds the input authority and gives exact transparency when the layer is disengaged; bounded motion is a property of the policy in the loop.
+
+\subsection{Level 2 --- transient-vs-sustained blend}
+\label{sec:blend}
+
+\emph{Given a confident disturbance, is it transient or sustained?} A persistence timer on $|\hat F_{\rm ext}|$ produces $p\in[0,1]$ (0 = transient, 1 = sustained): a transient force falls below the persistence threshold within $\sim 0.4$~s so $p$ stays low, while a sustained force keeps it high so $p\to 1$. The output blends the two corrections:
+\begin{equation}
+u=(1-p)\,g\,u_{\rm cap}+p\,u_{\rm hold}.
+\label{eq:blend}
+\end{equation}
+The gate $g$ multiplies only the capture term; the hold is deviation-driven and ungated. When hold arrests a sustained drift, $\dot e\to 0$ so $u_{\rm cap}$ self-vanishes; on a transient, $p$ decays and only (gated) capture remains. Because $p$ is continuous, \eqref{eq:blend} is a persistence-weighted blend rather than a hard switch: D1 (the gate $g$) is a discrete engagement decision, D2 (the persistence $p$) a continuous belief. The whole layer is held out of the nominal loop by an outer deadband ($u=0$ when $\|e\|<\delta$), so undisturbed walking is unaffected regardless of $g$ and $p$.
+
+\subsection{Realization: command modulation, not whole-body QP}
+\label{sec:realize}
+
+We realize $u$ by modulating the frozen policy's walk command. We also implemented the classical alternative---mapping $a_e$ to a task acceleration realized by a whole-body inverse-dynamics/contact QP \cite{r17}. On a strong learned policy this destabilizes walking (fall in $\sim 3$~s vs.\ $>$12~s for command modulation), because the policy's balance is a closed-loop property of its own joint-space control law and a substituted realizer breaks it. We report this as a negative result \emph{for this policy and QP realization}: replacing the policy's learned low-level realization destabilized walking, whereas command-space modulation preserved its balance---a closed-loop property of the policy's own control law. We do not claim this holds for all residual-QP, shielded, or torque-residual schemes; it motivates our command-modulation coupling. Because the layer couples to the policy only through the command interface, the construction is policy-agnostic by design; a demonstration across policies is future work (Section~\ref{sec:limits}).
+
+\section{Validation of the Interaction Layer}
+\label{sec:val}
+
+We validate the layer with a six-stage protocol, on a Unitree G1 (\texttt{unitree\_rl\_gym} 
+pretrained policy, MuJoCo \cite{r18}, 500~Hz sim). The policy is frozen throughout: it walks 
+10/10 seeds for 20~s at 0.477~m/s and is never tuned during any interaction experiment. 
+Unless stated, transient studies use phase-locked lateral pushes gated on measured support, 
+with a fall metric; sustained studies use a floor-corrected paired lateral-drift metric
+(V4) at low process noise.
+
+\textbf{V1 (estimator correctness).} We logged the true applied force against $\hat F_{\rm ext}$ (interaction layer off) across nominal walking, commanded turning, diagonal (lateral) walking, a 30~mm step-down, a 120~N/0.15~s impulse, and a 12~N/3~s sustained force (Fig.~\ref{fig:estimator}); the blind step-up appears only in the demonstration (Section~\ref{sec:demo}), where it causes a trip rather than a mislabelled force. False positive is the fraction of no-force samples with $|\hat F_{\rm ext}|>F_{\rm cap}$.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{estimator_validation}
+\caption{Estimated horizontal external wrench $\hat F_{\rm ext}$ (interaction layer off) versus ground truth across the test scenarios: no false positives on gait and contact transitions, near-instant impulse detection with $\sim 0.19$~s decay, and $\sim 1$~N tracking of the sustained force.}
+\label{fig:estimator}
+\end{figure*}
+
+\begin{table}[t]
+\caption{Wrench estimator vs.\ ground truth.}
+\label{tab:estimator}
+\centering
+\begin{tabular}{lrrrr}
+\hline
+scenario & RMSE & false-pos. & detect & decay\\
+\hline
+nominal & 0.1 N & 0.0\% & -- & --\\
+turning & 0.1 N & 0.0\% & -- & --\\
+diagonal & 0.1 N & 0.0\% & -- & --\\
+step-down 30 mm & 0.1 N & 0.0\% & -- & --\\
+impulse 120 N & -- & -- & $\le$2 ms & 0.19 s\\
+sustained 12 N & 1.0 N (track) & -- & 0.01 s & --\\
+\hline
+\end{tabular}
+\end{table}
+
+The estimator does not read touchdown/liftoff, step transitions, or commanded acceleration as external interaction (0\% false positive; $\sim 0.1$~N residual during all no-force walking), detects a real impulse essentially instantly and clears it in 0.19~s, and tracks a sustained 12~N force to 1~N (Table~\ref{tab:estimator}). \emph{Lesson from validation:} V1 also caught a real defect---a contact-force sign error in the ground-reaction summation that flipped the estimated wrench on box terrain (correct on flat ground); it was found precisely because we plotted the estimate against ground truth, and fixed.
+
+\textbf{V2 (architecture necessity, oracle ablation).} Six controllers on the same transient (300~N single-support) and sustained (8~N) tests: policy; a capture specialist; a hold specialist; a CoM-kinematics-only unified controller (persistence on the \emph{deviation}, not the wrench); the wrench-gated controller; and an \textbf{oracle} that knows the true disturbance class at onset with zero delay.
+
+\begin{table}[t]
+\caption{Oracle ablation: each specialist fails outside its regime.}
+\label{tab:ablation}
+\centering
+\begin{tabular}{lrr}
+\hline
+controller & transient falls /20 & sustained drift (mm)\\
+\hline
+policy & 20 & 462\\
+capture-specialist & 11 & 1080\\
+hold-specialist & 20 & 12\\
+CoM-only unified & 16 & 719\\
+\textbf{wrench-gated} & \textbf{12} & \textbf{13}\\
+oracle & 11 & 12\\
+\hline
+\end{tabular}
+\end{table}
+
+Each specialist fails outside its regime (opposite-sign dichotomy); pure capture \emph{amplifies} a sustained force (1080~mm, worse than policy). The CoM-only unified controller is dominated on both: in the tested controller family and disturbance protocol, CoM-only arbitration is insufficient while wrench persistence enables near-oracle selection (Table~\ref{tab:ablation}). We do not claim wrench information is mathematically necessary for \emph{every} classifier---a richer temporal model might infer duration from context. The wrench-gated controller matches the oracle on transient and nearly matches it on sustained.
+
+\textbf{V3 (generalization, held-out).} With all thresholds and gains frozen, we evaluated cases never used for tuning: held-out impulse \emph{durations} (0.10/0.25/0.40~s vs.\ the 0.15~s used in design), off-grid sustained magnitudes (6/10/14~N), ramped forces, and intermittent forces. The controller generalizes: at the held-out 0.25~s duration it matches the capture specialist (correctly classified transient, not degraded toward hold); off-grid sustained magnitudes track the trend; a 1~s ramp is rejected better than the bare policy. \textbf{One failure mode:} a rapidly intermittent force (0.5~s on/off) defeats the persistence discriminator---an intermittent force is genuinely ambiguous (repeated pushes vs.\ a sustained-ish force), and both the confidence gate and the persistence blend keep it in an unstable regime. We state this as a limitation (Section~\ref{sec:limits}).
+
+\textbf{V4 (statistical significance).} 40 paired held-out seeds; transient by fall count with an exact McNemar test, sustained by the floor-corrected paired drift (the offset with force minus the same-seed offset without force, which cancels the gait-sway/reference phase drift).
+
+\begin{table}[t]
+\caption{Transient (top) and sustained (bottom, median [IQR] mm).}
+\label{tab:stats}
+\centering
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrr}
+\hline
+push & policy falls & wrench falls & McNemar $p$ & wrench-worse\\
+\hline
+280 N & 24/40 & \textbf{2/40} & $<10^{-4}$ & 0\\
+300 N & 40/40 & \textbf{20/40} & $<10^{-4}$ & 0\\
+320 N & 40/40 & 36/40 & 0.125 & 0\\
+\hline
+\end{tabular}
+
+\vspace{4pt}
+
+\begin{tabular}{lrrr}
+\hline
+force & policy & hold-specialist & wrench-gated\\
+\hline
+8 N & 462 mm & 12 [7--19] & \textbf{13 [8--17]}\\
+12 N & 728 mm & 121 [114--132] & 202 [186--218]\\
+\hline
+\end{tabular}
+\end{table}
+
+The transient benefit is strongly significant, and no paired trial was worsened at the three evaluated push magnitudes (Table~\ref{tab:stats}); we do not extend ``never worse'' beyond these conditions (cf.\ the intermittent-force failure in V3). On sustained force at 8~N the controller's drift lies within the hold specialist's spread (13 [8--17] vs.\ 12 [7--19]~mm), though we do not claim formal equivalence---a paired equivalence test is left to future work; the causal-detection cost is a modest $\sim 1.7\times$ at 12~N. The envelope (Fig.~\ref{fig:envelope}) shows the controller holding 0\% single-support falls through 280~N while the policy is already 60--87\%.
+
+\textbf{V5 (sensing robustness).} We swept a horizontal foot-force bias $b_F\in\{-5,-3,0,3,5\}$~N and measurement noise, since the estimator subtracts measured contact force and sustained forces are only 8--12~N. Nominal walking is fully protected (base roll 6.8--6.9$^\circ$ across all bias and noise), because the online noise floor absorbs a persistent bias into $F_{\rm cap}$: the EWMA raises $\sigma_f$ so $F_{\rm cap}$ climbs above the bias and capture never engages, while sustained rejection (deviation-driven and ungated) is unaffected (see the supplementary material). Sustained regulation tolerates $\pm 5$~N bias (drift 10/14/22~mm at $b_F=-5/0/+5$), and the transient benefit degrades gracefully under large bias while remaining far above the policy.
+
+\textbf{V6 (estimator implementation).} The finite-difference estimator \eqref{eq:fext} and the momentum observer produce comparable estimates in the evaluated scenarios; the finite-difference form is cleaner on the false-positive metric here, because in simulation the CoM velocity is already clean. The observer's advantage---robustness to \emph{noisy} velocity---is a hardware consideration. We keep the finite-difference form as default.
+
+\textbf{Validation lessons (a discovered-and-fixed failure).} When we plotted \emph{lateral position} rather than falls, the capture path was seen to amplify any drift it engaged on but could not classify as a force---under process noise exceeding the deadband, capture drove a runaway lateral excursion (no-force drift 1539~mm at 4~N noise) that never caused a fall and so was invisible in balance metrics. This is a control-logic problem, not a tuning one: capture steps toward an unclassified drift, closing a positive feedback loop. It is exactly what motivated the Level-1 confidence gate (Section~\ref{sec:gate}), which enables capture only on confident evidence of a real interaction. With the gate, the no-force drift falls to $\sim 95$~mm (policy floor), while the transient and sustained benefits are preserved or improved (Tables~\ref{tab:ablation}--\ref{tab:stats}). The online noise-scaled threshold \eqref{eq:fcap} recovers the value appropriate to a fixed noise level without requiring one to be hand-tuned:
+
+\begin{table}[t]
+\caption{The confidence threshold self-adapts to the sensing noise (sensitive when clean, conservative when noisy), 
+so it is a general criterion, not an experiment-specific constant.}
+\label{tab:selfcal}
+\centering
+\begin{tabular}{rr}
+\hline
+process noise & settled $F_{\rm cap}$\\
+\hline
+0 N & 1.4 N\\
+1 N & 2.1 N\\
+4 N & 6.3 N\\
+8 N & 10.6 N\\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Humanoid Demonstration}
+\label{sec:demo}
+
+On the frozen policy, the layer runs in-situ during walking. Under lateral single-support pushes it extends the recovery envelope (Fig.~\ref{fig:envelope}, left) and, under sustained lateral force, it holds the CoM near the nominal path where the policy droops (Fig.~\ref{fig:envelope}, right). On terrain, a \textbf{step-down} the policy already handles is unaffected by the layer, while a blind \textbf{step-up} beyond a few centimeters causes a toe-stub \emph{trip} for every controller---the policy is flat-trained and cannot see the step. This is not a weakness of the interaction layer: it shows that interaction control cannot invent terrain geometry. Once perception detects the step, the planner can raise or reposition the swing foot, while the interaction layer maintains stability through the planning latency---each acting on its own time scale. It is the boundary that Section~\ref{sec:discussion} turns into a systems argument.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.7\textwidth]{wrench_envelope_gated}
+\caption{Recovery envelopes (confidence-gated layer vs.\ policy and the hold specialist): (left) single-support fall rate vs.\ push magnitude; (right) floor-corrected steady lateral drift vs.\ sustained force.}
+\label{fig:envelope}
+\end{figure*}
+
+\section{Discussion: Interaction Dynamics in a Model-Based Physical AI Hierarchy}
+\label{sec:discussion}
+
+The proposed layer is not intended to replace perception or motion planning. It operates on a shorter time scale and solves a different problem, and it is most useful as the \emph{bridge} between reactive physical control and deliberative model-based planning.
+
+\textbf{Perception and interaction are complementary, not competing.} Perception and a world model estimate \emph{what the world is}; motion planning decides \emph{what to do next}; Interaction Dynamics governs \emph{how the robot physically interacts in the meantime}, stabilizing on the estimated interaction while the slower loops update the plan. The blind step-up (Section~\ref{sec:demo}) makes this concrete: no interaction controller can avoid the trip without terrain perception, but with it the planner raises or shifts the foothold while the layer stabilizes through the planning latency. The claim is not that the controller compensates for perception delay, but that interaction control and perception occupy different, complementary rungs of the stack.
+
+\textbf{The layer buys time.} The same holds for external forces. A push is met immediately, because the response needs only $\hat F_{\rm ext}$. If the disturbance grows beyond the layer's authority, a higher layer can widen the stance, slow down, change direction, abandon the task, or enter a safe mode. The observed recovery margin suggests the layer could provide additional time for a slower planning response (a delayed planner reaction is not itself tested):
+\begin{center}
+\emph{external push} $\rightarrow$ \emph{interaction layer} (ms) $\rightarrow$ \emph{robot survives} $\rightarrow$ \emph{planner} (100 ms) $\rightarrow$ \emph{new strategy}
+\end{center}
+
+\textbf{Interaction state as a planning signal (proposed).} The information the layer exposes is more than an evaluation metric. 
+A higher layer could consume the estimated wrench, its regime, and falling rate $\dot\theta_{\rm fall}$. We treat $\dot\theta_{\rm fall}$ as an instability cue rather than a calibrated authority margin; a true margin would combine command saturation, foot-placement reach, and support-polygon limits, and correlating $\dot\theta_{\rm fall}$ with the recovery boundary is left for future work. This upward path is a proposed interface only. The layer exposes its interaction state, but we do not close the loop to a planner or evaluate that here.
+
+\textbf{Where this places the contribution.} In a model-based Physical AI stack---perception $\rightarrow$ planner $\rightarrow$ interaction dynamics $\rightarrow$ whole-body realization $\rightarrow$ robot---the contribution is \emph{one rung}: the fast physical-interaction interface between planning updates. ``Physical AI'' here is context, not a result; the paper defines a single rung with a clear responsibility (estimate, reason about regime, stabilize) and a clear interface above and below.
+
+\section{Limitations}
+\label{sec:limits}
+
+\textbf{Intermittent forcing} at a period near the detection time scale defeats the persistence discriminator
+(V3); this and, before the gate, sub-threshold noise share a root cause---when the layer 
+cannot confidently classify the interaction, the capture path is unsafe. The confidence gate resolves the 
+noise case; the intermittent case is genuinely ambiguous and remains open.
+\textbf{Whole-body realization on a learned policy} was found to destabilize walking (Section~\ref{sec:realize}); 
+the interaction correction is injected through the policy's command interface. On a model-based walker, a QP 
+realization may be preferable; we do not claim it here.
+\textbf{Perception is out of scope.} The layer cannot invent terrain geometry (blind step-up) or anticipate 
+a disturbance; it provides immediate stabilization, and its authority boundary is a signal for the layers that can.
+The study is on one simulated humanoid and \textbf{one locomotion policy}. The layer couples to the policy only 
+through its command interface, so policy-independence holds by construction; still, a second-policy demonstration 
+would substantiate the architectural claim empirically and remains future work, alongside other task coordinates, 
+long-distance walking, deformable ground, and simultaneous manipulation.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented Interaction Dynamics: a fast, short-time-scale layer governing a legged robot's physical interaction 
+with the world. It represents all external interaction as a residual on a configuration-invariant fixed model, 
+estimates the external wrench from a CoM momentum residual, and reasons over it with an online noise-scaled confidence 
+gate and a persistence-based blend of opposite-signed capture and hold. Added atop a \emph{frozen} RL policy through 
+its command interface, it reduces push falls (with no paired degradation at the tested push magnitudes) and rejects sustained forces to 
+near-specialist accuracy, with nominal walking untouched; a six-stage validation both established these claims 
+and \emph{discovered and resolved} a capture-amplification failure mode. We propose Interaction Dynamics as a 
+candidate \emph{fast physical-interaction layer} between perception-driven planning and whole-body 
+realization---one rung of a model-based Physical AI hierarchy whose end-to-end validation remains future work.
+
+\begin{thebibliography}{19}
+
+\bibitem{r1} Y. Cao and J. Tang, ``Toward Interaction Dynamics: A Predictive Framework for Safe Physical Human--Robot Interaction,'' 2026, arXiv:2606.08281.
+
+\bibitem{r2} J. Di Carlo, P. M. Wensing, B. Katz, G. Bledt, and S. Kim, ``Dynamic locomotion in the MIT Cheetah 3 through convex model-predictive control,'' in \emph{Proc. IEEE/RSJ IROS}, 2018, pp. 1--9.
+
+\bibitem{r3} D. Kim, J. Di Carlo, B. Katz, G. Bledt, and S. Kim, ``Highly dynamic quadruped locomotion via whole-body impulse control and model predictive control,'' in \emph{Proc. IEEE/RSJ IROS}, 2019, pp. 4656--4663.
+
+\bibitem{r4} C. D. Bellicoso, C. Gehring, J. Hwangbo, P. Fankhauser, and M. Hutter, ``Perception-less terrain adaptation through whole body control and hierarchical optimization,'' in \emph{Proc. IEEE-RAS Humanoids}, 2016, pp. 558--564.
+
+\bibitem{r5} T. Koolen \emph{et al.}, ``Design of a momentum-based control framework and application to the humanoid robot Atlas,'' \emph{Int. J. Humanoid Robotics}, vol. 13, no. 1, 2016.
+
+\bibitem{r6} O. Khatib, ``A unified approach for motion and force control of robot manipulators: The operational space formulation,'' \emph{IEEE J. Robotics Autom.}, vol. 3, no. 1, pp. 43--53, 1987.
+
+\bibitem{r7} L. Sentis and O. Khatib, ``Synthesis of whole-body behaviors through hierarchical control of behavioral primitives,'' \emph{Int. J. Humanoid Robotics}, vol. 2, no. 4, pp. 505--518, 2005.
+
+\bibitem{r8} D. E. Orin, A. Goswami, and S.-H. Lee, ``Centroidal dynamics of a humanoid robot,'' \emph{Autonomous Robots}, vol. 35, no. 2--3, pp. 161--176, 2013.
+
+\bibitem{r9} L. Righetti, J. Buchli, M. Mistry, and S. Schaal, ``Inverse dynamics control of floating-base robots with external constraints: A unified view,'' in \emph{Proc. IEEE ICRA}, 2011, pp. 1085--1090.
+
+\bibitem{r10} J.-P. Sleiman, F. Farshidian, M. V. Minniti, and M. Hutter, ``A unified MPC framework for whole-body dynamic locomotion and manipulation,'' \emph{IEEE Robot. Autom. Lett.}, vol. 6, no. 3, pp. 4688--4695, 2021.
+
+\bibitem{r11} N. Hogan, ``Impedance control: An approach to manipulation---Parts I, II, III,'' \emph{ASME J. Dyn. Syst. Meas. Control}, vol. 107, no. 1, pp. 1--24, 1985.
+
+\bibitem{r12} A. Albu-Sch\"{a}ffer, C. Ott, and G. Hirzinger, ``A unified passivity-based control framework for position, torque and impedance control of flexible joint robots,'' \emph{Int. J. Robotics Research}, vol. 26, no. 1, pp. 23--39, 2007.
+
+\bibitem{r13} R. Grandia, F. Jenelten, S. Yang, F. Farshidian, and M. Hutter, ``Perceptive locomotion through nonlinear model-predictive control,'' \emph{IEEE Trans. Robotics}, vol. 39, no. 5, pp. 3402--3421, 2023.
+
+\bibitem{r14} A. De Luca and R. Mattone, ``Sensorless robot collision detection and hybrid force/motion control,'' in \emph{Proc. IEEE ICRA}, 2005, pp. 999--1004.
+
+\bibitem{r15} S. Haddadin, A. De Luca, and A. Albu-Sch\"{a}ffer, ``Robot collisions: A survey on detection, isolation, and identification,'' \emph{IEEE Trans. Robotics}, vol. 33, no. 6, pp. 1292--1312, 2017.
+
+\bibitem{r16} N. Rudin, D. Hoeller, P. Reist, and M. Hutter, ``Learning to walk in minutes using massively parallel deep reinforcement learning,'' in \emph{Proc. Conf. Robot Learning (CoRL)}, 2022, pp. 91--100.
+
+\bibitem{r17} B. Stellato, G. Banjac, P. Goulart, A. Bemporad, and S. Boyd, ``OSQP: An operator splitting solver for quadratic programs,'' \emph{Math. Program. Comput.}, vol. 12, no. 4, pp. 637--672, 2020.
+
+\bibitem{r18} E. Todorov, T. Erez, and Y. Tassa, ``MuJoCo: A physics engine for model-based control,'' in \emph{Proc. IEEE/RSJ IROS}, 2012, pp. 5026--5033.
+
+\bibitem{r19} Y.-Y. Cao, Z. Lin, and D. G. Ward, ``Anti-windup design of output tracking systems subject to actuator saturation and constant disturbances,'' \emph{Automatica}, vol. 40, no. 7, pp. 1221--1228, 2004.
+
+\bibitem{r20} J. Pratt, J. Carff, S. Drakunov, and A. Goswami, ``Capture point: A step toward humanoid push recovery,'' in \emph{Proc. IEEE-RAS Humanoids}, 2006, pp. 200--207.
+
+\bibitem{r21} J. Englsberger, C. Ott, and A. Albu-Sch\"{a}ffer, ``Three-dimensional bipedal walking control based on divergent component of motion,'' \emph{IEEE Trans. Robotics}, vol. 31, no. 2, pp. 355--368, 2015.
+
+\bibitem{r22} B. J. Stephens and C. G. Atkeson, ``Push recovery by stepping for humanoid robots with force controlled joints,'' in \emph{Proc. IEEE-RAS Humanoids}, 2010, pp. 52--59.
+
+\bibitem{r23} T. Johannink \emph{et al.}, ``Residual reinforcement learning for robot control,'' in \emph{Proc. IEEE ICRA}, 2019, pp. 6023--6029.
+
+\bibitem{r24} K. S. Narendra and J. Balakrishnan, ``Adaptive control using multiple models,'' \emph{IEEE Trans. Autom. Control}, vol. 42, no. 2, pp. 171--187, 1997.
+
+\bibitem{r25} J. Vorndamme, M. Schappler, and S. Haddadin, ``Collision detection, isolation and identification for humanoids,'' in \emph{Proc. IEEE ICRA}, 2017, pp. 4754--4761.
+
+\end{thebibliography}
+
+\end{document}
