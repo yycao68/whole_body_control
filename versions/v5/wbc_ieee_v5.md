@@ -1,6 +1,6 @@
 # Interaction Dynamics: A Physical-Interaction Reasoning Layer for Humanoid Robots
 
-**Yongyan Cao**
+**Anonymous Author(s)**
 
 ---
 
