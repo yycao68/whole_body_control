@@ -80,7 +80,7 @@ This paper makes four contributions.
 \item \emph{Problem formulation.} We show that transient and sustained interactions call for opposite command-space recovery actions under a shared locomotion interface, and that CoM kinematics alone cannot tell the two apart online.
 \item \emph{Method.} A wrench-gated persistence arbitration that blends a predictive capture command with an integral hold and drives a frozen learned policy through its native velocity-command interface. The external-force estimate from the CoM linear-momentum residual is the enabling signal, and the fixed configuration-invariant model (Lemma~\ref{lem:model}, adapted from \cite{r1}) is the substrate.
 \item \emph{Properties.} Capture-path transparency, so the layer reduces to the frozen policy when disengaged and cannot start the capture runaway, and a bounded augmentation command under bounded estimation error (Propositions~\ref{prop:gate}--\ref{prop:bounded}).
-\item \emph{Evaluation.} A paired humanoid study on a Unitree G1 with specialist, CoM-only, and oracle ablations, statistical push and sustained-force tests, sensing-robustness sweeps, and a discovered-and-fixed failure mode.
+\item \emph{Evaluation.} A paired humanoid study on a Unitree G1 with specialist, CoM-only, and oracle ablations, statistical push and sustained-force tests, sensing-robustness sweeps, and a capture-amplification failure mode resolved by the confidence gate.
 \end{enumerate}
 
 \section{Related Work}
@@ -313,7 +313,7 @@ The transient benefit is strongly significant, and no paired trial was worsened 
 
 \textbf{V6 (estimator implementation).} The finite-difference estimator \eqref{eq:fext} and the momentum observer produce comparable estimates in the evaluated scenarios; the finite-difference form is cleaner on the false-positive metric here, because in simulation the CoM velocity is already clean. The observer's advantage---robustness to \emph{noisy} velocity---is a hardware consideration. We keep the finite-difference form as default.
 
-\textbf{Validation lessons (a discovered-and-fixed failure).} When we plotted \emph{lateral position} rather than falls, the capture path was seen to amplify any drift it engaged on but could not classify as a force---under process noise exceeding the deadband, capture drove a runaway lateral excursion (no-force drift 1539~mm at 4~N noise) that never caused a fall and so was invisible in balance metrics. This is a control-logic problem, not a tuning one: capture steps toward an unclassified drift, closing a positive feedback loop. It is exactly what motivated the Level-1 confidence gate (Section~\ref{sec:gate}), which enables capture only on confident evidence of a real interaction. With the gate, the no-force drift falls to $\sim 95$~mm (policy floor), while the transient and sustained benefits are preserved or improved (Tables~\ref{tab:ablation}--\ref{tab:stats}). The online noise-scaled threshold \eqref{eq:fcap} recovers the value appropriate to a fixed noise level without requiring one to be hand-tuned:
+\textbf{Capture-amplification failure mode.} Balance metrics alone hide a failure visible only in lateral position: under process noise exceeding the deadband, an ungated capture path amplifies any drift it engages on but cannot classify as a force, driving a runaway lateral excursion (no-force drift 1539~mm at 4~N noise) that never causes a fall. This is a control-logic problem, not a tuning one---capture steps toward an unclassified drift, closing a positive feedback loop---and it is what the Level-1 confidence gate (Section~\ref{sec:gate}) is designed to prevent, by enabling capture only on confident evidence of a real interaction. With the gate, the no-force drift falls to $\sim 95$~mm (the policy's own floor), while the transient and sustained benefits are preserved or improved (Tables~\ref{tab:ablation}--\ref{tab:stats}). The online noise-scaled threshold \eqref{eq:fcap} recovers the value appropriate to a fixed noise level without hand-tuning:
 
 \begin{table}[t]
 \caption{The confidence threshold self-adapts to the sensing noise (sensitive when clean, conservative when noisy), 
@@ -386,8 +386,8 @@ with the world. It represents all external interaction as a residual on a config
 estimates the external wrench from a CoM momentum residual, and reasons over it with an online noise-scaled confidence 
 gate and a persistence-based blend of opposite-signed capture and hold. Added atop a \emph{frozen} RL policy through 
 its command interface, it reduces push falls (with no paired degradation at the tested push magnitudes) and rejects sustained forces to 
-near-specialist accuracy, with nominal walking untouched; a six-stage validation both established these claims 
-and \emph{discovered and resolved} a capture-amplification failure mode. We propose Interaction Dynamics as a 
+near-specialist accuracy, with nominal walking untouched; a six-stage validation supports these claims
+and identifies a capture-amplification failure mode that the confidence gate resolves. We propose Interaction Dynamics as a
 candidate \emph{fast physical-interaction layer} between perception-driven planning and whole-body 
 realization---one rung of a model-based Physical AI hierarchy whose end-to-end validation remains future work.
 
