@@ -1,0 +1,107 @@
+\documentclass[journal]{IEEEtran}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage[noend]{algpseudocode}
+\usepackage{algorithm}
+\usepackage{xeCJK}
+\setCJKmainfont{Heiti SC}
+
+\graphicspath{{code/figures/}}
+
+\begin{document}
+
+\title{《交互动力学：面向人形机器人的物理交互推理层》补充材料\\[2pt]\large（中文译本）}
+
+\author{Anonymous Author(s)%
+\thanks{本文为英文原稿的中文译本，内容以英文原稿为准。原稿提交用于双盲评审；为保持匿名，译本同样不附带作者身份信息。}%
+}
+
+\markboth{提交用于双盲评审}{Anonymous Author(s)：交互动力学——面向人形机器人的物理交互推理层}
+
+\maketitle
+
+\section{控制器方程与参数}
+\label{app:impl}
+
+仿真以 500~Hz 运行，该层以 50~Hz 运行（$\Delta t=0.02$~s）。平面质心误差为 $e=c_{xy}-c_{xy}^{\rm ref}$，经死区收缩后的误差为 $e_{\rm eff}=e\,\max(0,\|e\|-\delta)/\|e\|$。外力 $\hat F_{\rm ext}$ 由正文中的水平外力估计器给出，并以 $5$~Hz 做低通滤波。
+
+\textbf{置信门。} 在静止期间（$\|e\|<\delta$），一个 EWMA 跟踪外力噪声功率，$\sigma_f^2\!\leftarrow\!(1-\alpha)\sigma_f^2+\alpha\|\hat F_{\rm ext}\|^2$，其中 $\alpha=1-e^{-2\pi f_\sigma\Delta t}$，且 $F_{\rm cap}=F_{\rm floor}+k_\sigma\sqrt{\sigma_f^2}$。锁存逻辑为
+\begin{equation}
+g\leftarrow\begin{cases}
+1,& \|\hat F_{\rm ext}\|>F_{\rm cap},\\
+\max(0,\,g-\Delta t/\tau_g),& \|\hat F_{\rm ext}\|\le F_{\rm cap}\ \wedge\ \|e\|<1.5\delta,\\
+g,&\text{否则},
+\end{cases}
+\label{eq:gate}
+\end{equation}
+因此捕获会在一次较长的恢复过程中（$\|e\|\ge1.5\delta$）保持介入，只有在恢复完成后才会释放。
+
+\textbf{持续性。} 一个外力计时器，其衰减速率为累积速率的两倍，
+\begin{equation}
+t_F\leftarrow\begin{cases}t_F+\Delta t,&\|\hat F_{\rm ext}\|>F_{\rm th},\\ \max(0,t_F-2\Delta t),&\text{否则,}\end{cases}
+\quad p=\mathrm{clip}\!\Big(\tfrac{t_F-\tau_0}{\tau_r},0,1\Big).
+\label{eq:persist}
+\end{equation}
+
+\textbf{捕获与保持。} $a_e$ 是作用于 $\ddot e=a_e+\hat d_{\rm eff}$ 之上、时域长度为 $N$ 的 MPC 的第一个输入，该 MPC 在约束 $\|a_e\|\le a_{\max}$ 下最小化 $\sum_j(q_p\|e_j\|^2+q_v\|\dot e_j\|^2+r\|a_{e,j}\|^2)$；随后 $u_{\rm cap}=-k_{\rm map}\,a_e$（因此 $k_{\rm map}$，单位为秒，将任务加速度映射为一个速度指令偏置）。保持项使用一个受 $p$ 门控的漏积分 $e_I\!\leftarrow\!0.98\,e_I+p\,e_{\rm eff}\Delta t$，$u_{\rm hold}=-k_p e_{\rm eff}-k_i e_I$，输出为
+\begin{equation}
+u=\mathrm{sat}_{v_{\max}}\!\Big(\mathrm{slew}\big[(1-p)\,g\,u_{\rm cap}+p\,u_{\rm hold}\big]\odot s_{\rm axis}\Big),
+\label{eq:out}
+\end{equation}
+并叠加到冻结策略的行走指令上。参数见表~\ref{tab:params}。
+
+\begin{table}[t]
+\caption{该层参数（按实现取值）。}
+\label{tab:params}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lll}
+\hline
+符号 & 含义 & 取值\\
+\hline
+$\Delta t$ & 控制周期 & 0.02 s (50 Hz)\\
+$\delta$ & 误差死区 & 0.03 m\\
+$F_{\rm floor}$ & 力下限 & 1.0 N\\
+$k_\sigma$ & 置信裕度 & 3.0\\
+$f_\sigma$ & 噪声跟踪器带宽 & 0.3 Hz\\
+$\tau_g$ & 门控释放窗口 & 1.6 s\\
+$F_{\rm th}$ & 持续性阈值 & 3.0 N\\
+$\tau_0,\tau_r$ & 持续性延迟、爬升时间 & 0.4 s, 0.4 s\\
+$N$ & MPC 时域 & 20 (0.4 s)\\
+$q_p,q_v,r$ & MPC 权重 & 15, 100, 0.05\\
+$a_{\max}$ & MPC 加速度界 & 6 m/s$^2$\\
+$k_{\rm map}$ & 加速度$\rightarrow$指令 映射 & 0.12 s\\
+$k_p,k_i$ & 保持 P、I 增益 & 3.0, 8.0\\
+$s_{\rm axis}$ & $(x,y)$ 通道缩放 & (0.2, 1.0)\\
+$v_{\max}$, slew & 偏置限幅、速率限制 & 0.6 m/s, 6.0 m/s$^2$\\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{algorithm}[t]
+\caption{置信度门控的捕获–保持仲裁（每个 50~Hz 步）}
+\label{alg:layer}
+\begin{algorithmic}[1]
+\State $\hat F_{\rm ext}\gets m\ddot c_{xy}-\sum_i F_{i,xy}$ \Comment{估计；5 Hz 低通}
+\If{$\|e\|<\delta$} 更新 $\sigma_f^2$（EWMA）；\Return $u=0$ \Comment{静止}
+\EndIf
+\State $F_{\rm cap}\gets F_{\rm floor}+k_\sigma\sqrt{\sigma_f^2}$；按式~\eqref{eq:gate} 更新锁存 $g$
+\State 按式~\eqref{eq:persist} 更新持续性 $p$
+\State $a_e\gets\mathrm{MPC}(e_{\rm eff},\dot e,\hat d_{\rm eff})$；$u_{\rm cap}\gets-k_{\rm map}a_e$
+\State $u_{\rm hold}\gets-k_p e_{\rm eff}-k_i e_I$ \Comment{$e_I$：受 $p$ 门控的漏积分}
+\State $u\gets(1-p)\,g\,u_{\rm cap}+p\,u_{\rm hold}$；随后进行 $\odot s_{\rm axis}$、速率限制、饱和，见式~\eqref{eq:out}
+\State 将 $u$ 叠加到策略的速度指令上
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{经地板修正的持续漂移。} 对种子 $i$ 与外力 $F$，定义 $D_i(F)=|\bar o_i(F)-\bar o_i(0)|$，其中 $\bar o_i(F)$ 为相对记录参考的稳态侧向质心偏移，$\bar o_i(0)$ 为同一种子无外力运行时的偏移；我们报告各种子上的中位数 [IQR]。同种子相减可抵消步态摇摆/参考相位所带来的本底漂移（约 30~mm）。
+
+\textbf{为何持续性偏置不会触发门控。} 一个恒定的足端力偏置 $b$ 会被 $\sigma_f$ 吸收：在静止期间，EWMA 会使 $\sigma_f^2\!\to\!b^2$，从而 $F_{\rm cap}\!\to\!F_{\rm floor}+k_\sigma b\approx16$~N（当 $b=5$~N 时），远高于该偏置本身——因此 $\|\hat F_{\rm ext}\|=b$ 永远不会越过 $F_{\rm cap}$，捕获也就不会被触发。持续力抑制不受影响，因为保持路径是由偏差驱动、且不受门控约束的。一个缓慢更新的偏置估计 $\mu_F$、并将门控作用于 $\|\hat F_{\rm ext}-\mu_F\|$，可以显式地把偏置与外力区分开来；我们将此列为面向硬件的更简洁设计。
+
+\end{document}
