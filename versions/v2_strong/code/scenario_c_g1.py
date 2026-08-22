@@ -1,8 +1,8 @@
 """
 Scenario C-G1: Unitree G1 Real Model, Fixed Stance, 8 N Step Disturbance
 
-Robot:  g1_wbc.xml — the official Unitree G1 MJCF from MuJoCo Menagerie
-        (29-DOF, 33.3 kg) with one added site: right_hand_site at the tip
+Robot:  g1_wbc.xml — a MuJoCo-Menagerie-derived Unitree G1 MJCF
+        (29 actuators, 35 generalized velocities, 34.04 kg) with one added site
         of right_wrist_yaw_link.
 
 Actuators: G1 uses position actuators (kp=500).  For leg and waist joints we
@@ -79,7 +79,7 @@ G1_RIGHT_ARM_JOINTS = [
 CONTROLLERS = {
     'D1 SK05 PD':           dict(use_mpc=False, use_kalman=False, use_integral=False),
     'D2 SK05 PI':           dict(use_mpc=False, use_kalman=False, use_integral=True, Ki=KI_PI),
-    'D3 FixedBase MPC':     dict(use_mpc=True,  use_kalman=True,  use_contact_consist=False),
+    'D3 FreeSpace Recovery': dict(use_mpc=True, use_kalman=True, use_contact_consist=False),
     'D4 WBC+PD':            dict(use_mpc=False, use_kalman=False, use_integral=False),
     'D5 Proposed noKalman': dict(use_mpc=True,  use_kalman=False),
     'D6 Proposed noInflat': dict(use_mpc=True,  use_kalman=True,  alpha=1.0),
@@ -91,6 +91,9 @@ CONTROLLERS = {
 
 def _make_robot():
     m = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
+    # The Menagerie-derived XML defaults to 2 ms. This benchmark uses two
+    # 0.5 ms physics substeps per 1 ms controller update.
+    m.opt.timestep = SIM_DT
     d = mujoco.MjData(m)
     mujoco.mj_resetDataKeyframe(m, d, 0)
     mujoco.mj_forward(m, d)
@@ -212,7 +215,7 @@ def run_controller(name, cfg):
         t_log[step] = t;  e_log[step] = e_pos
 
         if mpc is not None:
-            # Real contact-consistent Lambda_arm(q) on the official G1 model
+            # Contact-consistent Lambda_arm(q) on the Menagerie-derived model
             M_  = get_mass_matrix(model, data)
             Jc_ = get_contact_jacobian(model, data, foot_ids, [True, True])
             if use_cc:
@@ -229,7 +232,7 @@ def run_controller(name, cfg):
                 _, d_hat = kalman.update(e_pos)
             F_mpc  = mpc.solve(np.concatenate([e_pos, e_vel]),
                                La_use, 'ds', d_hat, use_osqp=False)
-            F_arm  = -F_mpc;  F_prev = F_mpc
+            F_arm  = F_mpc;  F_prev = mpc.last_u
         else:
             F_arm = -(KP_DIST * e_pos + KD_PD * e_vel)
             if cfg.get('use_integral'):
@@ -262,8 +265,8 @@ def compute_metrics(t_log, e_log, t_ss=3.5):
 
 def run_all():
     print("\n" + "="*60)
-    print("  Scenario C-G1: Unitree G1 (33.3 kg), Fixed Stance, 8 N Step")
-    print("  (official MuJoCo Menagerie model, position-as-torque arm ctrl)")
+    print("  Scenario C-G1: Unitree G1 model (34.04 kg), Fixed Stance, 8 N Step")
+    print("  (Menagerie-derived model, position-as-torque arm control)")
     print("="*60)
     print(f"\n  {'Controller':<24} {'RMS [mm]':>9} {'SS err [mm]':>12}")
     print("  " + "-"*48)
@@ -281,7 +284,7 @@ def run_all():
     # Plot
     # Readability subset: classical baselines vs full proposed controller.
     # D4–D6 are reported in the table only.
-    PLOT_SET = ['D1 SK05 PD', 'D2 SK05 PI', 'D3 FixedBase MPC', 'D7 Proposed Full']
+    PLOT_SET = ['D1 SK05 PD', 'D2 SK05 PI', 'D3 FreeSpace Recovery', 'D7 Proposed Full']
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 7))
     colors = plt.cm.tab10(np.linspace(0, 1, len(CONTROLLERS)))
     for i, (nm, res) in enumerate(results.items()):
@@ -292,7 +295,7 @@ def run_all():
     ax1.axvline(T_DIST, color='k', ls='--', lw=1.2,
                 label=f'Disturbance on (8 N at t={T_DIST}s)')
     ax1.set_ylabel('||e|| [mm]');  ax1.set_xlabel('Time [s]')
-    ax1.set_title('Scenario C-G1 — Unitree G1 (33.3 kg), Fixed Stance\n'
+    ax1.set_title('Scenario C-G1 — Unitree G1 model (34.04 kg), Fixed Stance\n'
                   'Official MuJoCo Menagerie model, 29 DOF', fontsize=11)
     ax1.legend(fontsize=7, ncol=2);  ax1.grid(True, alpha=0.3)
 

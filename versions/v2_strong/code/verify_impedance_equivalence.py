@@ -25,24 +25,23 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 DT = 0.001
 Q = np.diag([6e4, 6e4, 6e4, 60.0, 60.0, 60.0])
 R = 0.01 * np.eye(3)
-LAMBDA = np.diag([0.93, 1.07, 1.98])
 HORIZONS = [2, 5, 10, 20, 40, 80, 160]
 
 
-def first_step_gain(mpc: ImpedanceMPC, Lambda: np.ndarray) -> np.ndarray:
+def first_step_gain(mpc: ImpedanceMPC) -> np.ndarray:
     """Return K_N where the unconstrained optimizer applies U0 = -K_N x."""
-    mode = mpc.precompute_mode("nominal", Lambda)
+    mode = mpc.precompute_mode("nominal", np.eye(3))
     gain = mode["H_inv"] @ mode["Gamma"].T @ mpc._Q_bar @ mpc._Phi
     return gain[:3, :]
 
 
-def infinite_lqr_gain(dt: float, Lambda: np.ndarray) -> np.ndarray:
+def infinite_lqr_gain(dt: float) -> np.ndarray:
     """Return K_inf for U = -K_inf x."""
     A = np.block([
         [np.eye(3), dt * np.eye(3)],
         [np.zeros((3, 3)), np.eye(3)],
     ])
-    B = np.vstack([np.zeros((3, 3)), -np.linalg.inv(Lambda) * dt])
+    B = np.vstack([0.5 * dt * dt * np.eye(3), dt * np.eye(3)])
     P = solve_discrete_are(A, B, Q, R)
     return np.linalg.solve(R + B.T @ P @ B, B.T @ P @ A)
 
@@ -62,14 +61,14 @@ def main():
         [np.eye(3), DT * np.eye(3)],
         [np.zeros((3, 3)), np.eye(3)],
     ])
-    B = np.vstack([np.zeros((3, 3)), -np.linalg.inv(LAMBDA) * DT])
-    K_inf = infinite_lqr_gain(DT, LAMBDA)
+    B = np.vstack([0.5 * DT * DT * np.eye(3), DT * np.eye(3)])
+    K_inf = infinite_lqr_gain(DT)
 
     rel_errors = []
     gains = {}
     for N in HORIZONS:
         mpc = ImpedanceMPC(N=N, dt=DT, Q=Q, R=R, F_max=1e6)
-        K_N = first_step_gain(mpc, LAMBDA)
+        K_N = first_step_gain(mpc)
         gains[N] = K_N
         rel = np.linalg.norm(K_N - K_inf) / (np.linalg.norm(K_inf) + 1e-12)
         rel_errors.append(rel)

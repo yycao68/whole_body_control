@@ -1,5 +1,5 @@
 Yongyan Cao
-Voryx Robotic LLC
+Voryx Robotics LLC
 San Jose, CA 95136, USA
 yongyancao@gmail.com
 
@@ -96,4 +96,4 @@ We thank you for your time and look forward to the reviewers' feedback.
 Sincerely,
 
 Yongyan Cao (corresponding author)
-Voryx Robotic LLC — yongyancao@gmail.com
+Voryx Robotics LLC — yongyancao@gmail.com

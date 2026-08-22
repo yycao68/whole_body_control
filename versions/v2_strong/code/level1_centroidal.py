@@ -133,12 +133,12 @@ class Level1CentroidalBalance:
             l=np.asarray(lb),
             u=np.asarray(ub),
             verbose=False,
-            polish=False,
+            polishing=False,
             eps_abs=1e-5,
             eps_rel=1e-5,
             max_iter=200,
         )
-        res = prob.solve()
+        res = prob.solve(raise_error=False)
         if res.info.status_val not in (1, 2):
             f = fnom
             status = res.info.status

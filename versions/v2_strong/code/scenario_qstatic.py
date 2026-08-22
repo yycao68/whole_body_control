@@ -18,12 +18,12 @@ Interaction layer (run_interaction):
   force.  The controller's active foot-contact set switches
         {left foot, right foot}  <->  {right foot}
   at each lift/place, so the contact Jacobian J_c (6<->3 rows), the
-  contact-consistent mass inverse M-bar, the task inertia Lambda_arm, and the
-  Kalman input matrix B_d all switch. The run also audits MuJoCo floor contacts
+  contact-consistent mass inverse M-bar and task inertia Lambda_arm switch,
+  while the normalized ZOH pair remains constant. The run also audits MuJoCo floor contacts
   because the hand-tuned balance stand-in can retain intermittent toe/edge
   contact even when the left-foot site is lifted. This is therefore a
   support-mode/contact-model switch test of
-  the contact-mode-indexed library and the covariance-inflation protocol.
+  contact-dependent force recovery and the covariance-inflation protocol.
   D5 (no Kalman) / D6 (Kalman, alpha=1) / D7 (Kalman + inflation, alpha=4).
 """
 import numpy as np
@@ -300,7 +300,7 @@ def run_interaction(cfg, verbose=False):
             kalman.set_mode(mpc.A_d, mode['B_d'])
             kalman.predict(F_prev); _, d_hat = kalman.update(e_pos)
         F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]), La, mode_key, d_hat, use_osqp=False)
-        F_arm = -F_mpc; F_prev = F_mpc; prev_mode = mode_key
+        F_arm = F_mpc; F_prev = mpc.last_u; prev_mode = mode_key
 
         tau_task = Jrel[:, arm_dofs].T @ F_arm
         _apply_arm(d, ids, tau_task)

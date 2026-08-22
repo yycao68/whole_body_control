@@ -2,7 +2,7 @@
 Kalman Disturbance Estimator  (Section V-E and VI of paper).
 
 Augmented state: [x_e; d_hat] where d_hat ∈ ℝ³ is an integrating
-disturbance state that converges to any bounded constant pHRI force.
+disturbance state that converges to a bounded constant acceleration disturbance.
 
 A_aug = [[A_d, B_d], [0, I]]   (Eq. 23)
 
@@ -69,8 +69,7 @@ class KalmanDisturbanceEstimator:
             [np.zeros((nd, nxe)), np.eye(nd)]
         ])
 
-        # B_ctrl: how F_mpc enters the state prediction
-        # x_e update: x_e(k+1) += B_d @ F_mpc  → enters top rows of augmented
+        # B_ctrl: how residual acceleration enters the state prediction.
         self.B_ctrl = np.vstack([B_d, np.zeros((nd, 3))])
 
     def inflate_covariance(self, alpha=4.0):
@@ -78,11 +77,11 @@ class KalmanDisturbanceEstimator:
         self.P *= alpha
 
     # ------------------------------------------------------------------
-    def predict(self, F_mpc_prev):
+    def predict(self, u_prev):
         """Prior prediction step."""
         if self.A_aug is None:
             return
-        self.x_aug = self.A_aug @ self.x_aug + self.B_ctrl @ F_mpc_prev
+        self.x_aug = self.A_aug @ self.x_aug + self.B_ctrl @ u_prev
         self.P     = self.A_aug @ self.P @ self.A_aug.T + self.Q_w
 
     def update(self, e_pos_meas, e_vel_meas=None):

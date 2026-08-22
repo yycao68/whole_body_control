@@ -138,7 +138,7 @@ def run_controller(name, cfg):
                 if switched and cfg.get('inflate_alpha', 1.0) > 1.0:
                     kalman.inflate_covariance(cfg['inflate_alpha'])
                 kalman.set_mode(mpc.A_d, mode['B_d'])
-                kalman.predict(F_prev); _, d_hat = kalman.update(e_pos)
+                kalman.predict(mpc.last_u); _, d_hat = kalman.update(e_pos)
             F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]), La, mode_key, d_hat, use_osqp=False)
             F_arm = -F_mpc; F_prev = F_mpc
         else:

@@ -162,7 +162,7 @@ def run_controller(ctrl_name, ctrl_cfg):
             d_hat = None
             if kalman:
                 kalman.set_mode(mpc.A_d, mode['B_d'])     # keep Kalman model in sync
-                kalman.predict(F_mpc_prev)
+                kalman.predict(mpc.last_u)
                 _, d_hat = kalman.update(e_pos)
             x_e_vec = np.concatenate([e_pos, e_vel])
             F_mpc   = mpc.solve(x_e_vec, La_cur, mode_key='ds',

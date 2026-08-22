@@ -126,8 +126,9 @@ def get_contact_consistent_inverse(M, Jc, reg=1e-6, contact_damp=0.1):
     task-space inertia Λ_arm = (J_arm M̄ J_arm^T)⁻¹ is near-singular for a
     planted double-support stance (the arm cannot accelerate the hand in a
     contact-coupled direction without base motion), which is ill-posed for
-    the MPC.  A moderate damping keeps M̄ well-conditioned while retaining
-    the contact-adaptive (larger-than-free-space) apparent inertia.
+    the controller. A moderate damping keeps Mbar well-conditioned, but makes
+    contact consistency approximate rather than exact. The paper reports this
+    implementation regularization explicitly.
     """
     M_inv = np.linalg.inv(M + reg * np.eye(M.shape[0]))
     if Jc.shape[0] == 0:
@@ -323,9 +324,9 @@ class WBCController:
         tau_leg_cc = np.zeros(8)
         if self.contact_consistent and Jc.shape[0] > 0:
             # Contact null-space projector P_c (generalized-force space):
-            # a task force mapped through P_c^T produces no acceleration at
-            # the contacts (J_c M^{-1} P_c^T = 0), so the arm task cannot
-            # violate the rigid foot contacts / push the stance.  Eq. (18b).
+            # In the undamped exact-model limit, a task force mapped through
+            # P_c^T produces no contact acceleration. With the regularization
+            # below, this decoupling is approximate.
             M_inv = np.linalg.inv(M + 1e-4 * np.eye(nv))
             Lam_c = np.linalg.inv(Jc @ M_inv @ Jc.T + 1e-3 * np.eye(Jc.shape[0]))
             Pc    = np.eye(nv) - Jc.T @ Lam_c @ Jc @ M_inv

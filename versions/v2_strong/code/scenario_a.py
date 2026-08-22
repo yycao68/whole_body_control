@@ -153,9 +153,8 @@ def run_controller(name, cfg):
     kalman = None
     if cfg.get('use_mpc'):
         mpc = ImpedanceMPC(N=20, dt=0.001, Q=Q_MPC, R=R_MPC, F_max=F_MAX)
-        # Precompute once with a nominal inertia; the real contact-consistent
-        # Lambda_arm(q) is passed every step and the mode auto-refreshes when
-        # it drifts (contact-mode-indexed library).
+        # Register the mode once. The predictor is constant; the current
+        # Lambda_arm(q) is passed each step for force recovery.
         mpc.precompute_mode('ds', 0.20 * np.eye(3))
         if cfg.get('use_kalman'):
             kalman = KalmanDisturbanceEstimator(dt=0.001)
@@ -208,8 +207,8 @@ def run_controller(name, cfg):
                 _, d_hat = kalman.update(e_pos)
             F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]),
                               Lam_arm, 'ds', d_hat, use_osqp=False)
-            F_arm  = -F_mpc
-            F_prev = F_mpc
+            F_arm  = F_mpc
+            F_prev = mpc.last_u
         else:
             # PD / PI baselines
             F_arm = -(KP_DIST * e_pos + KD_PD * e_vel)
@@ -264,7 +263,7 @@ CONTROLLERS = {
                                  use_contact_consist=True),
     'D2 SK05 PI':          dict(use_mpc=False, use_kalman=False, use_integral=True,
                                  Ki=KI_PI, use_contact_consist=True),
-    'D3 FixedBase MPC':    dict(use_mpc=True,  use_kalman=True,  use_integral=False,
+    'D3 FreeSpace Recovery': dict(use_mpc=True, use_kalman=True, use_integral=False,
                                  use_contact_consist=False, d3_reg=0.1),
     'D4 WBC+PD':           dict(use_mpc=False, use_kalman=False, use_integral=False,
                                  use_contact_consist=True, use_wbc=True),
@@ -302,7 +301,7 @@ def run_all():
     # ── Plot ──────────────────────────────────────────────────────────────
     # Readability subset: classical baselines vs full proposed controller.
     # D4–D6 are reported in the table only.
-    PLOT_SET = ['D1 SK05 PD', 'D2 SK05 PI', 'D3 FixedBase MPC', 'D7 Proposed Full']
+    PLOT_SET = ['D1 SK05 PD', 'D2 SK05 PI', 'D3 FreeSpace Recovery', 'D7 Proposed Full']
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 7), sharex=False)
     colors = plt.cm.tab10(np.linspace(0, 1, len(CONTROLLERS)))
 
