@@ -1,6 +1,6 @@
 # MuJoCo Playground G1 Integration Status
 
-This folder now contains the first integration hook between the paper's
+This simulation folder contains the integration hook between the paper's
 floating-base arm interaction MPC and MuJoCo Playground's Unitree G1 locomotion
 environment.
 

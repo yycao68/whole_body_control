@@ -8,9 +8,9 @@ a fixed rail.  The active contact set therefore alternates
     {left foot, right foot}   <->   {left foot, right foot, left hand}
 
 which changes the contact Jacobian J_c (6 <-> 9 rows), the contact-consistent
-mass inverse M-bar, the RIGHT-arm task inertia Lambda_arm, and hence the
-input matrix B_d -- genuinely exercising the contact-mode-indexed library and
-the Kalman covariance-inflation protocol (D6: alpha=1 vs D7: alpha=4).
+mass inverse M-bar, and the RIGHT-arm task inertia Lambda_arm.  The normalized
+ZOH pair remains constant; the test exercises contact-dependent force recovery
+and the Kalman covariance-inflation protocol (D6: alpha=1 vs D7: alpha=4).
 
 A sustained 8 N pHRI force acts on the RIGHT (task) arm throughout.
 """
@@ -140,7 +140,7 @@ def run_controller(name, cfg):
                 kalman.set_mode(mpc.A_d, mode['B_d'])
                 kalman.predict(F_prev); _, d_hat = kalman.update(e_pos)
             F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]), La, mode_key, d_hat, use_osqp=False)
-            F_arm = -F_mpc; F_prev = F_mpc
+            F_arm = F_mpc; F_prev = mpc.last_u
         else:
             F_arm = -(800.0*e_pos + 40.0*e_vel)
 

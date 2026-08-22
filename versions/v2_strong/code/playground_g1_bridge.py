@@ -25,8 +25,7 @@ from mujoco_playground._src import mjx_env, registry
 
 
 HERE = Path(__file__).resolve().parent
-V2_ROOT = HERE.parent
-EXTERNAL_DEPS = V2_ROOT / "external_deps"
+EXTERNAL_DEPS = HERE / "external_deps"
 MENAGERIE = EXTERNAL_DEPS / "mujoco_menagerie"
 
 ENV_NAME = "G1JoystickFlatTerrain"

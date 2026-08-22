@@ -78,7 +78,10 @@ def get_mass_matrix(model, data):
     """M(q) ∈ ℝ^{nv×nv}."""
     nv = model.nv
     M = np.zeros((nv, nv))
-    mujoco.mj_fullM(model, M, data.qM)
+    try:
+        mujoco.mj_fullM(model, M, data.qM)          # pre-3.10 signature
+    except TypeError:
+        mujoco.mj_fullM(model, data, M)             # MuJoCo >= 3.10: (m, d, dst)
     return M
 
 def get_bias_force(data):

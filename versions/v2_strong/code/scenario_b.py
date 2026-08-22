@@ -58,7 +58,7 @@ CONTROLLERS = {
                                  Kp=800.0, Kd=40.0),
     'D2_SK05_PI':          dict(use_mpc=False, use_kalman=False, use_integral=True,
                                  Kp=800.0, Kd=40.0, Ki=150.0),
-    'D3_FixedBase_MPC':    dict(use_mpc=True,  use_kalman=True,
+    'D3_FreeSpace_Recovery': dict(use_mpc=True, use_kalman=True,
                                  use_contact_consist=False),
     'D4_WBC_PD':           dict(use_mpc=False, use_kalman=False,
                                  Kp=800.0, Kd=40.0, use_wbc=True),
@@ -110,7 +110,7 @@ def run_controller(ctrl_name, ctrl_cfg):
     Kd = ctrl_cfg.get('Kd', 40.0)
     Ki = ctrl_cfg.get('Ki', 0.0)
     integral_err = np.zeros(3)
-    F_mpc_prev   = np.zeros(3)
+    u_prev       = np.zeros(3)
 
     prev_switch_idx = -1
 
@@ -151,17 +151,17 @@ def run_controller(ctrl_name, ctrl_cfg):
                 Mbar_ = np.linalg.inv(M_ + 1e-4 * np.eye(model.nv))   # D3: free-space
             Jarm_  = get_site_jacobian(model, data, ids['hand_site'])
             La_cur = get_task_inertia(Jarm_, Mbar_)
-            mode = mpc.get_or_update_mode('ds', La_cur)   # contact-mode-indexed B_d
+            mode = mpc.get_or_update_mode('ds', La_cur)   # constant predictor, updated recovery inertia
             d_hat = None
             if kalman:
                 kalman.set_mode(mpc.A_d, mode['B_d'])     # keep Kalman model in sync
-                kalman.predict(F_mpc_prev)
+                kalman.predict(u_prev)
                 _, d_hat = kalman.update(e_pos)
             x_e_vec = np.concatenate([e_pos, e_vel])
             F_mpc   = mpc.solve(x_e_vec, La_cur, mode_key='ds',
                                 d_hat=d_hat, use_osqp=False)
-            F_arm      = -F_mpc
-            F_mpc_prev = F_mpc
+            F_arm      = F_mpc
+            u_prev     = mpc.last_u
         else:
             F_arm = -(Kp * e_pos + Kd * e_vel)
             if Ki > 0:
@@ -242,7 +242,7 @@ def run_all():
 
     # Readability subset: classical baselines vs full proposed controller.
     # D4–D6 are reported in the table only.
-    PLOT_SET = ['D1_SK05_PD', 'D2_SK05_PI', 'D3_FixedBase_MPC', 'D7_Proposed_Full']
+    PLOT_SET = ['D1_SK05_PD', 'D2_SK05_PI', 'D3_FreeSpace_Recovery', 'D7_Proposed_Full']
     fig, axes = plt.subplots(2, 1, figsize=(13, 8), sharex=False)
     colors = plt.cm.tab10(np.linspace(0, 1, len(CONTROLLERS)))
     names  = PLOT_SET

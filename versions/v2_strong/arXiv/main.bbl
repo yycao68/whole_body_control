@@ -128,11 +128,6 @@ L.~Righetti, J.~Buchli, M.~Mistry, and S.~Schaal, ``Inverse dynamics control of
 D.~E. Orin, A.~Goswami, and S.-H. Lee, ``Centroidal dynamics of a biped
   robot,'' \emph{Int. J. Robot. Res.}, vol.~32, no.~9, pp. 1043--1060, 2013.
 
-\bibitem{stellato2020osqp}
-B.~Stellato, G.~Banjac, P.~Goulart, A.~Bemporad, and S.~Boyd, ``{OSQP}: An
-  operator splitting solver for quadratic programs,'' \emph{Math. Program.
-  Comput.}, vol.~12, no.~4, pp. 637--672, 2020.
-
 \bibitem{todorov2012mujoco}
 E.~Todorov, T.~Erez, and Y.~Tassa, ``{MuJoCo}: A physics engine for model-based
   control,'' in \emph{Proc. IEEE/RSJ IROS}, 2012, pp. 5026--5033.

@@ -228,7 +228,7 @@ def run_controller(name, cfg):
             d_hat = None
             if kalman is not None:
                 kalman.set_mode(mpc.A_d, mode['B_d'])
-                kalman.predict(F_prev)
+                kalman.predict(mpc.last_u)
                 _, d_hat = kalman.update(e_pos)
             F_mpc  = mpc.solve(np.concatenate([e_pos, e_vel]),
                                La_use, 'ds', d_hat, use_osqp=False)
