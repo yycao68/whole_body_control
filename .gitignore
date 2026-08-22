@@ -17,8 +17,7 @@ __pycache__/
 .mplconfig/
 .DS_Store
 
-# Large binaries
-*.pdf
+# Large binaries (compiled paper PDFs are tracked deliverables, not ignored)
 *.mp4
 
 # Vendored third-party assets (mujoco_menagerie model zoo, >1 GB of meshes)
