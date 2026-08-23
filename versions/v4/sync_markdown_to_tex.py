@@ -140,7 +140,7 @@ Rough & Impedance & \textbf{6.072} & 48.900 & \textbf{64.44} & 10 \\
 Condition & Peak error: imp./nom./ID (mm) & ID vs. nominal & Recovery: imp./nom./ID (s) & Falls: imp./nom./ID \\
 \midrule
 Lateral, double support & 60.08 / 59.28 / \textbf{50.96} & $-14.0\%$ & -- / -- / -- & 10 / 10 / 10 \\
-Lateral, single support & 15.83 / 16.00 / \textbf{12.38} & $-22.6\%$ & 0.764 / 0.754 / \textbf{0.279} & 0 / 0 / 0 \\
+Lateral, single support & 15.83 / 16.00 / \textbf{12.38} & $-22.6\%$ & 0.764 / 0.754 / \textbf{0.278} & 0 / 0 / 0 \\
 Forward, double support & 19.91 / 19.39 / \textbf{18.18} & $-6.2\%$ & 0.752 / 0.728 / \textbf{0.661} & 0 / 0 / 0 \\
 Forward, single support & 15.74 / 15.82 / \textbf{13.66} & $-13.7\%$ & -- / -- / -- & 0 / 0 / 0 \\
 \bottomrule
