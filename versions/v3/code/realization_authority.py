@@ -1669,3 +1669,107 @@ class PhysicalFailureManager:
             margin_now, cert.min_margin, cert.first_violation_index,
             violation_fraction,
         )
+
+
+# --------------------------------------------------------------------------
+# Route evaluator (Module C).  Selects among ALREADY-GENERATED candidate
+# routes; it does not generate candidates itself -- this codebase has no
+# route/plan generator (confirmed absent by inspection, same as Module B's
+# missing retime/reshape/reroute executors). A caller supplies each candidate
+# already reduced to what Module A needs (an authority snapshot and a
+# predicted command sequence) plus its own planning cost J(P_i).
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RouteCandidate:
+    """One candidate route/plan, already reduced to what Module A needs.
+
+    ``authority`` and ``u_sequence`` are exactly :meth:`PhysicalRealizability
+    Predictor.predict`'s two arguments for THIS candidate -- e.g. a body/task
+    authority snapshot taken (or predicted) along the candidate route, and the
+    predicted command horizon a canonical MPC would issue while following it.
+    ``cost`` is the candidate's planning cost J(P_i); lower is better. It is
+    supplied by the caller -- this module has no notion of trajectory time,
+    path length, or any other planning objective.
+    """
+
+    name: str
+    authority: Any
+    u_sequence: np.ndarray
+    cost: float
+    last_polytope_failed: bool = False
+
+
+@dataclass(frozen=True)
+class RouteEvaluation:
+    name: str
+    certificate: PhysicalRealizabilityCertificate
+    cost: float
+    feasible: bool          # M(P_i) = certificate.min_margin >= margin_safe
+
+
+@dataclass(frozen=True)
+class RouteSelection:
+    """P* = argmin_P J(P) subject to M(P) >= margin_safe, or no feasible P."""
+
+    selected: str | None
+    evaluations: tuple[RouteEvaluation, ...]
+    reason: str
+    best_infeasible: str | None = None   # highest-M(P) candidate, when selected is None
+
+
+class RouteEvaluator:
+    """Module C: evaluate candidate routes and select
+    ``P* = argmin_P J(P)`` subject to ``M(P) >= margin_safe``, where
+    ``M(P_i) = min_j m_phys^(i)(k+j)`` is Module A's certificate for that
+    candidate. This is the review's own formula, unmodified -- the part of it
+    that this module does NOT do is generate the candidates ``P_i`` in the
+    first place, since this codebase has no route/plan generator.
+
+    If no candidate reaches ``margin_safe``, ``selected`` is ``None`` rather
+    than silently returning the least-bad infeasible candidate as if it were
+    safe -- the same "the fallback must itself be admissible" principle
+    ``NormalizedMPC.solve`` already follows for its own single-route fallback.
+    A caller integrating this with Module B would treat "no feasible route"
+    the same way Module B treats "no feasible continuation": as FALLBACK.
+    """
+
+    def __init__(
+        self, *, margin_safe: float,
+        predictor: PhysicalRealizabilityPredictor | None = None,
+    ):
+        if margin_safe < 0.0:
+            raise ValueError("margin_safe must be nonnegative")
+        self.margin_safe = float(margin_safe)
+        self.predictor = predictor or PhysicalRealizabilityPredictor()
+
+    def evaluate(self, candidates: list[RouteCandidate]) -> RouteSelection:
+        if not candidates:
+            raise ValueError("candidates must be non-empty")
+        evaluations = []
+        for c in candidates:
+            cert = self.predictor.predict(c.authority, c.u_sequence)
+            feasible = (
+                cert.valid and not c.last_polytope_failed
+                and cert.min_margin >= self.margin_safe
+            )
+            evaluations.append(RouteEvaluation(c.name, cert, c.cost, feasible))
+
+        feasible_evals = [e for e in evaluations if e.feasible]
+        if feasible_evals:
+            best = min(feasible_evals, key=lambda e: e.cost)
+            reason = (
+                f"selected '{best.name}': lowest cost ({best.cost:g}) among "
+                f"{len(feasible_evals)}/{len(evaluations)} candidates with "
+                f"M(P) >= margin_safe ({self.margin_safe:g})"
+            )
+            return RouteSelection(best.name, tuple(evaluations), reason)
+
+        worst_case_best = max(evaluations, key=lambda e: e.certificate.min_margin)
+        reason = (
+            f"no candidate reaches margin_safe ({self.margin_safe:g}); best "
+            f"worst-case margin was {worst_case_best.certificate.min_margin:g} "
+            f"('{worst_case_best.name}')"
+        )
+        return RouteSelection(None, tuple(evaluations), reason, worst_case_best.name)
