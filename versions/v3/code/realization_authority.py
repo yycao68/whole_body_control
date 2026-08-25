@@ -1407,6 +1407,41 @@ class ExactResidualBisectionEstimator:
 PlanarBodyAuthorityEstimator = ExactResidualBisectionEstimator
 
 
+@dataclass(frozen=True)
+class BoxAuthority:
+    """A plain box ``[lower, upper]``, expressed as a polytope ``H u <= h``.
+
+    Exists so a box constraint (e.g. ``NormalizedMPC.update_input_box``'s
+    conservative fixed-box fallback) can be evaluated by
+    ``PhysicalRealizabilityPredictor``/``RouteEvaluator`` through the exact
+    same code path as a real mapped authority polytope, rather than needing
+    special-cased handling for "this candidate has no H/h."
+    """
+
+    timestamp: float
+    contact_mode: tuple[str, ...]
+    H: np.ndarray
+    h: np.ndarray
+    valid: bool = True
+    status: str = "ok"
+    command_reference: np.ndarray = field(default_factory=lambda: np.zeros(0))
+
+    @classmethod
+    def from_box(
+        cls, lower: np.ndarray, upper: np.ndarray, *,
+        timestamp: float = 0.0, contact_mode: tuple[str, ...] = (),
+    ) -> "BoxAuthority":
+        lower = np.asarray(lower, dtype=float).reshape(-1)
+        upper = np.asarray(upper, dtype=float).reshape(-1)
+        if lower.size != upper.size:
+            raise ValueError("lower and upper must have the same size")
+        n = lower.size
+        H = np.vstack((np.eye(n), -np.eye(n)))
+        h = np.concatenate((upper, -lower))
+        return cls(timestamp, contact_mode, H, h, valid=True, status="ok",
+                   command_reference=np.zeros(n))
+
+
 # --------------------------------------------------------------------------
 # Horizon physical-realizability certificate (predictor only, not a control
 # layer -- nothing below this line feeds back into execution on its own)
@@ -1416,7 +1451,7 @@ PlanarBodyAuthorityEstimator = ExactResidualBisectionEstimator
 def _authority_H_h(authority: Any) -> tuple[np.ndarray, np.ndarray]:
     """Return (H, h) from whichever authority-snapshot type is passed.
 
-    The four snapshot dataclasses in this module name their polytope fields
+    The snapshot dataclasses in this module name their polytope fields
     differently (``H_body``/``h_body``, ``H_task``/``h_task``, ``H``/``h``),
     so callers of :class:`PhysicalRealizabilityPredictor` should not have to
     know which one they hold.

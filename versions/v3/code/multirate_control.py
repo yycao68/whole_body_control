@@ -43,7 +43,7 @@ data.  The dependency is explicit: u_b(k) -> u_t(k) -> tau(k).
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 import mujoco
@@ -51,8 +51,9 @@ import numpy as np
 
 from normalized_mpc import NormalizedMPC, RandomWalkDisturbanceObserver
 from realization_authority import (
-    AnalyticAuthorityMapper, ContinuationAuthorityEstimator,
-    RealizationAuthority, TaskAuthority,
+    AnalyticAuthorityMapper, BoxAuthority, ContinuationAuthorityEstimator,
+    PhysicalFailureManager, PhysicalFailureResponse, PhysicalRealizabilityPredictor,
+    RealizationAuthority, ResponseLevel, RouteCandidate, RouteEvaluator, TaskAuthority,
 )
 
 
@@ -185,6 +186,8 @@ class MultirateInteractionController:
         continuation: bool = False,
         task_continuation: bool = False,
         task_realization_tolerance: float = 0.5,
+        body_margin_safe: float = 0.15,
+        task_margin_safe: float = 0.15,
     ):
         self.realizer = realizer
         self.rates = rates or RateConfig()
@@ -217,12 +220,41 @@ class MultirateInteractionController:
         )
         self.task_obs = task_obs
 
+        # A SEPARATE instance for the fallback-box candidate, not a second
+        # constraint mode toggled on self.body_mpc/self.task_mpc: switching a
+        # single NormalizedMPC between update_input_polytope and
+        # update_input_box resets _H_poly, which forces the (~30 ms) OSQP
+        # solver rebuild on the NEXT polytope call instead of the fast
+        # incremental .update() path -- see update_input_polytope's own
+        # rebuild comment. Two independent instances keep each candidate's
+        # solver state (and rebuild-avoidance) undisturbed by the other.
+        self.body_fallback_mpc = replace(self.body_mpc)
+        self.task_fallback_mpc = None if self.task_mpc is None else replace(self.task_mpc)
+
         # Published state (the "lock-free buffers" of the real implementation).
         self.snapshot: RealizationAuthority | None = None
         self.task_snapshot: TaskAuthority | None = None
         self.task_fallback_box = np.array([2.0, 2.0, 2.0])
         self.u_body = np.zeros(2)
         self.u_task = np.zeros(3)
+
+        # Modules A/B/C from the code-to-paper review: A (predictor) folds an
+        # already-predicted command horizon through an already-published
+        # authority polytope; B (classifier) and C (route evaluator) are
+        # wired below into the analytic-snapshot body/task branches only --
+        # the continuation branches keep their own, unchanged, box-only
+        # fallback (see _select_body_route/_select_task_route).
+        self.predictor = PhysicalRealizabilityPredictor()
+        self.body_margin_safe = float(body_margin_safe)
+        self.task_margin_safe = float(task_margin_safe)
+        self.body_response_manager = PhysicalFailureManager(margin_safe=self.body_margin_safe)
+        self.task_response_manager = PhysicalFailureManager(margin_safe=self.task_margin_safe)
+        self.body_route_evaluator = RouteEvaluator(
+            margin_safe=self.body_margin_safe, predictor=self.predictor)
+        self.task_route_evaluator = RouteEvaluator(
+            margin_safe=self.task_margin_safe, predictor=self.predictor)
+        self.body_response: PhysicalFailureResponse | None = None
+        self.task_response: PhysicalFailureResponse | None = None
 
         self.servo = JointServo(realizer)
         self._last_node_t = -np.inf
@@ -237,40 +269,173 @@ class MultirateInteractionController:
         self.n_invalid_snapshots = 0
         self.n_polytope_failures = 0
         self.n_task_invalid = 0
+        # Cycles where the authority snapshot passed its validity/mode/
+        # freshness checks, but RouteEvaluator still chose the fallback box
+        # because the authority candidate's own predicted margin (Module A)
+        # did not clear margin_safe -- a strictly stronger check than the
+        # metadata gate above ever performed on its own.
+        self.n_body_route_downgrade = 0
+        self.n_task_route_downgrade = 0
         self._last_body_t = -np.inf
         self._last_task_t = -np.inf
 
-    # -- predictor constraint selection ------------------------------------
-    def _apply_body_constraints(self, t: float, mode: tuple[str, ...]) -> str:
-        """Constrain the body predictor by the latest snapshot, or fall back.
+    # -- predictor constraint selection (Modules B/C wired in here) ---------
+    def _select_body_route(
+        self, t: float, mode: tuple[str, ...],
+        body_error: np.ndarray, d_hat: np.ndarray,
+    ) -> tuple[np.ndarray, str, PhysicalFailureResponse | None]:
+        """Solve the body predictor via the authority-polytope route or the
+        conservative fallback-box route, choosing between them with Module
+        C's ``RouteEvaluator`` instead of trusting the snapshot's validity/
+        mode/freshness metadata alone.
 
-        Never waits for a fresh QP-node snapshot.  Returns which source was used.
+        The metadata checks are still necessary preconditions -- an invalid,
+        wrong-mode, or stale snapshot cannot be evaluated at all -- but when
+        they pass, the box is now solved and certified too (as a
+        ``BoxAuthority``), so RouteEvaluator's ``M(P) >= margin_safe`` check
+        can catch a snapshot that LOOKS fine by metadata but whose own
+        predicted margin does not clear ``margin_safe`` (Module A), not just
+        one that is outright stale/invalid/wrong-mode.  Cost: one extra
+        NormalizedMPC solve on cycles where the authority route is attempted
+        (the box solve is cheap relative to the polytope solve; see the
+        commit message for measured overhead).
+
+        Never waits for a fresh QP-node snapshot.  The continuation-authority
+        path is unchanged: it publishes bounds, not a polytope, so there is
+        nothing for Module A's H/h machinery to evaluate, and it keeps its
+        own existing conservative-box fallback.
         """
         if self.use_authority and self.continuation:
             cb = self._cont_box
             if (cb is not None and cb[2] == mode
                     and (t - cb[1]) <= self.rates.max_snapshot_age):
                 self.body_mpc.update_input_box(cb[0].lower + cb[3], cb[0].upper + cb[3])
-                return "continuation_box"
+                return self.body_mpc.solve(body_error, d_hat), "continuation_box", None
             self.n_invalid_snapshots += 1
             self.body_mpc.update_input_box(-self.fallback_box, self.fallback_box)
-            return "fallback_box"
+            return self.body_mpc.solve(body_error, d_hat), "fallback_box", None
 
         s = self.snapshot
-        if not self.use_authority or s is None or not s.valid:
-            self.n_invalid_snapshots += int(self.use_authority and (s is None or not s.valid))
-            self.body_mpc.update_input_box(-self.fallback_box, self.fallback_box)
-            return "fallback_box"
-        if s.contact_mode != mode:
-            self.n_mode_mismatch += 1
-            self.body_mpc.update_input_box(-self.fallback_box, self.fallback_box)
-            return "mode_mismatch_fallback"
-        if (t - s.timestamp) > self.rates.max_snapshot_age:
-            self.n_stale_fallbacks += 1
-            self.body_mpc.update_input_box(-self.fallback_box, self.fallback_box)
-            return "stale_fallback"
-        self.body_mpc.update_input_polytope(s.H_body, s.h_body, u_ref=s.command_reference)
-        return "authority_polytope"
+        authority_ok = (
+            self.use_authority and s is not None and s.valid
+            and s.contact_mode == mode
+            and (t - s.timestamp) <= self.rates.max_snapshot_age
+        )
+        u_by_name: dict[str, np.ndarray] = {}
+        candidates: list[RouteCandidate] = []
+        if authority_ok:
+            self.body_mpc.update_input_polytope(s.H_body, s.h_body, u_ref=s.command_reference)
+            u_a = self.body_mpc.solve(body_error, d_hat)
+            polytope_failed = self.body_mpc.last_polytope_failed
+            if polytope_failed:
+                self.n_polytope_failures += 1
+            seq_a = (self.body_mpc.last_u_sequence if self.body_mpc.last_u_sequence is not None
+                     else np.tile(u_a, (self.body_mpc.horizon, 1)))
+            u_by_name["authority_polytope"] = u_a
+            candidates.append(RouteCandidate(
+                "authority_polytope", s, seq_a, cost=0.0,
+                last_polytope_failed=polytope_failed,
+            ))
+        else:
+            if not self.use_authority or s is None or not s.valid:
+                self.n_invalid_snapshots += int(self.use_authority and (s is None or not s.valid))
+            elif s.contact_mode != mode:
+                self.n_mode_mismatch += 1
+            else:
+                self.n_stale_fallbacks += 1
+
+        box = BoxAuthority.from_box(-self.fallback_box, self.fallback_box,
+                                    timestamp=t, contact_mode=mode)
+        self.body_fallback_mpc.update_input_box(-self.fallback_box, self.fallback_box)
+        u_b = self.body_fallback_mpc.solve(body_error, d_hat)
+        seq_b = (self.body_fallback_mpc.last_u_sequence
+                 if self.body_fallback_mpc.last_u_sequence is not None
+                 else np.tile(u_b, (self.body_fallback_mpc.horizon, 1)))
+        u_by_name["fallback_box"] = u_b
+        candidates.append(RouteCandidate("fallback_box", box, seq_b, cost=1.0))
+
+        sel = self.body_route_evaluator.evaluate(candidates)
+        response = None
+        if authority_ok:
+            auth_cert = next(
+                e.certificate for e in sel.evaluations if e.name == "authority_polytope")
+            # NOT self.body_mpc.last_polytope_failed: the box solve above ran
+            # after the authority solve and overwrote that instance state.
+            response = self.body_response_manager.classify(
+                auth_cert, last_polytope_failed=polytope_failed)
+
+        chosen = sel.selected or "fallback_box"     # box is always a safe default
+        if authority_ok and chosen != "authority_polytope":
+            self.n_body_route_downgrade += 1
+        return u_by_name[chosen], chosen, response
+
+    def _select_task_route(
+        self, t: float, mode: tuple[str, ...],
+        task_error: np.ndarray, d_hat: np.ndarray,
+    ) -> tuple[np.ndarray, str, TaskAuthority | None, PhysicalFailureResponse | None]:
+        """Task-port mirror of :meth:`_select_body_route`.
+
+        Returns ``(u_task, source, snapshot_used, response)``; ``snapshot_used``
+        is the ``TaskAuthority`` RouteEvaluator actually selected (or ``None``
+        for the fallback box), preserved for ``task_command_selector`` callers
+        that key off it.
+        """
+        if self.use_authority and self.task_continuation:
+            tcb = self._task_cont_box
+            if (tcb is not None and tcb[2] == mode
+                    and (t - tcb[1]) <= self.rates.max_snapshot_age):
+                self.task_mpc.update_input_box(tcb[0].lower + tcb[3], tcb[0].upper + tcb[3])
+                return (self.task_mpc.solve(task_error, d_hat), "task_continuation_box",
+                        None, None)
+            self.n_task_invalid += 1
+            self.task_mpc.update_input_box(-self.task_fallback_box, self.task_fallback_box)
+            return self.task_mpc.solve(task_error, d_hat), "fallback_box", None, None
+
+        ts = self.task_snapshot
+        authority_ok = (
+            self.use_authority and ts is not None and ts.valid
+            and ts.contact_mode == mode
+            and (t - ts.timestamp) <= self.rates.max_snapshot_age
+        )
+        u_by_name: dict[str, np.ndarray] = {}
+        candidates: list[RouteCandidate] = []
+        if authority_ok:
+            self.task_mpc.update_input_polytope(ts.H_task, ts.h_task, u_ref=ts.command_reference)
+            u_a = self.task_mpc.solve(task_error, d_hat)
+            polytope_failed = self.task_mpc.last_polytope_failed
+            seq_a = (self.task_mpc.last_u_sequence if self.task_mpc.last_u_sequence is not None
+                     else np.tile(u_a, (self.task_mpc.horizon, 1)))
+            u_by_name["task_authority_polytope"] = u_a
+            candidates.append(RouteCandidate(
+                "task_authority_polytope", ts, seq_a, cost=0.0,
+                last_polytope_failed=polytope_failed,
+            ))
+        else:
+            self.n_task_invalid += 1
+
+        box = BoxAuthority.from_box(-self.task_fallback_box, self.task_fallback_box,
+                                    timestamp=t, contact_mode=mode)
+        self.task_fallback_mpc.update_input_box(-self.task_fallback_box, self.task_fallback_box)
+        u_b = self.task_fallback_mpc.solve(task_error, d_hat)
+        seq_b = (self.task_fallback_mpc.last_u_sequence
+                 if self.task_fallback_mpc.last_u_sequence is not None
+                 else np.tile(u_b, (self.task_fallback_mpc.horizon, 1)))
+        u_by_name["fallback_box"] = u_b
+        candidates.append(RouteCandidate("fallback_box", box, seq_b, cost=1.0))
+
+        sel = self.task_route_evaluator.evaluate(candidates)
+        response = None
+        if authority_ok:
+            auth_cert = next(
+                e.certificate for e in sel.evaluations if e.name == "task_authority_polytope")
+            response = self.task_response_manager.classify(
+                auth_cert, last_polytope_failed=polytope_failed)
+
+        chosen = sel.selected or "fallback_box"
+        if authority_ok and chosen != "task_authority_polytope":
+            self.n_task_route_downgrade += 1
+        snapshot_used = ts if chosen == "task_authority_polytope" else None
+        return u_by_name[chosen], chosen, snapshot_used, response
 
     # -- one 1 kHz tick -----------------------------------------------------
     def step(
@@ -319,50 +484,28 @@ class MultirateInteractionController:
         # ---- body predictor: step 4 of the node, sequential, same state --------
         if True:
             t0 = time.perf_counter()
-            src = self._apply_body_constraints(t, stance)
+            # The observer update needs the PREVIOUS cycle's u_body, so it
+            # must run before _select_body_route overwrites self.u_body.
             d_b, _ = self.body_obs.step(np.asarray(body_error, float)[:2], self.u_body)
-            self.u_body = self.body_mpc.solve(np.asarray(body_error, float), d_b)
-            if getattr(self.body_mpc, "last_polytope_failed", False):
-                self.n_polytope_failures += 1
+            self.u_body, src, self.body_response = self._select_body_route(
+                t, stance, np.asarray(body_error, float), d_b)
             self.timing.body_mpc_ms.append((time.perf_counter() - t0) * 1e3)
             self.n_body_solves += 1
             info["body_source"] = src
+            info["body_response_level"] = (
+                None if self.body_response is None else self.body_response.level.name)
             info["body_solved"] = True
 
         # ---- task predictor: step 5, on the capacity the body just committed --
         if self.task_mpc is not None and task_error is not None:
             t0 = time.perf_counter()
-            src = "fallback_box"
-            snapshot_used: TaskAuthority | None = None
-            if self.use_authority and self.task_continuation:
-                tcb = self._task_cont_box
-                if (tcb is not None and tcb[2] == stance
-                        and (t - tcb[1]) <= R.max_snapshot_age):
-                    self.task_mpc.update_input_box(tcb[0].lower + tcb[3],
-                                                   tcb[0].upper + tcb[3])
-                    src = "task_continuation_box"
-                else:
-                    self.task_mpc.update_input_box(-self.task_fallback_box,
-                                                   self.task_fallback_box)
-                    self.n_task_invalid += 1
-            elif self.use_authority and self.task_snapshot is not None \
-                    and self.task_snapshot.valid \
-                    and self.task_snapshot.contact_mode == stance \
-                    and (t - self.task_snapshot.timestamp) <= R.max_snapshot_age:
-                # Body-priority allocation: the task gets what the body left.
-                self.task_mpc.update_input_polytope(self.task_snapshot.H_task,
-                                                    self.task_snapshot.h_task,
-                                                    u_ref=self.task_snapshot.command_reference)
-                src = "task_authority_polytope"
-                snapshot_used = self.task_snapshot
-            else:
-                self.task_mpc.update_input_box(-self.task_fallback_box,
-                                               self.task_fallback_box)
-                self.n_task_invalid += 1
             d_t, _ = self.task_obs.step(np.asarray(task_error, float)[:3], self.u_task)
-            self.u_task = self.task_mpc.solve(np.asarray(task_error, float), d_t)
+            self.u_task, src, snapshot_used, self.task_response = self._select_task_route(
+                t, stance, np.asarray(task_error, float), d_t)
             info["task_nominal_command"] = self.u_task.copy()
             info["task_snapshot_used"] = snapshot_used
+            info["task_response_level"] = (
+                None if self.task_response is None else self.task_response.level.name)
             if task_command_selector is not None:
                 selected = np.asarray(
                     task_command_selector(self.u_task.copy(), snapshot_used), dtype=float
@@ -459,4 +602,6 @@ class MultirateInteractionController:
             "invalid_snapshots": self.n_invalid_snapshots,
             "polytope_failures": self.n_polytope_failures,
             "task_invalid_snapshots": self.n_task_invalid,
+            "body_route_downgrades": self.n_body_route_downgrade,
+            "task_route_downgrades": self.n_task_route_downgrade,
         }
