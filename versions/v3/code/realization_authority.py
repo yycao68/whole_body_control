@@ -46,6 +46,7 @@ to grade the analytic mapping on the sampled rays.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import IntEnum
 from itertools import product
 from typing import Any
 
@@ -1531,4 +1532,140 @@ class PhysicalRealizabilityPredictor:
             horizon_margin=horizon_margin, min_margin=min_margin,
             first_violation_index=first_violation_index,
             valid=True, status="ok",
+        )
+
+
+# --------------------------------------------------------------------------
+# Response classifier (Module B).  Classifies a certificate into a response
+# level; it does NOT execute retiming, reshaping, or rerouting -- this
+# codebase has no such executors (see the module-level review notes above).
+# --------------------------------------------------------------------------
+
+
+class ResponseLevel(IntEnum):
+    """The five-tier response hierarchy from the code-to-paper review.
+
+    Only EXECUTE and FALLBACK correspond to an action this codebase actually
+    performs today: EXECUTE is "use the authority-constrained MPC solve as
+    given," and FALLBACK is "the solve found no feasible point in H u <= h at
+    all, so NormalizedMPC already fell back to u_ref" (see
+    ``NormalizedMPC.solve``'s ``_admissible_fallback``). RETIME, RESHAPE, and
+    REROUTE are RECOMMENDATIONS only -- there is no trajectory-retiming,
+    command-reshaping, or route-rerouting executor in this codebase to carry
+    them out (confirmed absent by inspection: no retiming/reshaping module,
+    and Level 3 rerouting is the review's own "largest missing component").
+    """
+
+    EXECUTE = 0
+    RETIME = 1
+    RESHAPE = 2
+    REROUTE = 3
+    FALLBACK = 4
+
+
+@dataclass(frozen=True)
+class PhysicalFailureResponse:
+    level: ResponseLevel
+    reason: str
+    margin_now: float             # horizon_margin[0]: the nearest-term margin
+    margin_worst: float           # cert.min_margin: the horizon-wide certificate
+    first_violation_index: int | None
+    violation_fraction: float     # fraction of predicted stages below margin_safe
+
+
+class PhysicalFailureManager:
+    """Module B: classify a :class:`PhysicalRealizabilityCertificate` into a
+    :class:`ResponseLevel`, using only signals that already exist by the time
+    a control cycle finishes (Module A's certificate, plus
+    ``NormalizedMPC.last_polytope_failed``).
+
+    The classification below the EXECUTE/FALLBACK boundary is a fixed
+    HEURISTIC over the shape of the predicted margin profile, not a verified
+    outcome -- there is no retime/reshape/reroute engine here to test the
+    recommendation against (see :class:`ResponseLevel`). The heuristic:
+
+    * FALLBACK  -- the authority snapshot is invalid, or the realization-
+      constrained solve already found no feasible command at all
+      (``last_polytope_failed``). This is the one tier backed by a real
+      "nothing worked" signal, not a shape read off the margin profile.
+    * EXECUTE   -- the certificate's worst-case margin over the WHOLE horizon
+      already clears ``margin_safe``. Nothing needs to change.
+    * RETIME    -- the near-term margin (stage 0) clears ``margin_safe`` but
+      some later stage does not: there is time before the shortfall arrives,
+      which is exactly the lever retiming (slowing down) trades on.
+    * REROUTE   -- the near-term margin is already below ``margin_safe`` AND
+      the violation is pervasive (more than ``reroute_violation_fraction`` of
+      the predicted horizon is below ``margin_safe``): not a local, transient
+      dip, so no adaptation within the CURRENT authority polytope is likely to
+      restore feasibility.
+    * RESHAPE   -- the near-term margin is already below ``margin_safe`` but
+      the violation is not pervasive: retiming can't buy time (the shortfall
+      is already here), but it also is not structural enough to call for a
+      different route.
+    """
+
+    def __init__(
+        self, *, margin_safe: float, reroute_violation_fraction: float = 0.5,
+    ):
+        if margin_safe < 0.0:
+            raise ValueError("margin_safe must be nonnegative")
+        if not (0.0 < reroute_violation_fraction <= 1.0):
+            raise ValueError("reroute_violation_fraction must be in (0, 1]")
+        self.margin_safe = float(margin_safe)
+        self.reroute_violation_fraction = float(reroute_violation_fraction)
+
+    def classify(
+        self, cert: PhysicalRealizabilityCertificate, *,
+        last_polytope_failed: bool = False,
+    ) -> PhysicalFailureResponse:
+        n = cert.horizon_margin.size
+        violation_fraction = (
+            float(np.mean(cert.horizon_margin < self.margin_safe)) if n else 1.0
+        )
+        margin_now = float(cert.horizon_margin[0]) if n else cert.min_margin
+
+        if not cert.valid or last_polytope_failed:
+            reason = (
+                f"authority invalid ({cert.status})" if not cert.valid
+                else "realization-constrained solve found no feasible command "
+                     "(last_polytope_failed)"
+            )
+            return PhysicalFailureResponse(
+                ResponseLevel.FALLBACK, reason, margin_now, cert.min_margin,
+                cert.first_violation_index, violation_fraction,
+            )
+
+        if cert.min_margin >= self.margin_safe:
+            return PhysicalFailureResponse(
+                ResponseLevel.EXECUTE,
+                "worst-case predicted margin clears margin_safe across the horizon",
+                margin_now, cert.min_margin, cert.first_violation_index,
+                violation_fraction,
+            )
+
+        if margin_now >= self.margin_safe:
+            return PhysicalFailureResponse(
+                ResponseLevel.RETIME,
+                "near-term margin is safe; the shortfall only appears later in "
+                "the predicted horizon, so there is time to slow down",
+                margin_now, cert.min_margin, cert.first_violation_index,
+                violation_fraction,
+            )
+
+        if violation_fraction > self.reroute_violation_fraction:
+            return PhysicalFailureResponse(
+                ResponseLevel.REROUTE,
+                f"near-term margin already violated and {violation_fraction:.0%} "
+                "of the predicted horizon is below margin_safe -- pervasive, "
+                "not a local transient dip",
+                margin_now, cert.min_margin, cert.first_violation_index,
+                violation_fraction,
+            )
+
+        return PhysicalFailureResponse(
+            ResponseLevel.RESHAPE,
+            "near-term margin already violated, but the shortfall is not "
+            "pervasive across the predicted horizon",
+            margin_now, cert.min_margin, cert.first_violation_index,
+            violation_fraction,
         )
