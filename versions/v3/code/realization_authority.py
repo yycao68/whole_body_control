@@ -88,6 +88,11 @@ class RealizationAuthority:
     # Diagnostics
     nominal_residual: np.ndarray = field(default_factory=lambda: np.zeros(2))
     residual_gain: np.ndarray = field(default_factory=lambda: np.zeros((2, 2)))
+    # The absolute command this H_body/h_body was translated relative to
+    # (H(u-u_ref)<=h_local published as Hu<=h_local+H@u_ref). This is the one
+    # point the polytope's own construction guarantees is admissible -- the
+    # consumer's solve-failure fallback, not u=0.
+    command_reference: np.ndarray = field(default_factory=lambda: np.zeros(2))
 
     def contains(self, u: np.ndarray, tol: float = 1e-9) -> bool:
         if not self.valid or self.H_body.size == 0:
@@ -171,6 +176,7 @@ class TaskAuthority:
     K_lambda_task: np.ndarray
     valid: bool = True
     status: str = "ok"
+    command_reference: np.ndarray = field(default_factory=lambda: np.zeros(3))
 
     def contains(self, u_t: np.ndarray, tol: float = 1e-9) -> bool:
         if not self.valid or self.H_task.size == 0:
@@ -240,6 +246,7 @@ class AugmentedBodyAuthority:
     h: np.ndarray
     valid: bool = True
     status: str = "ok"
+    command_reference: np.ndarray = field(default_factory=lambda: np.zeros(3))
 
     def contains(self, u: np.ndarray, tol: float = 1e-9) -> bool:
         """Return whether an absolute three-dimensional command is in the map."""
@@ -461,7 +468,8 @@ class AugmentedBodyAuthorityMapper:
         local_h = np.maximum(local_h, 0.0)
         # Increment-to-absolute translation: H (u-u_ref) <= h becomes H u <= h+H u_ref.
         h = local_h + H @ u_ref
-        return AugmentedBodyAuthority(timestamp, contact_mode, H, h, True, "ok")
+        return AugmentedBodyAuthority(timestamp, contact_mode, H, h, True, "ok",
+                                       command_reference=u_ref.copy())
 
 
 @dataclass(frozen=True)
@@ -478,6 +486,7 @@ class CentroidalBodyAuthority:
     h: np.ndarray
     valid: bool = True
     status: str = "ok"
+    command_reference: np.ndarray = field(default_factory=lambda: np.zeros(5))
 
 
 class CentroidalBodyAuthorityMapper:
@@ -582,7 +591,8 @@ class CentroidalBodyAuthorityMapper:
                                            np.zeros((0, 5)), np.zeros(0), False,
                                            "tightened nominal torque/contact margin exhausted")
         h = np.maximum(local_bounds, 0.0) + H @ u_ref
-        return CentroidalBodyAuthority(timestamp, contact_mode, H, h, True, "ok")
+        return CentroidalBodyAuthority(timestamp, contact_mode, H, h, True, "ok",
+                                        command_reference=u_ref.copy())
 
 
 class AnalyticAuthorityMapper:
@@ -899,6 +909,7 @@ class AnalyticAuthorityMapper:
                 status="ok",
             nominal_residual=residual0.copy(),
             residual_gain=residual_gain,
+            command_reference=u_ref.copy(),
         )
 
     def task_authority(
@@ -1005,6 +1016,7 @@ class AnalyticAuthorityMapper:
             j["timestamp"], j["contact_mode"], H, h, K_tau_t, K_lam_t,
             valid=True,
             status="ok",
+            command_reference=ut_ref.copy(),
         )
 
 
@@ -1119,10 +1131,7 @@ class ContinuationAuthorityEstimator:
                             (lo - val) / np.where(np.abs(rate) > 1e-12, rate, 1.0), np.inf)
             s_row = np.minimum(s_hi, s_lo)
             s_row = np.where(s_row > 1e-9, s_row, np.inf)
-            enter_idx = int(np.argmin(s_row))
-            s_enter = float(s_row[enter_idx])
-            if not np.isfinite(s_enter):
-                enter_idx = -1
+            s_enter = float(np.min(s_row)) if s_row.size else np.inf
 
             # --- an active row LEAVES (its multiplier reaches zero) (vectorized)
             act_idx = np.flatnonzero(active)
@@ -1131,12 +1140,9 @@ class ContinuationAuthorityEstimator:
             safe = movable & (np.abs(dnu) > self.dual_tol)
             s_act[safe] = -y[act_idx][safe] / dnu[safe]
             s_act = np.where(s_act > 1e-9, s_act, np.inf)
-            if s_act.size:
-                k_leave = int(np.argmin(s_act))
-                s_leave = float(s_act[k_leave])
-                leave_idx = int(act_idx[k_leave]) if np.isfinite(s_leave) else -1
-            else:
-                s_leave, leave_idx = np.inf, -1
+            s_act_full = np.full(active.shape, np.inf)
+            s_act_full[act_idx] = s_act
+            s_leave = float(np.min(s_act)) if s_act.size else np.inf
 
             s_cap = self.absolute_limit - t
             s_star = min(s_tol, s_enter, s_leave, s_cap)
@@ -1149,16 +1155,24 @@ class ContinuationAuthorityEstimator:
             if s_star == s_cap:
                 return self.absolute_limit
 
-            # advance to the breakpoint and switch the active set
+            # advance to the breakpoint and switch the active set.  Apply every
+            # row whose event falls within EVENT_TOL of s_star together, not
+            # just a single argmin winner -- rows tied at the same critical-
+            # region boundary (a symmetric configuration, or two contacts
+            # saturating together) are a genuine SIMULTANEOUS transition, and
+            # since s_enter/s_leave come from independent formulas ((hi-val)/rate
+            # vs -y/dnu) a true tie almost never lands on the same float.
+            # Picking only the numerically-smaller one per iteration would
+            # silently split one event across iterations and could exhaust
+            # max_regions before reaching the true tolerance-crossing boundary.
+            EVENT_TOL = 1e-9 + 1e-6 * s_star
             z = z + s_star * dz
             y = y.copy()
             y[act_idx] = y[act_idx] + s_star * dnu
             r = r + s_star * dr
             t += s_star
-            if s_star == s_enter and enter_idx >= 0:
-                active[enter_idx] = True
-            elif s_star == s_leave and leave_idx >= 0:
-                active[leave_idx] = False
+            active[inact & (s_row <= s_star + EVENT_TOL)] = True
+            active[active & (s_act_full <= s_star + EVENT_TOL)] = False
         return t
 
     # -- box ----------------------------------------------------------------

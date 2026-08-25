@@ -49,6 +49,7 @@ class NormalizedMPC:
         self._poly_solver = None
         self._H_poly = None
         self._h_poly = None
+        self._u_ref_poly = None
         self.last_polytope_failed = False
         self._u_lower = None
         self._u_upper = None
@@ -118,6 +119,12 @@ class NormalizedMPC:
         # invalid and the caller deliberately requests a conservative box.
         self._H_poly = None
         self._h_poly = None
+        self._u_ref_poly = None
+        # A stale True here would otherwise persist across this explicit mode
+        # change and could be read by a caller/logger as "the polytope is
+        # still failing" after the controller has already recovered into box
+        # mode -- this cleared it, the polytope branch is what sets it again.
+        self.last_polytope_failed = False
         self._u_lower = lower
         self._u_upper = upper
         if self._solver is None:
@@ -129,8 +136,12 @@ class NormalizedMPC:
         self._u_upper = None
         self._H_poly = None
         self._h_poly = None
+        self._u_ref_poly = None
+        self.last_polytope_failed = False
 
-    def update_input_polytope(self, H: np.ndarray, h: np.ndarray) -> None:
+    def update_input_polytope(
+        self, H: np.ndarray, h: np.ndarray, u_ref: np.ndarray | None = None,
+    ) -> None:
         """Constrain every horizon stage by the realization polytope H u <= h.
 
         This is the general form of the residual-command constraint supplied by
@@ -139,6 +150,15 @@ class NormalizedMPC:
         horizon.  The canonical pair (A, B) and the condensed Hessian are NOT
         touched -- only the constraint rows change, which is the whole point:
         a contact transition switches the admissible geometry, not the dynamics.
+
+        ``u_ref`` is the absolute command this polytope's construction is
+        guaranteed to contain (``H u_ref <= h`` by the caller's own increment-
+        to-absolute translation: ``H(u-u_ref)<=h_local`` published as
+        ``H u<=h_local+H u_ref``). It is stored and used as the solve-failure
+        fallback below -- ``u=0`` has NO such guarantee in general (it does
+        only when ``u_ref`` happens to be exactly zero), so a caller that omits
+        ``u_ref`` gets the old, unguaranteed zero fallback rather than a
+        silent, worse assumption.
         """
         H = np.atleast_2d(np.asarray(H, dtype=float))
         h = np.asarray(h, dtype=float).reshape(-1)
@@ -146,6 +166,10 @@ class NormalizedMPC:
             raise ValueError("H must be (n_con, dim) and h must be (n_con,)")
         if not (np.all(np.isfinite(H)) and np.all(np.isfinite(h))):
             raise ValueError("H and h must be finite")
+        self._u_ref_poly = (
+            np.zeros(self.dim) if u_ref is None
+            else np.asarray(u_ref, dtype=float).reshape(self.dim).copy()
+        )
         rebuild = (
             self._poly_solver is None
             or self._H_poly is None
@@ -235,21 +259,38 @@ class NormalizedMPC:
             self._poly_solver.update(q=2.0 * gradient,
                                      l=-np.inf * np.ones(ub.size), u=ub)
             result = self._poly_solver.solve()
-            if result.x is None or result.info.status_val not in (1, 2):
+
+            def _admissible_fallback() -> np.ndarray:
                 # The fallback must itself be ADMISSIBLE.  -d_hat (the offset-free
                 # cancelling input) is not: it can lie outside H u <= h, and
                 # returning it would hand the realizer a command the contacts
                 # cannot produce -- exactly what this constraint exists to stop.
-                # u = 0 is always admissible whenever the nominal is feasible
-                # (then h >= 0), so fall back to it.
+                # u = 0 is NOT guaranteed admissible either: h is published in
+                # absolute coordinates as h_local + H @ u_ref (see
+                # realization_authority.py), so h >= 0 only guarantees u_ref is
+                # admissible, not u = 0. Fall back to u_ref, the one point this
+                # polytope's own construction promises is in H u <= h.
                 self.last_u_sequence = None
                 self.last_bound_active = False
                 self.last_polytope_failed = True
-                return np.zeros(self.dim)
-            self.last_polytope_failed = False
-            self.last_u_sequence = result.x.reshape(self.horizon, self.dim) - d_hat
+                return (self._u_ref_poly.copy() if self._u_ref_poly is not None
+                        else np.zeros(self.dim))
+
+            if result.x is None or result.info.status_val not in (1, 2):
+                return _admissible_fallback()
             u0 = result.x[:self.dim] - d_hat
             slack = self._h_poly - self._H_poly @ u0
+            # OSQP status 2 (SOLVED_INACCURATE) can still return a u0 that
+            # overshoots H u <= h by more than solver roundoff -- e.g. when it
+            # hits its iteration/time limit before converging to eps_abs. The
+            # solver is configured with eps_abs=eps_rel=1e-6, so a violation
+            # much larger than that is not roundoff; treat it as a solve
+            # failure rather than handing out a command the polytope does not
+            # actually contain.
+            if np.any(slack < -1e-6):
+                return _admissible_fallback()
+            self.last_polytope_failed = False
+            self.last_u_sequence = result.x.reshape(self.horizon, self.dim) - d_hat
             self.last_bound_active = bool(np.any(slack <= 1e-6))
             return u0
 
@@ -377,8 +418,9 @@ class MixedBodyMPC:
     def last_polytope_failed(self) -> bool:
         return self._mpc.last_polytope_failed
 
-    def update_input_polytope(self, H: np.ndarray, h: np.ndarray) -> None:
-        self._mpc.update_input_polytope(H, h)
+    def update_input_polytope(self, H: np.ndarray, h: np.ndarray,
+                               u_ref: np.ndarray | None = None) -> None:
+        self._mpc.update_input_polytope(H, h, u_ref=u_ref)
 
     def update_input_box(self, lower: np.ndarray, upper: np.ndarray) -> None:
         self._mpc.update_input_box(lower, upper)
@@ -437,8 +479,9 @@ class CentroidalBodyMPC:
         ])
         self._mpc._build_lifted_matrices()
 
-    def update_input_polytope(self, H: np.ndarray, h: np.ndarray) -> None:
-        self._mpc.update_input_polytope(H, h)
+    def update_input_polytope(self, H: np.ndarray, h: np.ndarray,
+                               u_ref: np.ndarray | None = None) -> None:
+        self._mpc.update_input_polytope(H, h, u_ref=u_ref)
 
     def update_input_box(self, lower: np.ndarray, upper: np.ndarray) -> None:
         self._mpc.update_input_box(lower, upper)

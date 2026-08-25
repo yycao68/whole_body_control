@@ -269,7 +269,7 @@ class MultirateInteractionController:
             self.n_stale_fallbacks += 1
             self.body_mpc.update_input_box(-self.fallback_box, self.fallback_box)
             return "stale_fallback"
-        self.body_mpc.update_input_polytope(s.H_body, s.h_body)
+        self.body_mpc.update_input_polytope(s.H_body, s.h_body, u_ref=s.command_reference)
         return "authority_polytope"
 
     # -- one 1 kHz tick -----------------------------------------------------
@@ -351,7 +351,8 @@ class MultirateInteractionController:
                     and (t - self.task_snapshot.timestamp) <= R.max_snapshot_age:
                 # Body-priority allocation: the task gets what the body left.
                 self.task_mpc.update_input_polytope(self.task_snapshot.H_task,
-                                                    self.task_snapshot.h_task)
+                                                    self.task_snapshot.h_task,
+                                                    u_ref=self.task_snapshot.command_reference)
                 src = "task_authority_polytope"
                 snapshot_used = self.task_snapshot
             else:

@@ -315,7 +315,7 @@ def e3_occupancy() -> dict:
         mpc = NormalizedMPC(dim=2, dt=0.005, horizon=25, q_pos=55., q_vel=12., r=0.08)
         AB = (mpc.A.copy(), mpc.B.copy(), mpc.H.copy())
         if snap.valid:
-            mpc.update_input_polytope(snap.H_body, snap.h_body)
+            mpc.update_input_polytope(snap.H_body, snap.h_body, u_ref=snap.command_reference)
         if ref is None:
             ref = AB
         rows.append({

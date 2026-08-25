@@ -259,7 +259,8 @@ def run_cycle(
                 if snapshot is not None and snapshot.valid and snapshot.contact_mode == stance:
                     authority_lower, authority_upper = snapshot.axis_extent()
                     authority_valid = True
-                    mpc.update_input_polytope(snapshot.H_body, snapshot.h_body)
+                    mpc.update_input_polytope(snapshot.H_body, snapshot.h_body,
+                                              u_ref=snapshot.command_reference)
                 else:
                     authority_lower = np.array([-1.5, -2.0])
                     authority_upper = np.array([1.5, 2.0])
