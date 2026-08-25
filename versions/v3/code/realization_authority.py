@@ -1404,3 +1404,131 @@ class ExactResidualBisectionEstimator:
 
 # Backwards-compatible alias: the old name referred to the bisection estimator.
 PlanarBodyAuthorityEstimator = ExactResidualBisectionEstimator
+
+
+# --------------------------------------------------------------------------
+# Horizon physical-realizability certificate (predictor only, not a control
+# layer -- nothing below this line feeds back into execution on its own)
+# --------------------------------------------------------------------------
+
+
+def _authority_H_h(authority: Any) -> tuple[np.ndarray, np.ndarray]:
+    """Return (H, h) from whichever authority-snapshot type is passed.
+
+    The four snapshot dataclasses in this module name their polytope fields
+    differently (``H_body``/``h_body``, ``H_task``/``h_task``, ``H``/``h``),
+    so callers of :class:`PhysicalRealizabilityPredictor` should not have to
+    know which one they hold.
+    """
+    for H_attr, h_attr in (("H_body", "h_body"), ("H_task", "h_task"), ("H", "h")):
+        if hasattr(authority, H_attr):
+            return getattr(authority, H_attr), getattr(authority, h_attr)
+    raise TypeError(f"{type(authority).__name__} exposes no H/h authority polytope")
+
+
+@dataclass(frozen=True)
+class PhysicalRealizabilityCertificate:
+    """m_phys(k+j) over an already-predicted command horizon U_{k:k+N}.
+
+    ``horizon_margin[j]`` is the worst-case row slack of the authority
+    polytope at the predicted stage-``j`` command ``u_{k+j}``,
+
+        horizon_margin[j] = min_i ( h_i - H_i @ u_{k+j} ),
+
+    and ``min_margin = min_j horizon_margin[j]`` is the scalar certificate
+    m_phys(k). Since H/h already fold torque, friction-cone, unilateral
+    normal-force, and realization-tolerance rows into one polytope (see
+    ``AnalyticAuthorityMapper``), this IS the combined multi-physical-quantity
+    margin -- evaluated jointly across constraint types rather than isolated
+    per-actuator torque headroom. Recovering a strict per-quantity breakdown
+    at every horizon stage would require re-deriving the mapper's own
+    torque/friction/normal-force bounds here, a second copy of logic that
+    could silently drift from the mapper's -- so this predictor deliberately
+    reads the mapper's already-published polytope instead of recomputing it.
+    (``RealizationAuthority.torque_margin/friction_margin/normal_margin`` give
+    that breakdown, but only at the single nominal point k+0 the snapshot was
+    taken at, not across the horizon.)
+
+    THIS IS A LOCAL CERTIFICATE, NOT YET THE PAPER'S FULL PREDICTIVE ONE: H
+    and h are frozen over the horizon by
+    ``NormalizedMPC.update_input_polytope`` (the same ``(H, h)`` is applied at
+    every stage), so ``horizon_margin`` varies only because the predicted
+    command ``u_{k+j}`` varies -- not because of any predicted change in
+    contact mode, configuration, or environment. A genuine future-authority
+    certificate needs stage-varying ``(H_j, h_j)`` built from predicted
+    ``(q, qdot, contact)_{k+j}``, which this codebase does not yet compute.
+    """
+
+    timestamp: float
+    contact_mode: tuple[str, ...]
+    horizon_margin: np.ndarray
+    min_margin: float
+    first_violation_index: int | None
+    valid: bool = True
+    status: str = "ok"
+
+
+class PhysicalRealizabilityPredictor:
+    """Fold a predicted command horizon through an authority polytope.
+
+    This is "Module A" from the code-to-paper review: it turns the existing
+    *instantaneous* authority machinery (``AnalyticAuthorityMapper`` /
+    ``ContinuationAuthorityEstimator``) plus the existing *predicted command
+    sequence* (``NormalizedMPC.last_u_sequence``, already computed by the
+    horizon MPC every solve) into a horizon-wide margin profile, without
+    changing either of those two pieces. It adds no new state and performs no
+    extra QP or KKT solves -- both inputs already exist by the time a control
+    cycle finishes.
+    """
+
+    def predict(
+        self, authority: Any, u_sequence: np.ndarray,
+    ) -> PhysicalRealizabilityCertificate:
+        """Compute m_phys(k+j) for the predicted stages in ``u_sequence``.
+
+        ``authority`` is any of ``RealizationAuthority``/``TaskAuthority``/
+        ``AugmentedBodyAuthority``/``CentroidalBodyAuthority``. ``u_sequence``
+        is the predicted ABSOLUTE command trajectory, shape ``(horizon, dim)``
+        or ``(dim,)`` for a single stage -- e.g. ``NormalizedMPC.last_u_sequence``.
+        """
+        u_seq = np.atleast_2d(np.asarray(u_sequence, dtype=float))
+        n_stages = u_seq.shape[0]
+        if not authority.valid:
+            return PhysicalRealizabilityCertificate(
+                timestamp=authority.timestamp, contact_mode=authority.contact_mode,
+                horizon_margin=np.full(n_stages, -np.inf), min_margin=-np.inf,
+                first_violation_index=0, valid=False,
+                status=f"authority invalid: {authority.status}",
+            )
+        H, h = _authority_H_h(authority)
+        if H.size == 0:
+            # An empty polytope means "unconstrained": every row-min is
+            # vacuously +inf, not a violation.
+            return PhysicalRealizabilityCertificate(
+                timestamp=authority.timestamp, contact_mode=authority.contact_mode,
+                horizon_margin=np.full(n_stages, np.inf), min_margin=np.inf,
+                first_violation_index=None, valid=True,
+                status="unconstrained authority (no rows)",
+            )
+        if u_seq.shape[1] != H.shape[1]:
+            raise ValueError(
+                f"u_sequence has dim {u_seq.shape[1]}, authority polytope expects {H.shape[1]}"
+            )
+        if not np.all(np.isfinite(u_seq)):
+            return PhysicalRealizabilityCertificate(
+                timestamp=authority.timestamp, contact_mode=authority.contact_mode,
+                horizon_margin=np.full(n_stages, -np.inf), min_margin=-np.inf,
+                first_violation_index=0, valid=False,
+                status="non-finite predicted command sequence",
+            )
+        slack = h[None, :] - u_seq @ H.T          # (n_stages, n_rows)
+        horizon_margin = np.min(slack, axis=1)
+        min_margin = float(np.min(horizon_margin))
+        violations = np.flatnonzero(horizon_margin < 0.0)
+        first_violation_index = int(violations[0]) if violations.size else None
+        return PhysicalRealizabilityCertificate(
+            timestamp=authority.timestamp, contact_mode=authority.contact_mode,
+            horizon_margin=horizon_margin, min_margin=min_margin,
+            first_violation_index=first_violation_index,
+            valid=True, status="ok",
+        )
