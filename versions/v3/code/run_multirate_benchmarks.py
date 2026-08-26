@@ -126,31 +126,45 @@ def lateral_step_run(use_authority: bool, *, rates: RateConfig,
 
     res = log["res"][np.isfinite(log["res"])]
     rms = float(np.sqrt(np.mean(log["ex"] ** 2 + log["ey"] ** 2)) * 1000)
-    return dict(
+    # self.realizer's mutable attributes are worker-owned once a
+    # RealizerWorker is in use -- read the last PUBLISHED result instead of
+    # racing the worker thread's own read/write of ctrl.realizer directly.
+    if ctrl._use_worker and ctrl.worker is not None and ctrl.worker.latest() is not None:
+        last_fallback = ctrl.worker.latest().fallback
+    else:
+        last_fallback = ctrl.realizer.last_fallback
+    out = dict(
         variant="C2_analytic_authority" if use_authority else "C1_fixed_box",
         rms_planar_error_mm=rms,
         median_residual=float(np.median(res)) if res.size else float("nan"),
         max_residual=float(res.max()) if res.size else float("nan"),
         residual_over_tol_fraction=float(np.mean(res > TOL)) if res.size else float("nan"),
         fell=bool(fell),
-        qp_fallbacks=int(ctrl.realizer.last_fallback),
+        qp_fallbacks=int(last_fallback),
         body_constraint_sources=src_counts,
         max_abs_u=[round(float(np.abs(log["u"][:, 0]).max()), 3),
                    round(float(np.abs(log["u"][:, 1]).max()), 3)],
         diagnostics=ctrl.diagnostics(),
         _log=log,
     )
+    ctrl.stop()
+    return out
 
 
 # ---------------------------------------------------------------------------
 # E1 real-time budget
 # ---------------------------------------------------------------------------
 
-def _run_e1_once(rates: RateConfig):
+def _run_e1_once(rates: RateConfig, *, enable_async_worker: bool = True):
     # A REPRESENTATIVE controller, not the deliberately-aggressive E2 stress
     # predictor: nominal gains, short horizon, and both ports active -- the
     # configuration a deployment would actually run.  E2's high-gain predictor
     # exists to make a fixed box overshoot and is not a real-time reference.
+    #
+    # enable_async_worker defaults to True HERE (not the class default) --
+    # this is exactly the benign, validated-safe scenario the async worker
+    # was measured against (0 deadline misses, worker keeps up comfortably).
+    # Pass False to recover the old fully-synchronous timing for comparison.
     model, data, torso, hand_sid, hr = settle_model()
     realizer = InverseDynamicsQPRealizer(model, exact_realizer=True)
     ctrl = MultirateInteractionController(
@@ -161,7 +175,8 @@ def _run_e1_once(rates: RateConfig):
                                q_pos=800.0, q_vel=40.0, r=0.05),
         body_obs=RandomWalkDisturbanceObserver(dim=2, dt=rates.node_dt, q_d=0.05, r_y=1.5e-4),
         task_obs=RandomWalkDisturbanceObserver(dim=3, dt=rates.node_dt, q_d=0.04, r_y=2.0e-4),
-        mapper=AnalyticAuthorityMapper(), use_authority=True)
+        mapper=AnalyticAuthorityMapper(), use_authority=True,
+        enable_async_worker=enable_async_worker)
     R = ctrl.realizer
     stance = ("left", "right")
     com0 = robot_com(model, data)
@@ -179,11 +194,12 @@ def _run_e1_once(rates: RateConfig):
                   stance_targets=targets, base_height_ref=hr, rpy=rpy, hand_jac=hj,
                   task_acc_ref=np.zeros(3), task_error=np.r_[hp - hand0, hv])
         mujoco.mj_step(model, data); mujoco.mj_forward(model, data)
+    ctrl.stop()
     return ctrl
 
 
-def e1_realtime(rates: RateConfig) -> dict:
-    ctrl = _run_e1_once(rates)
+def e1_realtime(rates: RateConfig, *, enable_async_worker: bool = True) -> dict:
+    ctrl = _run_e1_once(rates, enable_async_worker=enable_async_worker)
     diag = ctrl.diagnostics()
     d = diag["timing"]
     node = d["optimization_node"]
@@ -208,17 +224,31 @@ def e1_realtime(rates: RateConfig) -> dict:
             "body_predictor": d["body_mpc"],
             "task_predictor": d.get("task_mpc"),
         },
+        # Split metric (RealizerWorker in use, since use_authority=True and
+        # continuation is off by default here): "node_ms"/"optimization_node"
+        # above is now the CRITICAL-PATH cost only (route selection + submit
+        # + publish-check) -- worker_compute_ms is the underlying realizer +
+        # authority cost that used to block it and no longer does.
+        # snapshot_staleness_ms is how old the published result actually was
+        # when read, honestly measured rather than assumed.
+        "async_worker_in_use": diag.get("use_worker", False),
+        "worker_compute_ms": d.get("worker_compute"),
+        "snapshot_staleness_ms": d.get("snapshot_staleness"),
+        "stale_command_holds": diag.get("stale_command_holds"),
         "note": (
             "The whole-body QP (~2.4 ms, of which only ~0.3 ms is the OSQP solve; "
             "the rest is Python matrix assembly) does not fit a 1 kHz cycle, which "
             "is why the QP runs in the 200 Hz node and a torque servo runs at 1 kHz. "
             "Compare against the previous design, whose 62-QP authority search cost "
-            "~154 ms per update."
+            "~154 ms per update. When async_worker_in_use, node_ms/node_deadline_miss* "
+            "measure the now-decoupled critical path, not the underlying compute cost -- "
+            "see worker_compute_ms for that."
         ),
     }
 
 
-def e1_realtime_repeated(rates: RateConfig, *, repeats: int = 5) -> dict:
+def e1_realtime_repeated(rates: RateConfig, *, repeats: int = 5,
+                         enable_async_worker: bool = True) -> dict:
     """Aggregate real-time timing over several independent process runs.
 
     A single 3 s run gives one anecdote ("1 deadline miss in 600 updates").
@@ -234,7 +264,7 @@ def e1_realtime_repeated(rates: RateConfig, *, repeats: int = 5) -> dict:
     per_run_updates: list[int] = []
     per_run_misses: list[int] = []
     for _ in range(repeats):
-        ctrl = _run_e1_once(rates)
+        ctrl = _run_e1_once(rates, enable_async_worker=enable_async_worker)
         node_ms = list(ctrl.timing.node_ms)
         all_node_ms.extend(node_ms)
         per_run_max_ms.append(float(max(node_ms)) if node_ms else float("nan"))
@@ -478,11 +508,27 @@ def e6_task_port(rates: RateConfig, *, hand_force_n: float = 5.0,
                 if late_window[0] <= t < late_window[1]:
                     late_hand_error.append(hand_error_mm)
                     late_com_displacement.append(com_displacement_mm)
-                if R.last_fallback:
-                    fallback_ticks += 1
-                tr.append(float(np.max(np.abs(
-                    R.last_hand_jac @ R.last_qdd - R.last_task_acc_des))))
+                # R.last_fallback/last_hand_jac/last_qdd/last_task_acc_des are
+                # worker-owned once a RealizerWorker is in use (use_auth=True
+                # here) -- reading them directly off R every tick would race
+                # the worker thread's own writes, corrupting exactly the
+                # metrics this loop is trying to measure. Read the last
+                # PUBLISHED result instead.
+                if ctrl._use_worker and ctrl.worker is not None:
+                    result = ctrl.worker.latest()
+                    if result is not None:
+                        if result.fallback:
+                            fallback_ticks += 1
+                        if result.hand_jac is not None:
+                            tr.append(float(np.max(np.abs(
+                                result.hand_jac @ result.qdd - result.task_acc_des))))
+                else:
+                    if R.last_fallback:
+                        fallback_ticks += 1
+                    tr.append(float(np.max(np.abs(
+                        R.last_hand_jac @ R.last_qdd - R.last_task_acc_des))))
             d = ctrl.diagnostics()
+            ctrl.stop()
             key = ("mapped" if use_auth else "fixed_box") + ("_observer" if obs else "_no_observer")
             out[key] = dict(
                 task_authority=("mapped" if use_auth else "fixed_box"),
@@ -607,6 +653,7 @@ def e6_task_port_continuation(rates: RateConfig, *, hand_force_n: float = 5.0,
             tr.append(float(np.max(np.abs(
                 R.last_hand_jac @ R.last_qdd - R.last_task_acc_des))))
         d = ctrl.diagnostics()
+        ctrl.stop()   # no-op here (task_continuation=True keeps this controller fully synchronous)
         key = "continuation" + ("_observer" if obs else "_no_observer")
         out[key] = dict(
             task_authority="continuation",

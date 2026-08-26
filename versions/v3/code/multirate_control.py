@@ -42,6 +42,7 @@ data.  The dependency is explicit: u_b(k) -> u_t(k) -> tau(k).
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field, replace
 from typing import Callable
@@ -86,6 +87,17 @@ class Timing:
     task_mpc_ms: list[float] = field(default_factory=list)
     qp_solves_per_cycle: list[int] = field(default_factory=list)
     node_ms: list[float] = field(default_factory=list)
+    # Populated only when a RealizerWorker is in use.  worker_compute_ms is
+    # the worker THREAD's own wall time per job (compute_finished -
+    # compute_started) -- this is the ~3.5-11 ms cost that used to block
+    # step() and, under the async design, no longer does.  node_ms above
+    # keeps its existing meaning (this cycle's step() wall time) and should
+    # now be small, since the expensive part moved off that path.
+    # snapshot_staleness_ms is how old the published result was, in ms, at
+    # the moment step() actually read it -- the number that answers "is the
+    # staleness this design tolerates actually small in practice."
+    worker_compute_ms: list[float] = field(default_factory=list)
+    snapshot_staleness_ms: list[float] = field(default_factory=list)
 
     def summary(self) -> dict:
         def stat(v):
@@ -106,6 +118,8 @@ class Timing:
             "body_mpc": stat(self.body_mpc_ms),
             "task_mpc": stat(self.task_mpc_ms),
             "optimization_node": stat(self.node_ms),
+            "worker_compute": stat(self.worker_compute_ms),
+            "snapshot_staleness": stat(self.snapshot_staleness_ms),
             "whole_body_qp_solves_per_node_update": {
                 "max": int(max(self.qp_solves_per_cycle)) if self.qp_solves_per_cycle else 0,
                 "mean": float(np.mean(self.qp_solves_per_cycle)) if self.qp_solves_per_cycle else 0.0,
@@ -163,6 +177,224 @@ class JointServo:
         return tau
 
 
+@dataclass
+class RealizerJob:
+    """Everything RealizerWorker needs for one node cycle, captured at
+    submit time so the worker can run entirely against its own MjData copy
+    without racing the caller's mj_step. Only used when the controller has
+    committed to the analytic (non-continuation) authority path for BOTH
+    ports -- see MultirateInteractionController._use_worker.
+    """
+
+    t: float
+    stance: tuple[str, ...]
+    q_ref: np.ndarray
+    qd_ref: np.ndarray
+    com_acc_des: np.ndarray          # full (3,); body-port correction already added in
+    task_acc_des: np.ndarray
+    hand_jac: np.ndarray
+    stance_contacts: dict
+    stance_targets: dict
+    base_height_ref: float
+    rpy: np.ndarray
+    swing_task: dict | None
+    attitude_weight: float
+    external_hand_force_ff: np.ndarray | None
+    u_body: np.ndarray
+    u_task: np.ndarray
+
+
+@dataclass
+class RealizerResult:
+    t: float                    # timestamp of the STATE this result was computed from
+    contact_mode: tuple[str, ...]
+    tau: np.ndarray
+    fallback: bool
+    residual: float
+    snapshot: RealizationAuthority | None
+    task_snapshot: TaskAuthority | None
+    compute_started: float      # perf_counter() the worker picked the job up
+    compute_finished: float     # perf_counter() the worker published this
+    realizer_ms: float
+    authority_ms: float
+    # Copies of realizer.last_hand_jac/last_qdd/last_task_acc_des at solve
+    # time -- callers that want the task-tracking residual
+    # (hand_jac @ qdd - task_acc_des) must read it from here, not from
+    # self.realizer directly, for the same reason as everything else on
+    # this dataclass: those attributes are worker-owned while this thread
+    # runs.
+    hand_jac: np.ndarray | None
+    qdd: np.ndarray
+    task_acc_des: np.ndarray
+
+
+class RealizerWorker:
+    """Runs realizer.command() + mapper.snapshot()/task_authority() on a
+    background thread, decoupled from the caller's live ``data``.
+
+    This is the "genuinely separate worker thread/process publishing the
+    set lock-free" the class docstring above already names as the correct
+    fix and says this prototype doesn't build. It targets the dominant real
+    cost identified by profiling (the whole-body QP + KKT sensitivity, not
+    body_mpc/task_mpc or anything in the Module A/B/C wiring).
+
+    IMPORTANT -- opt-in only (MultirateInteractionController's
+    enable_async_worker, default False): this design trades a fixed ~1-cycle
+    staleness for a VARIABLE one bounded by rates.max_snapshot_age, with a
+    safe (gravity-compensation-only) torque published whenever the bound is
+    exceeded. That bound only makes the failure mode safe -- it does not
+    guarantee the worker keeps up. Measured directly: fine for a benign
+    standing scenario (worker comfortably keeps pace, 0 deadline misses on
+    the now-decoupled critical path); NOT fine for a demanding, fast-changing
+    one (an aggressive high-gain predictor drove the worker into the
+    safe-fallback branch 60-75% of node updates, i.e. no active balance
+    control most of the time, and the robot fell despite the fallback torque
+    being individually safe). The deficit there is throughput -- the
+    worker's own compute time is comparable to or exceeds the node period --
+    not staleness, so it is not fixable by a smarter fallback alone. Enable
+    this only for a scenario where you have actually measured that the
+    worker's compute time fits comfortably inside rates.node_dt.
+
+    Scope note: this worker is used only when NEITHER port uses the PWA
+    continuation authority (see _use_worker). Continuation's own estimators
+    (ContinuationAuthorityEstimator.estimate/estimate_task) read the SAME
+    self.realizer post-solve state that command() mutates; running one of
+    them synchronously on the main thread while this worker's command() call
+    mutates that state on a different thread would be exactly the kind of
+    race this design exists to avoid. Rather than also relocate the
+    continuation estimators into this worker (a materially larger change,
+    with its own separate rate-limiting/staleness bookkeeping), the two
+    paths are kept mutually exclusive per controller instance; continuation
+    keeps its existing fully-synchronous behavior unchanged.
+
+    Owns a PRIVATE MjData copy (mjData is not safe to read/write
+    concurrently from two threads) that is resynced from the caller's live
+    data at the start of each accepted job -- just the raw state
+    (qpos/qvel/ctrl), not a full deep clone -- then brought current with
+    mj_forward on that private copy before the realizer touches it.
+
+    Publishing is lock-free by construction: CPython guarantees a single
+    attribute assignment is atomic, so the worker thread simply does
+    ``self._latest = new_result`` when done, and the reader always reads
+    ``self._latest`` -- no lock needed for that swap, only for the (much
+    cheaper) data-sync step below.
+    """
+
+    def __init__(self, model: mujoco.MjModel, realizer, mapper, *,
+                 task_mpc_present: bool):
+        self._model = model
+        self._data = mujoco.MjData(model)
+        self._realizer = realizer
+        self._mapper = mapper
+        self._task_mpc_present = bool(task_mpc_present)
+        self._sync_lock = threading.Lock()
+        self._wakeup = threading.Event()
+        self._pending: RealizerJob | None = None
+        self._busy = False
+        self._latest: RealizerResult | None = None
+        self._stop = False
+        # If a job raises (a bad input, a genuine realizer bug), _busy must
+        # still be cleared or every future submit() would silently starve
+        # forever -- the caller would just see "no new result" and keep
+        # holding the last-good command indefinitely with no visibility into
+        # why. last_error/n_errors make that visible instead of silent.
+        self.last_error: BaseException | None = None
+        self.n_errors = 0
+        self._thread = threading.Thread(
+            target=self._run, name="RealizerWorker", daemon=True)
+        self._thread.start()
+
+    def submit(self, job: RealizerJob, live_data: mujoco.MjData) -> bool:
+        """Non-blocking. Drops the job (mailbox semantics) if the worker is
+        still busy with the previous one -- only the freshest state is ever
+        useful, so a backlog of stale jobs would be actively harmful, not
+        just wasted work. Returns whether the job was accepted.
+        """
+        if self._busy:
+            return False
+        with self._sync_lock:
+            self._data.qpos[:] = live_data.qpos
+            self._data.qvel[:] = live_data.qvel
+            self._data.ctrl[:] = live_data.ctrl
+        self._pending = job
+        self._busy = True
+        self._wakeup.set()
+        return True
+
+    def latest(self) -> RealizerResult | None:
+        return self._latest
+
+    def stop(self) -> None:
+        self._stop = True
+        self._wakeup.set()
+        self._thread.join(timeout=2.0)
+
+    def _run(self) -> None:
+        while True:
+            self._wakeup.wait()
+            self._wakeup.clear()
+            if self._stop:
+                return
+            job = self._pending
+            try:
+                self._process(job)
+            except BaseException as exc:  # noqa: BLE001 -- see class docstring
+                # Deliberately broad: this thread has no other way to
+                # surface a failure, and swallowing it silently while
+                # leaving _busy=True would starve every future submit()
+                # forever. self._latest is simply left at its last GOOD
+                # value, so the controller keeps holding the last-known-safe
+                # command (the same behavior as any other "no new result
+                # yet" cycle) rather than crashing or hanging.
+                self.last_error = exc
+                self.n_errors += 1
+            finally:
+                self._busy = False
+
+    def _process(self, job: "RealizerJob") -> None:
+        compute_started = time.perf_counter()
+        mujoco.mj_forward(self._model, self._data)
+
+        t0 = time.perf_counter()
+        tau, _tau_unsat, _sat = self._realizer.command(
+            self._model, self._data, job.q_ref, job.qd_ref,
+            job.com_acc_des[:2], job.task_acc_des, job.hand_jac,
+            job.stance_contacts, job.stance_targets, job.base_height_ref,
+            job.rpy, com_acc_des=job.com_acc_des, swing_task=job.swing_task,
+            attitude_weight=job.attitude_weight,
+            centroidal_moment_des=np.zeros(3),
+            external_hand_force_ff=job.external_hand_force_ff,
+        )
+        realizer_ms = (time.perf_counter() - t0) * 1e3
+        fallback = bool(self._realizer.last_fallback)
+        residual = float(self._realizer.last_body_acc_residual)
+        hand_jac = (None if self._realizer.last_hand_jac is None
+                    else self._realizer.last_hand_jac.copy())
+        qdd = self._realizer.last_qdd.copy()
+        task_acc_des = self._realizer.last_task_acc_des.copy()
+
+        t0 = time.perf_counter()
+        snapshot = self._mapper.snapshot(
+            self._realizer, self._model, self._data, timestamp=job.t,
+            contact_mode=job.stance, command_reference=job.u_body,
+        )
+        task_snapshot = None
+        if self._task_mpc_present:
+            task_snapshot = self._mapper.task_authority(
+                self._realizer, self._model, self._data, job.u_body,
+                body_reference=job.u_body, task_reference=job.u_task,
+            )
+        authority_ms = (time.perf_counter() - t0) * 1e3
+
+        self._latest = RealizerResult(
+            t=job.t, contact_mode=job.stance, tau=tau, fallback=fallback,
+            residual=residual, snapshot=snapshot, task_snapshot=task_snapshot,
+            compute_started=compute_started, compute_finished=time.perf_counter(),
+            realizer_ms=realizer_ms, authority_ms=authority_ms,
+            hand_jac=hand_jac, qdd=qdd, task_acc_des=task_acc_des,
+        )
+
+
 class MultirateInteractionController:
     """1 kHz realizer + rate-gated canonical predictors.
 
@@ -188,6 +420,7 @@ class MultirateInteractionController:
         task_realization_tolerance: float = 0.5,
         body_margin_safe: float = 0.15,
         task_margin_safe: float = 0.15,
+        enable_async_worker: bool = False,
     ):
         self.realizer = realizer
         self.rates = rates or RateConfig()
@@ -255,6 +488,39 @@ class MultirateInteractionController:
             margin_safe=self.task_margin_safe, predictor=self.predictor)
         self.body_response: PhysicalFailureResponse | None = None
         self.task_response: PhysicalFailureResponse | None = None
+
+        # RealizerWorker offloads realizer.command() + mapper.snapshot()/
+        # task_authority() (the dominant real-time cost per E1 profiling) to
+        # a background thread. OPT-IN, default off: validated safe only for
+        # scenarios where the worker's own compute time comfortably fits the
+        # node period (E1's benign standing case: 0 deadline misses, worker
+        # keeps up). Measured UNSAFE for demanding/fast-changing scenarios
+        # (E2's aggressive high-gain predictor): even with the staleness-
+        # bound safe-torque fallback below, the worker cannot keep pace with
+        # E2's submission rate (busy on 60-75% of node updates in testing),
+        # meaning there is effectively no active balance control for most of
+        # a short aggressive maneuver -- the robot falls regardless of how
+        # safe the fallback torque is, because the deficit is throughput, not
+        # staleness. Do not enable this for a scenario until you've measured
+        # (not assumed) that the worker keeps up, the same way E1 was here.
+        #
+        # Also requires NEITHER port to be on the PWA continuation path:
+        # ContinuationAuthorityEstimator.estimate/estimate_task read the same
+        # self.realizer post-solve state that command() mutates, and running
+        # one synchronously on the main thread while the worker's command()
+        # call runs on another thread would race -- see RealizerWorker's
+        # docstring. Constructed lazily on the first step() call, once
+        # `model` is available.
+        self._use_worker = (
+            bool(enable_async_worker)
+            and not self.continuation and not self.task_continuation
+        )
+        self.worker: RealizerWorker | None = None
+        self._last_published_result_t: float | None = None
+        self.n_stale_command_holds = 0   # cycles where the worker's latest result
+                                          # was unusable (wrong contact mode or too
+                                          # old) and the safe gravity-compensation
+                                          # fallback was published instead
 
         self.servo = JointServo(realizer)
         self._last_node_t = -np.inf
@@ -472,14 +738,44 @@ class MultirateInteractionController:
         if t - self._last_node_t < R.node_dt - 1e-12:
             self.servo.step(model, data)
             self.n_servo_ticks += 1
-            info["residual"] = float(self.realizer.last_body_acc_residual)
-            info["fallback"] = bool(self.realizer.last_fallback)
+            # When the worker is in use, self.realizer's mutable attributes
+            # (last_fallback/last_body_acc_residual) can be mid-mutation on
+            # the worker thread at ANY time, not just during a node tick --
+            # so every read, including here, must come from the last
+            # published RealizerResult, never self.realizer directly.
+            if self._use_worker:
+                result = self.worker.latest() if self.worker is not None else None
+                info["residual"] = float(result.residual) if result is not None else float("inf")
+                info["fallback"] = result.fallback if result is not None else True
+            else:
+                info["residual"] = float(self.realizer.last_body_acc_residual)
+                info["fallback"] = bool(self.realizer.last_fallback)
             return info
 
         self._last_node_t = t
         self.n_node_updates += 1
         info["node_ran"] = True
         t_node0 = time.perf_counter()
+
+        if self._use_worker and self.worker is None:
+            self.worker = RealizerWorker(
+                model, self.realizer, self.mapper,
+                task_mpc_present=self.task_mpc is not None)
+
+        if self._use_worker:
+            # Adopt whatever the worker has published so far -- from
+            # whenever it finished, not necessarily this cycle -- BEFORE
+            # route selection runs, exactly mirroring the ordering the
+            # synchronous path already had (this cycle's route selection
+            # uses the PREVIOUS cycle's published snapshot; here it uses
+            # the most recently published one, whatever its actual age).
+            # _select_body_route/_select_task_route's existing
+            # contact_mode/max_snapshot_age gate is untouched and does the
+            # rest -- it already tolerates "not from this exact cycle."
+            result = self.worker.latest()
+            if result is not None:
+                self.snapshot = result.snapshot
+                self.task_snapshot = result.task_snapshot
 
         # ---- body predictor: step 4 of the node, sequential, same state --------
         if True:
@@ -528,63 +824,124 @@ class MultirateInteractionController:
         if self.task_mpc is not None:
             task_acc_des = task_acc_des + self.u_task
 
-        t0 = time.perf_counter()
-        tau, _tau_unsat, _sat = self.realizer.command(
-            model, data, q_ref, qd_ref, com_acc_des[:2], task_acc_des, hand_jac,
-            stance_contacts, stance_targets, base_height_ref, rpy,
-            com_acc_des=com_acc_des, swing_task=swing_task,
-            attitude_weight=attitude_weight, centroidal_moment_des=np.zeros(3),
-            external_hand_force_ff=external_hand_force_ff,
-        )
-        self.timing.realizer_ms.append((time.perf_counter() - t0) * 1e3)
-        self.timing.qp_solves_per_cycle.append(1)    # the whole point
-
-        # ---- publish the authority snapshot (one KKT solve, no extra QPs) ----
-        t0 = time.perf_counter()
-        if self.use_authority and self.continuation:
-            if t - self._last_auth_t >= R.authority_dt - 1e-12:
-                self._last_auth_t = t
-                box = self.cont.estimate(self.realizer, model, data)
-                self._cont_box = (
-                    box, t, stance, self.u_body.copy()
-                ) if box.valid else None
-            self.snapshot = None      # continuation supplies bounds, not a polytope
-        elif self.use_authority:
-            self.snapshot = self.mapper.snapshot(
-                self.realizer, model, data, timestamp=t, contact_mode=stance,
-                command_reference=self.u_body,
+        if self._use_worker:
+            # ---- hand this cycle's state off to the background worker -------
+            # (see RealizerWorker: command() + mapper.snapshot()/task_authority()
+            # run there, against the worker's OWN MjData copy, not this `data`.)
+            job = RealizerJob(
+                t=t, stance=stance, q_ref=np.asarray(q_ref, float),
+                qd_ref=np.asarray(qd_ref, float), com_acc_des=com_acc_des,
+                task_acc_des=task_acc_des, hand_jac=hand_jac,
+                stance_contacts=stance_contacts, stance_targets=stance_targets,
+                base_height_ref=base_height_ref, rpy=rpy, swing_task=swing_task,
+                attitude_weight=attitude_weight,
+                external_hand_force_ff=external_hand_force_ff,
+                u_body=self.u_body.copy(), u_task=self.u_task.copy(),
             )
-            if self.task_mpc is not None and not self.task_continuation:
-                # Body-priority: the task set is conditioned on the body command
-                # that was actually issued this cycle.  Reuses the same joint KKT
-                # sensitivity, so it costs no extra QP or KKT solve.
-                self.task_snapshot = self.mapper.task_authority(
-                    self.realizer, model, data, self.u_body,
-                    body_reference=self.u_body, task_reference=self.u_task,
-                )
-        if self.use_authority and self.task_continuation and self.task_mpc is not None:
-            if t - self._last_task_auth_t >= R.authority_dt - 1e-12:
-                self._last_task_auth_t = t
-                tbox = self.cont.estimate_task(
-                    self.realizer, model, data,
-                    task_tolerance=self.task_realization_tolerance,
-                )
-                self._task_cont_box = (
-                    tbox, t, stance, self.u_task.copy()
-                ) if tbox.valid else None
-        self.timing.authority_ms.append((time.perf_counter() - t0) * 1e3)
+            self.worker.submit(job, data)
 
-        # ---- step 7: publish the optimized command to the 1 kHz servo ---------
-        self.servo.publish(tau, None, None)
+            # ---- publish the worker's latest result, but only if it is
+            # SAFE to keep using: still for the CURRENT contact mode (a
+            # result computed for a mode the robot has since left, e.g.
+            # mid-DS->SS-transition, is wrong by construction) AND no older
+            # than max_snapshot_age. The age check matters even when nothing
+            # NEW has arrived: if the worker falls behind for several node
+            # cycles in a row (measured under an aggressive, high-gain
+            # predictor -- E2 -- where the worker cannot keep up with the
+            # 200 Hz submission rate), blindly continuing to ZOH an
+            # increasingly stale QP-derived torque is not just conservative,
+            # it actively destabilized balance. Once a result is too old,
+            # fall back to the SAME cheap, QP-free command the realizer
+            # itself already uses when its own solve fails --
+            # gravity/Coriolis compensation clipped to the torque envelope
+            # (data.qfrc_bias, already populated by this cycle's mj_forward,
+            # no extra computation) -- and keep recomputing that fallback
+            # fresh every cycle for as long as the worker stays behind,
+            # rather than freezing it at whatever it was when staleness was
+            # first detected.
+            result = self.worker.latest()
+            is_new = result is not None and result.t != self._last_published_result_t
+            age = (t - result.t) if result is not None else float("inf")
+            usable = (
+                result is not None and result.contact_mode == stance
+                and age <= R.max_snapshot_age
+            )
+            if usable:
+                if is_new:
+                    self._last_published_result_t = result.t
+                    self.servo.publish(result.tau, None, None)
+                    self.timing.realizer_ms.append(result.realizer_ms)
+                    self.timing.authority_ms.append(result.authority_ms)
+                    self.timing.worker_compute_ms.append(
+                        (result.compute_finished - result.compute_started) * 1e3)
+                    self.timing.snapshot_staleness_ms.append(age * 1e3)
+                    self.timing.qp_solves_per_cycle.append(1)    # the whole point
+                # else: already published and still within its freshness
+                # bound -- the servo's own ZOH already holds the right command.
+                info["fallback"] = result.fallback
+                info["residual"] = result.residual
+            else:
+                tau_fallback = np.clip(
+                    data.qfrc_bias[self.realizer.dof],
+                    self.realizer.torque_min, self.realizer.torque_max,
+                )
+                self.servo.publish(tau_fallback, None, None)
+                self.n_stale_command_holds += 1
+                info["fallback"] = True
+                info["residual"] = result.residual if result is not None else float("inf")
+        else:
+            # ---- unchanged, fully-synchronous path (continuation ports) -----
+            t0 = time.perf_counter()
+            tau, _tau_unsat, _sat = self.realizer.command(
+                model, data, q_ref, qd_ref, com_acc_des[:2], task_acc_des, hand_jac,
+                stance_contacts, stance_targets, base_height_ref, rpy,
+                com_acc_des=com_acc_des, swing_task=swing_task,
+                attitude_weight=attitude_weight, centroidal_moment_des=np.zeros(3),
+                external_hand_force_ff=external_hand_force_ff,
+            )
+            self.timing.realizer_ms.append((time.perf_counter() - t0) * 1e3)
+            self.timing.qp_solves_per_cycle.append(1)    # the whole point
+
+            t0 = time.perf_counter()
+            if self.use_authority and self.continuation:
+                if t - self._last_auth_t >= R.authority_dt - 1e-12:
+                    self._last_auth_t = t
+                    box = self.cont.estimate(self.realizer, model, data)
+                    self._cont_box = (
+                        box, t, stance, self.u_body.copy()
+                    ) if box.valid else None
+                self.snapshot = None      # continuation supplies bounds, not a polytope
+            elif self.use_authority:
+                self.snapshot = self.mapper.snapshot(
+                    self.realizer, model, data, timestamp=t, contact_mode=stance,
+                    command_reference=self.u_body,
+                )
+                if self.task_mpc is not None and not self.task_continuation:
+                    self.task_snapshot = self.mapper.task_authority(
+                        self.realizer, model, data, self.u_body,
+                        body_reference=self.u_body, task_reference=self.u_task,
+                    )
+            if self.use_authority and self.task_continuation and self.task_mpc is not None:
+                if t - self._last_task_auth_t >= R.authority_dt - 1e-12:
+                    self._last_task_auth_t = t
+                    tbox = self.cont.estimate_task(
+                        self.realizer, model, data,
+                        task_tolerance=self.task_realization_tolerance,
+                    )
+                    self._task_cont_box = (
+                        tbox, t, stance, self.u_task.copy()
+                    ) if tbox.valid else None
+            self.timing.authority_ms.append((time.perf_counter() - t0) * 1e3)
+
+            self.servo.publish(tau, None, None)
+            info["fallback"] = bool(self.realizer.last_fallback)
+            info["residual"] = float(self.realizer.last_body_acc_residual)
+
         self.n_servo_ticks += 1
-
         node_ms = (time.perf_counter() - t_node0) * 1e3
         self.timing.node_ms.append(node_ms)
         if node_ms > 1000.0 * R.node_dt:
             self.n_deadline_miss += 1
-
-        info["fallback"] = bool(self.realizer.last_fallback)
-        info["residual"] = float(self.realizer.last_body_acc_residual)
         info["node_ms"] = node_ms
         return info
 
@@ -604,4 +961,17 @@ class MultirateInteractionController:
             "task_invalid_snapshots": self.n_task_invalid,
             "body_route_downgrades": self.n_body_route_downgrade,
             "task_route_downgrades": self.n_task_route_downgrade,
+            "use_worker": self._use_worker,
+            "stale_command_holds": self.n_stale_command_holds,
+            "worker_errors": self.worker.n_errors if self.worker is not None else 0,
         }
+
+    def stop(self) -> None:
+        """Join the background worker thread, if one was started. Every
+        caller that constructs a controller with continuation disabled on
+        both ports (the default) should call this when done with it -- the
+        thread is a daemon so it won't block process exit on its own, but a
+        script that constructs many controllers in a loop (as the benchmark
+        scripts here do) would otherwise leak one live thread per run."""
+        if self.worker is not None:
+            self.worker.stop()

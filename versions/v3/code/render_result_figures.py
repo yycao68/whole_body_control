@@ -181,6 +181,7 @@ def render_task_port_timeseries(hand_force_n: float = 5.0, fallback_box: float =
         hand_err.append(1000 * np.linalg.norm(hp2 - hand0))
         com_disp.append(1000 * np.linalg.norm(robot_com(model, data)[:2] - com0[:2]))
 
+    ctrl.stop()   # no-op here (task_continuation=True keeps this controller fully synchronous)
     ts = np.array(ts); hand_err = np.array(hand_err); com_disp = np.array(com_disp)
     win = (ts >= 2.0) & (ts < 3.0)
     win_mean = float(np.mean(hand_err[win]))
