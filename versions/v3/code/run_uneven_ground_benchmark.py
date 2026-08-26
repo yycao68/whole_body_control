@@ -51,6 +51,11 @@ SIM_DT = 0.001
 WBC_DT = 0.002
 MPC_DT = 0.010
 CONTROLLERS = ("impedance", "nominal_mpc", "interaction_mpc", "no_realization_feedback")
+# Not part of CONTROLLERS (which several figure/verification scripts iterate over
+# by default and assume has exactly these four members) -- kept as a separate,
+# opt-in addition so the frozen terrain/push benchmarks are untouched.  Used only
+# by run_prediction_ablation.py's "does prediction beat plain feedback" study.
+ABLATION_CONTROLLERS = ("residual_feedback",)
 TERRAINS = ("flat", "depression", "obstacle", "rough")
 CHALLENGE_TERRAINS = ("platform",)
 
@@ -236,7 +241,8 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
     # ``mpc_solve_dt`` sets only how often the interaction MPC is re-solved; the
     # horizon model keeps dt=MPC_DT (0.25 s preview) so a faster solve rate is a
     # clean update-rate change, not a shorter horizon.
-    if controller not in CONTROLLERS or terrain not in TERRAINS + CHALLENGE_TERRAINS:
+    if controller not in CONTROLLERS + ABLATION_CONTROLLERS \
+            or terrain not in TERRAINS + CHALLENGE_TERRAINS:
         raise ValueError((controller, terrain))
     rng = np.random.default_rng(seed)
     model_path = generate_terrain_model(
@@ -501,6 +507,25 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
                     )
                 elif controller == "nominal_mpc":
                     candidate = mpc.solve(state, np.zeros(task_dim))
+                elif controller == "residual_feedback":
+                    # Ablation stage between "nominal_mpc" and "interaction_mpc":
+                    # the SAME estimator and the SAME dead-zone/saturation shaping
+                    # of the residual as interaction_mpc below, applied as a direct
+                    # reactive cancellation on top of the impedance feedback law --
+                    # no MPC, no horizon propagation of the estimate as a
+                    # persisting disturbance. Isolates whether ID-MPC's benefit
+                    # comes from predicting that the interaction persists, or
+                    # merely from having an estimate of it to react to.
+                    kp = np.array([16.72048113, 16.72048113, 20.0, 24.0, 24.0])
+                    kd = np.array([17.17302876, 17.17302876, 12.0, 10.0, 10.0])
+                    d_control = np.sign(estimate_effective) * np.clip(
+                        np.abs(estimate_effective) - 0.30, 0.0, 0.50
+                    )
+                    candidate = np.clip(
+                        -kp * error - kd * error_velocity - d_control,
+                        np.array([-6.0, -6.0, -4.0, -15.0, -15.0]),
+                        np.array([6.0, 6.0, 4.0, 15.0, 15.0]),
+                    )
                 elif controller == "interaction_mpc":
                     d_control = np.sign(estimate_effective) * np.clip(
                         np.abs(estimate_effective) - 0.30, 0.0, 0.50
