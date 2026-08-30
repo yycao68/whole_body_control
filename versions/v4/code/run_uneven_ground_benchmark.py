@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import platform
 import time
 import xml.etree.ElementTree as ET
@@ -47,6 +48,54 @@ from run_g1_torque_realizer_benchmark import (
 HERE = Path(__file__).resolve().parent
 RESULTS = HERE / "results"
 RESULTS.mkdir(exist_ok=True)
+
+
+def resolve_mesh_dir() -> Path:
+    """Absolute path to the Unitree G1 mesh directory.
+
+    `models/assets/` holds vendored Menagerie STLs, but `*.STL` is gitignored
+    (see the repository .gitignore: meshes are excluded to keep the repo
+    small). A fresh clone therefore has `models/g1_wbc*.xml` but no meshes,
+    and every torque-level benchmark fails at MuJoCo model load with a
+    missing `assets/pelvis.STL` -- external review found the primary
+    benchmark unrunnable from a clean checkout for exactly this reason.
+
+    Resolution order:
+      1. `models/assets/` if it actually contains meshes (the vendored case,
+         which keeps existing working trees byte-identical).
+      2. $MENAGERIE_G1_ASSETS, for an existing mujoco_menagerie checkout.
+      3. The `robot_descriptions` package, which fetches and caches
+         mujoco_menagerie on first use.
+    """
+    local = HERE / "models" / "assets"
+    if local.is_dir() and any(local.glob("*.STL")):
+        return local.resolve()
+
+    env = os.environ.get("MENAGERIE_G1_ASSETS")
+    if env:
+        assets = Path(env)
+        if not assets.is_dir():
+            raise FileNotFoundError(
+                f"MENAGERIE_G1_ASSETS={env} is not a directory")
+        return assets.resolve()
+
+    try:
+        from robot_descriptions import g1_mj_description
+    except ImportError as exc:
+        raise FileNotFoundError(
+            f"Unitree G1 meshes not found at {local}. The repository "
+            "gitignores *.STL, so a fresh clone has no meshes. Either "
+            "`pip install robot_descriptions` (downloads and caches "
+            "mujoco_menagerie automatically) or set $MENAGERIE_G1_ASSETS to "
+            "the assets/ directory of an existing mujoco_menagerie/"
+            "unitree_g1 checkout."
+        ) from exc
+    assets = Path(g1_mj_description.PACKAGE_PATH) / "assets"
+    if not assets.is_dir():
+        raise FileNotFoundError(f"expected G1 meshes at {assets}")
+    return assets.resolve()
+
+
 SIM_DT = 0.001
 WBC_DT = 0.002
 MPC_DT = 0.010
@@ -150,7 +199,7 @@ def generate_terrain_model(terrain: str, height_mm: float = 20.0,
     base = generate_torque_model()
     tree = ET.parse(base)
     root = tree.getroot()
-    root.find("compiler").set("meshdir", str((HERE / "models" / "assets").resolve()))
+    root.find("compiler").set("meshdir", str(resolve_mesh_dir()))
     world = root.find("worldbody")
     floor = next(g for g in world.findall("geom") if g.attrib.get("name") == "floor")
     if terrain in ("depression", "rough"):
