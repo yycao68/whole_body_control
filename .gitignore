@@ -51,3 +51,12 @@ external_deps/
 !versions/v3/videos/*.mp4
 !versions/v3/wbc_v3.pdf
 !versions/v3/wbc_ieee.pdf
+
+# EXCEPTION: built manuscript PDFs for v2_strong and v4, so the compiled paper
+# matching each committed source is available without a local TeX install.
+# Rebuild with `latexmk -pdf <name>.tex`. (v4's wbc_ieee_v4.pdf, the Markdown
+# export, is deliberately NOT tracked: the committed copy is stale relative to
+# wbc_ieee_v4.md and its export settings are not reproducible from this repo.)
+!versions/v2_strong/arXiv/arxiv_main.pdf
+!versions/v2_strong/arXiv/main.pdf
+!versions/v4/wbc_v4.pdf
