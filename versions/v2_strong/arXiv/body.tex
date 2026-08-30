@@ -322,6 +322,20 @@ $(J_cM^{-1}J_c^\top+0.1I)^{-1}$ and eigenvalue-clamp the task mobility.
 This prevents numerical singularity in the point-contact model but makes
 contact decoupling approximate; exact projector identities apply only in the
 zero-regularization limit.
+The approximation is not marginal, and the regularization is not optional.
+At the double-support stance of Scenarios~A--C, the contact null-space
+projector $P_c$ is an exact oblique projector only as the regularization
+vanishes, where $\|P_c\|_2=28.0$; at the $0.1$ actually used,
+$\|P_c\|_2=12.6$ but $\|P_c-P_c^2\|=6.8$ and the six contact-direction
+eigenvalues have drifted from $0$ to $0.65$. The large operator norm at low
+regularization is what forces this choice: because $P_c$ is oblique rather
+than orthogonal, being a projector does not bound its gain, and below
+${\approx}3\times10^{-3}$ the amplified feedforward destabilizes the closed
+loop outright. The reported results therefore demonstrate predictive
+interaction regulation running \emph{above} a contact-consistent projection,
+not validated contact non-interference; establishing the latter needs a
+torque-level constrained inverse-dynamics realization with explicit
+contact, friction, and priority residuals, which we do not claim here.
 
 The centroidal momentum $h_G=[k^\top,L^\top]^\top=A(q)\dot{q}\in\mathbb{R}^6$
 aggregates the robot's linear and angular momentum about its
@@ -364,14 +378,31 @@ is the dynamically-consistent pseudoinverse; and $F_i$ is the commanded
 operational-space force.
 
 For $k$ tasks in priority order (Task~1 = highest), the Sentis--Khatib
-law~\cite{sentis2005synthesis} synthesizes the control torque as:
+law~\cite{sentis2005synthesis} synthesizes a \emph{generalized} task force
+$f_{\text{task}}\in\mathbb{R}^{n+6}$:
 \begin{equation}\label{eq:SK05}
-  \tau = J_1^\top F_1 + \bar{N}_1^\top J_2^\top F_2
+  f_{\text{task}} = J_1^\top F_1 + \bar{N}_1^\top J_2^\top F_2
        + \bar{N}_{12}^\top J_3^\top F_3 + \cdots
-       + \bar{N}_{1\cdots k}^\top\tau_{\text{null}}
+       + \bar{N}_{1\cdots k}^\top f_{\text{null}}
 \end{equation}
-where $\bar{N}_{1\cdots i}=\prod_{j=1}^{i}(I-\bar{J}_jJ_j)$ is the
-accumulated contact-consistent null-space projector.
+where $\bar{N}_{1\cdots i}=\prod_{j=1}^{i}(I-\bar{J}_jJ_j)
+\in\mathbb{R}^{(n+6)\times(n+6)}$ is the accumulated contact-consistent
+null-space projector. Every term in \eqref{eq:SK05} lives in the
+generalized-force space $\mathbb{R}^{n+6}$, since $J_i\in\mathbb{R}^{m_i
+\times(n+6)}$ is taken with respect to the full generalized coordinates.
+Because the floating base is unactuated, $f_{\text{task}}$ is not itself
+realizable; the commanded joint torque is its actuated projection
+\begin{equation}\label{eq:realizable}
+  \tau = S\,f_{\text{task}}\in\mathbb{R}^{n},
+\end{equation}
+and the six unactuated base rows $(I-S^\top S)f_{\text{task}}$ must be borne
+by the contact reactions $J_c^\top\lambda$ of \eqref{eq:eom}. Enforcing that
+those rows are consistent with an admissible $\lambda$ is precisely the role
+of the contact-consistent projection: in the exact, zero-regularization limit
+the projected task force induces no contact-constraint violation, so
+\eqref{eq:realizable} discards nothing that the contacts cannot supply.
+Under the finite regularization actually used, this holds only approximately
+(Section~\ref{sec:dynamics}).
 Under an exact model, dynamically consistent projectors, inactive actuator
 saturation, and no change in the active contact/friction inequalities, the
 key property $J_j\bar{N}_{1\cdots i}=0$ for all $j\leq i$ gives zero
@@ -491,7 +522,11 @@ The receding-horizon QP is:
 where $H=\Gamma^\top\bar Q\Gamma+\bar R$ is constant. A corresponding
 total-joint-torque row may be added through $J_{\rm arm}^\top\Larm u_k$.
 The reported simulations use the unconstrained fast path because the
-recovered force remains inside the cap.
+recovered force remains inside the cap: the largest commanded
+$\|F_{\text{arm}}\|_\infty$ over all reported runs is $46.1$\,N against
+$F_{\max}=80$\,N (Scenario~F, D7; $22.5$--$31.9$\,N elsewhere). The
+constrained branch is therefore exercised by unit tests rather than by the
+reported benchmarks, and no active-limit or safety claim is made from them.
 
 The disturbance $d(t)$ in \eqref{eq:errordyn} captures: (i)~external pHRI
 forces; (ii)~unmodeled contact reactions from the feet; and (iii)~SRBD
@@ -638,7 +673,7 @@ bound for the normalized linear model, not a nonlinear-robot certificate.
 
 The contact-consistent null-space torque enforcing joint limits is:
 \begin{equation}\label{eq:null}
-  \tau_{\text{null}}
+  f_{\text{null}}
     = \bar{N}_{\text{arm}}^\top\bigl(-k_{\text{null}}(q-q_0)
       -d_{\text{null}}\dot{q}+g(q)\bigr)
 \end{equation}
@@ -654,14 +689,18 @@ approximate and must be enforced by the low-level QP limits.
 \section{Whole-Body Realization and Framework Comparison}
 \label{sec:torque}
 
-Combining all three levels:
+Combining all three levels, with every term again a generalized force in
+$\mathbb{R}^{n+6}$ and $S$ extracting the actuated rows as in
+\eqref{eq:realizable}:
 \begin{equation}\label{eq:fulltorque}
-  \tau = \tau_{\text{contact}}
-       + \bar{N}_1^\top\tau_{\text{balance}}
-       + \tau_{\text{arm}} + \Naug^\top\tau_{\text{null}}
+  \tau = S\Big(f_{\text{contact}}
+       + \bar{N}_1^\top f_{\text{balance}}
+       + \Naug^\top J_{\text{arm}}^\top F_{\text{arm}}
+       + \Naug^\top f_{\text{null}}\Big)
 \end{equation}
 Equation~\eqref{eq:fulltorque} is the whole-body realization of the
-normalized interaction-dynamics controller.
+normalized interaction-dynamics controller; its arm term is exactly
+\eqref{eq:ff_b}.
 The hierarchical null-space structure follows the SK05
 law~\cite{sentis2005synthesis} extended to the contact-consistent
 floating-base setting~\cite{khatib1987unified,righetti2011inverse}.

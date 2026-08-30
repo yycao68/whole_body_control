@@ -52,18 +52,36 @@ Prompted by an external code-vs-paper review. Two P0 findings, both real:
 
 Implementing the feedforward exposed a latent numerical bug that made the
 MPC controllers diverge (>1000 mm). Root cause: `get_contact_consistent_
-projector`'s `contact_damp` default of 1e-3. `Pc` is a valid *oblique*
-projector at any damping (eigenvalues exactly 0/1, idempotent to machine
-precision), but its operator norm is a separate, damping-sensitive quantity:
-at 1e-3 it measured `||Pc||_2 = 27.6` in the double-support stance, so `Pc^T`
-amplified the newly-added `mu_arm` correction by up to ~80x in some
-directions. There is a sharp bifurcation at `contact_damp <= 0.003` (diverges)
-vs `>= 0.003` (stable). Raising the default to 0.1 -- matching the damping
-`get_contact_consistent_inverse` already used for the same contact set --
-fixes it with ~30x margin, and is what produced the reruns above. The
-feedforward law's own derivation was independently re-verified as correct
+projector`'s `contact_damp` default of 1e-3, whose operator norm
+(`||Pc||_2 = 27.6` at the double-support stance) amplified the newly-added
+`mu_arm` correction by up to ~80x in some directions. Sharp bifurcation at
+`contact_damp <= 0.003` (diverges) vs `>= 0.003` (stable). Raising the
+default to 0.1 fixes it with ~30x margin and produced the reruns above.
+
+`Pc` is oblique rather than orthogonal, so being a projector does *not*
+bound its gain. Measured at that stance:
+
+| `contact_damp` | `\|\|Pc\|\|_2` | `\|\|Pc - Pc@Pc\|\|` | max leaked contact eigenvalue |
+| --- | ---: | ---: | ---: |
+| 1e-8 | 28.0 | 0.000 | 0.000 |
+| 1e-3 (old) | 27.6 | 0.396 | 0.018 |
+| 1e-1 (shipped) | 12.6 | 6.825 | 0.650 |
+| 1.0 | 4.4 | 3.000 | 0.949 |
+
+So the damping buys stability by making the projection substantially
+**approximate**, not by repairing it: only in the undamped limit is `Pc` an
+exact projector (idempotent, eigenvalues exactly 0/1), and at the shipped
+0.1 the six contact-direction eigenvalues have drifted from 0 to 0.65. This
+is the honest characterization and the reason the contact-decoupling claim
+must stay qualified. (An earlier draft of this note and of commit `1f4817c`'s
+message asserted `Pc` was "idempotent at any damping with eigenvalues exactly
+0/1"; that was wrong -- it holds only as `contact_damp -> 0`.)
+
+The feedforward law's own derivation was independently re-verified as correct
 (`get_site_jacobian_dot` matches finite differences to 8.3e-8; `mu_arm`
 re-derives from `M qddot + h = tau`), so no sign or formula was changed.
+Both ends of the damping trade-off are now pinned by
+`ContactConsistencyTests` so neither silently regresses.
 
 Net effect on the paper's claims: D5 (no observer) degrades noticeably almost
 everywhere, since it now carries the real velocity feedforward and its
@@ -96,8 +114,12 @@ Also corrected in this audit:
   decoupling is therefore approximate in simulation; the exact theorem applies
   to the unregularized model. The damping is not merely a conditioning
   convenience: as the second audit found, `Pc` is ill-conditioned as an
-  oblique projector (`||Pc||_2 = 12.6` even at 0.1), and the closed loop is
-  genuinely unstable below ~0.003.
+  oblique projector (`||Pc||_2 = 12.6` even at 0.1), the closed loop is
+  genuinely unstable below ~0.003, and at the shipped 0.1 the contact
+  directions leak by 0.65 (see the table above). Contact decoupling in the
+  reported simulations is therefore *substantially* approximate, not
+  marginally so; claims of contact non-interference should not be read as
+  validated by these runs.
 - The simulation WBC uses joint PD balance and initial-pose arm gravity
   compensation rather than the full model feedforward in (18).
 - Scenario F is a scheduled model switch, not physical single support: the

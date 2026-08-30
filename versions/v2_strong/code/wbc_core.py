@@ -202,22 +202,31 @@ def get_contact_consistent_projector(M, Jc, reg=1e-4, contact_damp=0.1):
     directly) by external review.
 
     `contact_damp` default matches get_contact_consistent_inverse's (0.1),
-    not the 1e-3 this originally carried. Pc is idempotent (eigenvalues
-    exactly 0/1) at any damping, but as an OBLIQUE (non-orthogonal)
-    projector its operator norm is a separate, undamped-sensitive quantity:
-    at 1e-3 it measured ~28x at the double-support stance used in Scenario
-    A/B/C (||Pc||_2 = 27.6), meaning Pc^T can amplify a task force by ~28x
-    in some directions despite being a mathematically exact projector. This
-    caused a genuine closed-loop instability once the arm feedforward law's
-    velocity-dependent bias term (mu_arm, small in magnitude but exactly the
-    kind of signal an oblique high-gain projector distorts) was added --
-    confirmed via a sharp bifurcation at contact_damp<=0.003 (diverges to
-    >1000mm) vs >=0.003 (stable, ~20mm), and independent of the arm
-    feedforward law's own sign/derivation, which re-derives correctly from
-    M*qddot+h=tau. 0.1 keeps ||Pc||_2 ~12.6 (still not tight to 1, but ~30x
-    margin above the measured instability threshold) while matching the
-    Mbar damping already used elsewhere for the same contact set, rather
-    than introducing a second, inconsistent regularization constant."""
+    not the 1e-3 this originally carried. The damping trades two properties
+    against each other, measured at the Scenario A/B/C double-support stance:
+
+        contact_damp -> 0   Pc is an EXACT oblique projector (idempotent,
+                            eigenvalues exactly 0/1) -- but because it is
+                            oblique rather than orthogonal, its operator
+                            norm is unbounded by that exactness, measuring
+                            ||Pc||_2 = 28.0.
+        contact_damp = 0.1  ||Pc||_2 = 12.6, but Pc is no longer a true
+                            projector: the six contact-direction eigenvalues
+                            have drifted from 0 to 0.65, and
+                            ||Pc - Pc@Pc|| = 6.8.
+
+    The large operator norm at low damping caused a genuine closed-loop
+    instability once the arm feedforward's velocity-dependent bias term
+    (mu_arm) was added: Pc^T amplified it ~28x in some directions. Sharp
+    bifurcation at contact_damp <= 0.003 (diverges past 1000mm) vs >= 0.003
+    (stable, ~20mm). The instability is independent of the feedforward law's
+    own sign/derivation, which re-derives correctly from M*qddot + h = tau.
+
+    So 0.1 buys stability by making the projection substantially APPROXIMATE,
+    not by fixing it. That is the honest characterization, and it is why the
+    paper's contact-decoupling claim is stated as approximate. It also
+    matches the damping already used for Mbar over the same contact set,
+    rather than introducing a second, inconsistent constant."""
     nv = M.shape[0]
     M_inv = np.linalg.inv(M + reg * np.eye(nv))
     if Jc.shape[0] == 0:
