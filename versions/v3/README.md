@@ -1,4 +1,31 @@
-# Whole-Body Control V3
+# Whole-Body Control V3 — SUPERSEDED, ARCHIVED
+
+> **This version is superseded by [`../v4/`](../v4/) and is retained for
+> history only.** Use v4 for the current manuscript, code, and results.
+>
+> An external review on 2026-08-30 confirmed several defects in this version.
+> Only the one that also affected v4 was fixed (portable G1 mesh resolution,
+> so the torque benchmarks run from a clean checkout). The rest are recorded
+> here and left unfixed by decision, because v4 already addresses the
+> substantive ones independently:
+>
+> | v3 defect (confirmed) | Status in v4 |
+> | --- | --- |
+> | Torque benchmarks unrunnable from a fresh clone (`*.STL` is gitignored, so `models/assets/` is empty) | Same defect; **fixed in both** |
+> | Default benchmark runs 4 controllers / 160 push trials; paper describes 3 / 120 | Fixed: defaults to the 3 published controllers, diagnostics opt-in |
+> | Obstacle lane present from the initial pose, so the obstacle condition can include pre-evaluation contact adaptation | Fixed: patch spans x=0.22–0.34 m with a hard check rejecting patch contact during settling |
+> | `sync_markdown_to_tex.py` fails (`KeyError: 'Locomotion Interaction Dynamics'`), so `wbc_v3.tex` cannot be regenerated from its source `wbc_ieee.md` | Works: `wbc_v4.tex` regenerates byte-identically from `wbc_ieee_v4.md` |
+> | Conclusion says "provably fixed across gait phase, terrain, and push" without the abstract's "under one modeling assumption" qualifier | Not present; v4 uses more careful wording throughout |
+> | 11.13 pt overfull `\hbox` in the results table | Not present (0 overfull boxes) |
+> | README below is stale: `verify_v3_artifacts.py`, `BENCHMARK_PLAN.md`, and `unitree_locomotion_demo/` do not exist; `code/` is not self-contained | v4's README references only files that exist |
+>
+> The verifier (`code/verify_interaction_paper_claims.py`) targets
+> `wbc_ieee.md` rather than `wbc_v3.tex`. That is *by design* — the Markdown
+> is the editing source and the TeX is generated from it — but because this
+> version's sync script is broken, that derivation cannot currently be
+> reproduced here.
+
+**Historical description follows.**
 
 V3 develops a dual interaction-dynamics architecture:
 
