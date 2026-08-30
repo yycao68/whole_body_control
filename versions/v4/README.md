@@ -9,10 +9,8 @@ execution of the current Python QP.
 
 ## Publication artifacts
 
-- `wbc_ieee_v4.md`: authoritative manuscript source. A direct Markdown PDF
-  export should be named `wbc_ieee_v4.pdf`.
-- `wbc_v4.tex`: generated IEEE-style LaTeX source.
-- `wbc_v4.pdf`: compiled paper.
+- `wbc_v4.tex`: **the manuscript.** Edit this directly.
+- `wbc_v4.pdf`: compiled paper (tracked, rebuilt with the command below).
 - `figures/`: the eight cited figures and their two architecture-source scripts.
 - `code/`: benchmark, verification, plotting, and video source.
 - `code/results/uneven_ground_benchmark.json`: 120-trial terrain record.
@@ -28,7 +26,7 @@ From this directory:
 
 ```bash
 python3 code/verify_interaction_paper_claims.py
-python3 -m py_compile code/*.py figures/*.py sync_markdown_to_tex.py
+python3 -m py_compile code/*.py figures/*.py
 ```
 
 The verifier checks the exact controller/terrain/seed matrices, obstacle-contact
@@ -55,13 +53,14 @@ python3 code/make_continuous_flat_video.py
 python3 code/verify_interaction_paper_claims.py
 ```
 
-## Synchronize and build the paper
+## Build the paper
 
 ```bash
-python3 sync_markdown_to_tex.py
 latexmk -pdf -interaction=nonstopmode -halt-on-error wbc_v4.tex
 ```
 
-Always edit `wbc_ieee_v4.md` first and regenerate the LaTeX file afterward.
-The LaTeX build produces `wbc_v4.pdf`, so it remains separate from any direct
-Markdown export.
+`wbc_v4.tex` is the single source of truth. The former Markdown source
+(`wbc_ieee_v4.md`) and its PDF export were retired; `sync_markdown_to_tex.py`
+was removed with them, so nothing regenerates the TeX and edits to it are
+never clobbered. `code/verify_interaction_paper_claims.py` reads `wbc_v4.tex`
+directly and still checks every table cell against the authoritative JSON.
