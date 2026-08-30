@@ -19,7 +19,8 @@ from pathlib import Path
 from wbc_core import (
     get_hand_state, get_mass_matrix, get_bias_force,
     get_contact_consistent_inverse, get_contact_jacobian,
-    get_task_inertia, get_site_jacobian, get_robot_com, _get_ids,
+    get_task_inertia, get_site_jacobian, get_site_jacobian_dot,
+    get_arm_bias_force, get_robot_com, _get_ids,
     WBCController,
 )
 from impedance_mpc import ImpedanceMPC
@@ -194,6 +195,14 @@ def run_controller(name, cfg):
                 Mbar = np.linalg.inv(M + 1e-4 * np.eye(model.nv))     # D3: free-space M⁻¹
             J_arm   = get_site_jacobian(model, data, ids['hand_site'])
             Lam_arm = get_task_inertia(J_arm, Mbar)
+            # Task-space Coriolis/gravity bias mu_arm (paper eq. after
+            # eq:plant) -- previously omitted entirely, found by external
+            # review (F_arm reduced to Lambda_arm @ u only). p_ddot_d is
+            # left at its default zero: p0 is a fixed target (not a moving
+            # reference) in this scenario, so the desired acceleration
+            # really is zero, not silently dropped.
+            J_arm_dot = get_site_jacobian_dot(model, data, ids['hand_site'])
+            mu_arm = get_arm_bias_force(model, data, J_arm, J_arm_dot, Mbar, Lam_arm)
 
         # ── Arm force command (1 kHz) ─────────────────────────────────
         if mpc is not None:
@@ -206,7 +215,8 @@ def run_controller(name, cfg):
                 kalman.predict(F_prev)
                 _, d_hat = kalman.update(e_pos)
             F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]),
-                              Lam_arm, 'ds', d_hat, use_osqp=False)
+                              Lam_arm, 'ds', d_hat, use_osqp=False,
+                              mu_arm=mu_arm)
             F_arm  = F_mpc
             F_prev = mpc.last_u
         else:

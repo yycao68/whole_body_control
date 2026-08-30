@@ -104,7 +104,7 @@ class ImpedanceMPC:
 
     # ------------------------------------------------------------------
     def solve(self, x_e, Lambda_arm, mode_key=None,
-              d_hat=None, use_osqp=True):
+              d_hat=None, use_osqp=True, p_ddot_d=None, mu_arm=None):
         """
         Solve the receding-horizon QP.
 
@@ -115,6 +115,17 @@ class ImpedanceMPC:
         mode_key   : hashable contact-mode id (default: single mode)
         d_hat      : (3,) Kalman disturbance estimate; None → no Kalman
         use_osqp   : use OSQP with box constraints; False → unconstrained
+        p_ddot_d   : (3,) desired task-space acceleration (paper eq. ff_a);
+                     None → zeros, correct for the regulation scenarios in
+                     this benchmark (a held, non-moving setpoint), not a
+                     silent omission — callers tracking a moving reference
+                     must pass the real value.
+        mu_arm     : (3,) task-space Coriolis/gravity bias (paper eq. after
+                     eq:plant, wbc_core.get_arm_bias_force); None → zeros.
+                     Previously always implicitly zero here (the missing
+                     feedforward term an external review found); passing it
+                     explicitly is now the caller's responsibility so a
+                     missing value is visible at the call site, not buried.
 
         Returns
         -------
@@ -122,6 +133,13 @@ class ImpedanceMPC:
         """
         if mode_key is None:
             mode_key = 'default'
+        p_ddot_d = np.zeros(3) if p_ddot_d is None else np.asarray(p_ddot_d, float)
+        mu_arm = np.zeros(3) if mu_arm is None else np.asarray(mu_arm, float)
+        Lambda_arm_f = np.asarray(Lambda_arm, float)
+        # F_ff = Lambda_arm @ p_ddot_d + mu_arm (paper eq. ff_a with u=0):
+        # the feedforward force the residual QP's u=0 point should already
+        # sit at, so the total applied force is F_ff + Lambda_arm @ u.
+        F_ff = Lambda_arm_f @ p_ddot_d + mu_arm
 
         mode = self.get_or_update_mode(mode_key, Lambda_arm)
         B_d, Gamma, H, H_inv = (mode['B_d'], mode['Gamma'],
@@ -155,15 +173,19 @@ class ImpedanceMPC:
             U_star = -H_inv @ h_qp
             u_cmd = U_star[:nu]
         else:
-            u_cmd = self._solve_osqp(H, h_qp, N, nu, Lambda_arm)
+            u_cmd = self._solve_osqp(H, h_qp, N, nu, Lambda_arm_f, F_ff)
 
-        force = np.asarray(Lambda_arm, float) @ u_cmd
+        force = Lambda_arm_f @ (u_cmd + p_ddot_d) + mu_arm
         force = np.clip(force, -self.F_max, self.F_max)
-        self.last_u = np.linalg.solve(np.asarray(Lambda_arm, float), force)
+        # Recover the realized residual acceleration from the CLIPPED force
+        # (inverting F = Lambda_arm(p_ddot_d + u) + mu_arm for u), same
+        # convention as before feedforward was added, just now correctly
+        # subtracting the feedforward terms first.
+        self.last_u = np.linalg.solve(Lambda_arm_f, force - mu_arm) - p_ddot_d
         return force
 
-    def _solve_osqp(self, H, h_qp, N, nu, Lambda_arm):
-        """OSQP solve with horizon-wide |Lambda_arm u| <= F_max."""
+    def _solve_osqp(self, H, h_qp, N, nu, Lambda_arm, F_ff):
+        """OSQP solve with horizon-wide |F_ff + Lambda_arm u| <= F_max."""
         n_dec = N * nu
         # OSQP stores only the upper triangular part of the symmetric Hessian.
         # Passing the full matrix on update changes the data length and triggers
@@ -175,8 +197,15 @@ class ImpedanceMPC:
         Lambda_pattern = np.asarray(Lambda_arm, float) + 1e-16 * np.ones((3, 3))
         A = sp.kron(sp.eye(N, format="csc"),
                     sp.csc_matrix(Lambda_pattern), format="csc")
-        lb = np.full(n_dec, -self.F_max)
-        ub = np.full(n_dec,  self.F_max)
+        # Constrain the TOTAL applied force |F_ff + Lambda_arm u| <= F_max
+        # (paper eq:QP), not |Lambda_arm u| alone: shift the box by -F_ff,
+        # frozen at its current value across the horizon (same frozen-
+        # Level-2-value approximation the paper states for Lambda_arm
+        # itself). Found omitted by external review -- F_ff was not wired
+        # into this solver at all before the feedforward fix.
+        F_ff_stack = np.tile(np.asarray(F_ff, float), N)
+        lb = np.full(n_dec, -self.F_max) - F_ff_stack
+        ub = np.full(n_dec,  self.F_max) - F_ff_stack
 
         if (self._osqp is None or self._osqp_nnz != P.nnz
                 or self._osqp_A_nnz != A.nnz):
@@ -192,7 +221,30 @@ class ImpedanceMPC:
             self._osqp.update(q=q, l=lb, u=ub, Px=P.data, Ax=A.data)
 
         result = self._osqp.solve(raise_error=False)
-        if result.info.status == 'solved' or result.info.status_val == 1:
-            return result.x[:nu]
-        # Fallback to unconstrained if OSQP fails
-        return -np.linalg.solve(H, h_qp)[:nu]
+        # Validate the actual primal residual, not just the status string
+        # (100x this problem's own eps_abs=eps_rel=1e-4 -- same convention
+        # used across every other controller reviewed this session).
+        # "solved inaccurate" alone does not guarantee A @ U actually stays
+        # within [lb, ub]; found missing by external review.
+        feas_tol = 100 * 1e-4
+        x = result.x
+        finite = x is not None and np.all(np.isfinite(x))
+        if finite:
+            au = A @ x
+            residual = float(np.maximum(
+                np.maximum(lb - au, 0), np.maximum(au - ub, 0)
+            ).max())
+        else:
+            residual = float("inf")
+        if (result.info.status_val in (1, 2)) and finite and residual <= feas_tol:
+            return x[:nu]
+        # Fail SAFE, not fast: an earlier version of this fallback returned
+        # the UNCONSTRAINED solution on any OSQP failure -- silently
+        # ignoring the force limit entirely, found by external review. u=0
+        # instead: the applied force falls back to F_ff alone (the
+        # feedforward/gravity-cancelling term, typically much smaller than
+        # an unconstrained QP solution near a limit), still passed through
+        # solve()'s own np.clip(-F_max, F_max) as the final backstop either
+        # way -- this does not itself guarantee F_ff is within F_max, only
+        # that the fallback no longer actively discards the constraint.
+        return np.zeros(nu)

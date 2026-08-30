@@ -97,6 +97,22 @@ def get_site_jacobian(model, data, site_id):
     mujoco.mj_jacSite(model, data, Jp, Jr, site_id)
     return Jp
 
+def get_site_jacobian_dot(model, data, site_id):
+    """3xnv translational Jacobian TIME DERIVATIVE for a site (mj_jacDot,
+    which computes the derivative for a world POINT attached to a body, not
+    a site directly -- resolved via the site's current world position and
+    parent body). Needed for the operational-space bias term mu_arm =
+    Jbar^T h - Lambda (dJ/dt) qdot (paper eq. after eq:plant); previously
+    unused in this codebase, added when wiring that term through."""
+    nv = model.nv
+    Jp_dot = np.zeros((3, nv))
+    Jr_dot = np.zeros((3, nv))
+    body_id = model.site_bodyid[site_id]
+    point = data.site_xpos[site_id].copy()
+    mujoco.mj_jacDot(model, data, Jp_dot, Jr_dot, point, body_id)
+    return Jp_dot
+
+
 def get_body_jacobian(model, data, body_id):
     """(3×nv, 3×nv) translational + rotational Jacobians for a body."""
     nv = model.nv
@@ -104,6 +120,18 @@ def get_body_jacobian(model, data, body_id):
     Jr = np.zeros((3, nv))
     mujoco.mj_jacBody(model, data, Jp, Jr, body_id)
     return Jp, Jr
+
+
+def get_body_jacobian_dot(model, data, body_id):
+    """3xnv translational Jacobian time derivative for a body's own origin
+    (mj_jacDot at the body's current world position). See
+    get_site_jacobian_dot's docstring for why this is needed."""
+    nv = model.nv
+    Jp_dot = np.zeros((3, nv))
+    Jr_dot = np.zeros((3, nv))
+    point = data.xpos[body_id].copy()
+    mujoco.mj_jacDot(model, data, Jp_dot, Jr_dot, point, body_id)
+    return Jp_dot
 
 
 # --------------------------------------------------------------------------
@@ -160,6 +188,55 @@ def get_dynamically_consistent_pseudoinverse(J, M_bar_inv, Lambda):
 def get_null_space_projector(J_bar, J):
     """N̄ = I − J̄ J."""
     return np.eye(J.shape[1]) - J_bar @ J
+
+
+def get_contact_consistent_projector(M, Jc, reg=1e-4, contact_damp=0.1):
+    """Contact null-space projector Pc (generalized-force space): in the
+    undamped exact-model limit, a task force mapped through Pc^T produces no
+    contact acceleration. Factored out of WBCController.compute() so scenario
+    files that need contact-consistent torque realization outside
+    WBCController's own fixed 2-foot-contact/single-arm assumptions (e.g. a
+    variable-size contact set that gains a bracing-hand row) can use the
+    identical projection rather than falling back to a raw, non-contact-
+    consistent J^T F mapping -- found missing (Scenario E used raw J^T F
+    directly) by external review.
+
+    `contact_damp` default matches get_contact_consistent_inverse's (0.1),
+    not the 1e-3 this originally carried. Pc is idempotent (eigenvalues
+    exactly 0/1) at any damping, but as an OBLIQUE (non-orthogonal)
+    projector its operator norm is a separate, undamped-sensitive quantity:
+    at 1e-3 it measured ~28x at the double-support stance used in Scenario
+    A/B/C (||Pc||_2 = 27.6), meaning Pc^T can amplify a task force by ~28x
+    in some directions despite being a mathematically exact projector. This
+    caused a genuine closed-loop instability once the arm feedforward law's
+    velocity-dependent bias term (mu_arm, small in magnitude but exactly the
+    kind of signal an oblique high-gain projector distorts) was added --
+    confirmed via a sharp bifurcation at contact_damp<=0.003 (diverges to
+    >1000mm) vs >=0.003 (stable, ~20mm), and independent of the arm
+    feedforward law's own sign/derivation, which re-derives correctly from
+    M*qddot+h=tau. 0.1 keeps ||Pc||_2 ~12.6 (still not tight to 1, but ~30x
+    margin above the measured instability threshold) while matching the
+    Mbar damping already used elsewhere for the same contact set, rather
+    than introducing a second, inconsistent regularization constant."""
+    nv = M.shape[0]
+    M_inv = np.linalg.inv(M + reg * np.eye(nv))
+    if Jc.shape[0] == 0:
+        return np.eye(nv)
+    Lam_c = np.linalg.inv(Jc @ M_inv @ Jc.T + contact_damp * np.eye(Jc.shape[0]))
+    return np.eye(nv) - Jc.T @ Lam_c @ Jc @ M_inv
+
+
+def get_arm_bias_force(model, data, J_arm, J_arm_dot, Mbar_inv, Lambda_arm):
+    """mu_arm = Jbar_arm^T h - Lambda_arm (dJ_arm/dt) qdot (paper eq. after
+    eq:plant, Sec. V). This is the task-space Coriolis/gravity bias the arm
+    feedforward law F_arm = Lambda_arm(p_ddot_d + u) + mu_arm needs to
+    cancel; found missing from the reported benchmarks by external review
+    (impedance_mpc.py previously computed only Lambda_arm @ u, silently
+    dropping this term and the p_ddot_d term entirely)."""
+    h = get_bias_force(data)
+    J_bar_arm = get_dynamically_consistent_pseudoinverse(J_arm, Mbar_inv, Lambda_arm)
+    qdot = data.qvel.copy()
+    return J_bar_arm.T @ h - Lambda_arm @ (J_arm_dot @ qdot)
 
 
 # --------------------------------------------------------------------------
@@ -327,9 +404,7 @@ class WBCController:
             # In the undamped exact-model limit, a task force mapped through
             # P_c^T produces no contact acceleration. With the regularization
             # below, this decoupling is approximate.
-            M_inv = np.linalg.inv(M + 1e-4 * np.eye(nv))
-            Lam_c = np.linalg.inv(Jc @ M_inv @ Jc.T + 1e-3 * np.eye(Jc.shape[0]))
-            Pc    = np.eye(nv) - Jc.T @ Lam_c @ Jc @ M_inv
+            Pc    = get_contact_consistent_projector(M, Jc)
             tau_full     = Pc.T @ (J_arm.T @ F_arm_mpc)   # (nv,) projected torque
             tau_arm_task = tau_full[arm_dofs]
             if self.apply_leg_coupling:

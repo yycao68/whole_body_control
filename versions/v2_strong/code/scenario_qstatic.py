@@ -34,8 +34,9 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 from wbc_core import (
-    get_robot_com, get_mass_matrix, get_site_jacobian,
-    get_body_jacobian, get_contact_consistent_inverse, get_task_inertia,
+    get_robot_com, get_mass_matrix, get_site_jacobian, get_site_jacobian_dot,
+    get_body_jacobian, get_body_jacobian_dot, get_contact_consistent_inverse,
+    get_contact_consistent_projector, get_task_inertia, get_arm_bias_force,
 )
 from impedance_mpc import ImpedanceMPC
 from kalman import KalmanDisturbanceEstimator
@@ -279,7 +280,24 @@ def run_interaction(cfg, verbose=False):
         Jc = np.vstack(rows)
         Mbar = (get_contact_consistent_inverse(M, Jc) if use_cc
                 else np.linalg.inv(M + 1e-4*np.eye(m.nv)))
+        # Contact-consistent null-space projector, recomputed every step
+        # since Jc's row count (and the underlying support mode) switches
+        # between single and double support. Used below in place of the
+        # raw Jrel^T F_arm mapping this scenario previously always used --
+        # found missing by external review.
+        Pc = get_contact_consistent_projector(M, Jc) if use_cc else np.eye(m.nv)
         La = get_task_inertia(Jrel, Mbar)
+        # Task-space Coriolis/gravity bias for the RELATIVE (torso-frame)
+        # task, consistent with using Jrel (not the hand's absolute
+        # Jacobian) for La above -- see scenario_a.py's comment for the
+        # general rationale. p_ddot_d stays zero: p0 is a fixed offset IN
+        # THE RELATIVE FRAME (e_pos already isolates torso motion via
+        # Jrel), so the desired relative acceleration really is zero here
+        # too, even though the torso itself moves in the world frame.
+        Jh_dot = get_site_jacobian_dot(m, d, ids['hand'])
+        Jtorso_dot = get_body_jacobian_dot(m, d, ids['torso_body'])
+        Jrel_dot = Jh_dot - Jtorso_dot
+        mu_arm = get_arm_bias_force(m, d, Jrel, Jrel_dot, Mbar, La)
 
         # Contact mode: single support is recognized only during the scheduled
         # lift window [T_LIFT, T_PLACE]. Outside it the robot is committed to
@@ -299,10 +317,16 @@ def run_interaction(cfg, verbose=False):
                 kalman.inflate_covariance(cfg['inflate_alpha'])
             kalman.set_mode(mpc.A_d, mode['B_d'])
             kalman.predict(F_prev); _, d_hat = kalman.update(e_pos)
-        F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]), La, mode_key, d_hat, use_osqp=False)
+        F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]), La, mode_key, d_hat,
+                          use_osqp=False, mu_arm=mu_arm)
         F_arm = F_mpc; F_prev = mpc.last_u; prev_mode = mode_key
 
-        tau_task = Jrel[:, arm_dofs].T @ F_arm
+        # Contact-consistent projection (paper's priority-preserving torque
+        # realization): project the full-order relative-task torque through
+        # Pc^T before extracting the arm's own rows, so it does not fight
+        # the current (single- or double-support) contact set.
+        tau_full = Pc.T @ (Jrel.T @ F_arm)
+        tau_task = tau_full[arm_dofs]
         _apply_arm(d, ids, tau_task)
         mujoco.mj_step(m, d)
 

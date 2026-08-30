@@ -19,6 +19,8 @@ Protocol: identical to Scenario A — double-support stance, 8 N step pHRI at
 Table V-G1 in the IEEE paper supplement.
 """
 
+import os
+
 import numpy as np
 import mujoco
 import matplotlib
@@ -28,7 +30,8 @@ from pathlib import Path
 
 from wbc_core import (
     get_mass_matrix, get_contact_jacobian, get_contact_consistent_inverse,
-    get_task_inertia, get_site_jacobian)
+    get_task_inertia, get_site_jacobian, get_site_jacobian_dot,
+    get_arm_bias_force)
 from impedance_mpc import ImpedanceMPC
 from kalman import KalmanDisturbanceEstimator
 
@@ -89,8 +92,47 @@ CONTROLLERS = {
 
 # ── G1-specific helpers ────────────────────────────────────────────────────
 
+def _resolve_menagerie_assets():
+    """Absolute path to the Menagerie unitree_g1 `assets/` mesh directory.
+
+    g1_wbc.xml carries the placeholder `@MENAGERIE_G1_ASSETS@` rather than a
+    hardcoded absolute path, so the benchmark is reproducible on any machine
+    (external review flagged the previous hardcoded
+    /Users/<name>/.cache/... meshdir as non-reproducible). Resolution order:
+
+      1. $MENAGERIE_G1_ASSETS, if set (lets a user point at an existing
+         mujoco_menagerie checkout without installing anything).
+      2. The `robot_descriptions` package, which fetches and caches
+         mujoco_menagerie on first use -- the same source the original
+         hardcoded path pointed into.
+    """
+    env = os.environ.get('MENAGERIE_G1_ASSETS')
+    if env:
+        assets = Path(env)
+        if not assets.is_dir():
+            raise FileNotFoundError(
+                f'MENAGERIE_G1_ASSETS={env} is not a directory')
+        return assets
+    try:
+        from robot_descriptions import g1_mj_description
+    except ImportError as exc:
+        raise ImportError(
+            'Scenario C needs the Unitree G1 meshes. Either `pip install '
+            'robot_descriptions` (downloads+caches mujoco_menagerie '
+            'automatically) or set $MENAGERIE_G1_ASSETS to the assets/ '
+            'directory of an existing mujoco_menagerie/unitree_g1 checkout.'
+        ) from exc
+    assets = Path(g1_mj_description.PACKAGE_PATH) / 'assets'
+    if not assets.is_dir():
+        raise FileNotFoundError(f'expected G1 meshes at {assets}')
+    return assets
+
+
 def _make_robot():
-    m = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
+    # Substitute the mesh directory in-memory; the XML on disk stays portable.
+    xml = MODEL_PATH.read_text().replace(
+        '@MENAGERIE_G1_ASSETS@', str(_resolve_menagerie_assets()))
+    m = mujoco.MjModel.from_xml_string(xml)
     # The Menagerie-derived XML defaults to 2 ms. This benchmark uses two
     # 0.5 ms physics substeps per 1 ms controller update.
     m.opt.timestep = SIM_DT
@@ -224,6 +266,11 @@ def run_controller(name, cfg):
                 Mbar_ = np.linalg.inv(M_ + 1e-4 * np.eye(model.nv))   # D3: free-space
             Jarm_  = get_site_jacobian(model, data, ids['hand_site'])
             La_use = get_task_inertia(Jarm_, Mbar_)
+            # Task-space Coriolis/gravity bias -- see scenario_a.py's
+            # comment at the same point; p_ddot_d left at zero (fixed
+            # target here too).
+            Jarm_dot_ = get_site_jacobian_dot(model, data, ids['hand_site'])
+            mu_arm_ = get_arm_bias_force(model, data, Jarm_, Jarm_dot_, Mbar_, La_use)
             mode = mpc.get_or_update_mode('ds', La_use)
             d_hat = None
             if kalman is not None:
@@ -231,7 +278,7 @@ def run_controller(name, cfg):
                 kalman.predict(F_prev)
                 _, d_hat = kalman.update(e_pos)
             F_mpc  = mpc.solve(np.concatenate([e_pos, e_vel]),
-                               La_use, 'ds', d_hat, use_osqp=False)
+                               La_use, 'ds', d_hat, use_osqp=False, mu_arm=mu_arm_)
             F_arm  = F_mpc;  F_prev = mpc.last_u
         else:
             F_arm = -(KP_DIST * e_pos + KD_PD * e_vel)

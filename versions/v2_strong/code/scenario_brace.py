@@ -19,8 +19,9 @@ import mujoco
 from pathlib import Path
 
 from wbc_core import (
-    get_mass_matrix, get_site_jacobian, get_contact_consistent_inverse,
-    get_task_inertia, get_robot_com,
+    get_mass_matrix, get_site_jacobian, get_site_jacobian_dot,
+    get_contact_consistent_inverse, get_contact_consistent_projector,
+    get_task_inertia, get_arm_bias_force, get_robot_com,
 )
 from impedance_mpc import ImpedanceMPC
 from kalman import KalmanDisturbanceEstimator
@@ -126,12 +127,25 @@ def run_controller(name, cfg):
         switched = (mode_key != prev_mode); prev_mode = mode_key
 
         # RIGHT-arm force command with contact-set-dependent Lambda_arm
+        M_  = get_mass_matrix(m, data)
+        Jc_ = _contact_jac(m, data, ids, braced)
+        Mbar_ = (get_contact_consistent_inverse(M_, Jc_) if use_cc
+                 else np.linalg.inv(M_ + 1e-4*np.eye(m.nv)))
+        # Contact-consistent null-space projector, recomputed every step
+        # since the contact set (and therefore Jc_) changes across the
+        # brace/release switch. Used below in _apply instead of a raw J^T F
+        # mapping -- found missing by external review (this scenario
+        # previously never went through any contact-consistent projection
+        # at all, unlike wbc_core.WBCController's arm task).
+        Pc_ = get_contact_consistent_projector(M_, Jc_) if use_cc else np.eye(m.nv)
         if mpc is not None:
-            M_  = get_mass_matrix(m, data)
-            Jc_ = _contact_jac(m, data, ids, braced)
-            Mbar_ = (get_contact_consistent_inverse(M_, Jc_) if use_cc
-                     else np.linalg.inv(M_ + 1e-4*np.eye(m.nv)))
             La = get_task_inertia(Jr, Mbar_)
+            # Task-space Coriolis/gravity bias -- see scenario_a.py's
+            # comment for the general rationale; p0 here is a fixed
+            # world-frame target (captured once after settling), so
+            # p_ddot_d stays zero.
+            Jr_dot = get_site_jacobian_dot(m, data, ids['hand'])
+            mu_arm = get_arm_bias_force(m, data, Jr, Jr_dot, Mbar_, La)
             mode = mpc.get_or_update_mode(mode_key, La)
             d_hat = None
             if kalman is not None:
@@ -139,7 +153,8 @@ def run_controller(name, cfg):
                     kalman.inflate_covariance(cfg['inflate_alpha'])
                 kalman.set_mode(mpc.A_d, mode['B_d'])
                 kalman.predict(F_prev); _, d_hat = kalman.update(e_pos)
-            F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]), La, mode_key, d_hat, use_osqp=False)
+            F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]), La, mode_key, d_hat,
+                              use_osqp=False, mu_arm=mu_arm)
             F_arm = F_mpc; F_prev = mpc.last_u
         else:
             F_arm = -(800.0*e_pos + 40.0*e_vel)
@@ -147,20 +162,39 @@ def run_controller(name, cfg):
         # left-arm brace schedule
         t_in  = t % T_CYCLE
         pose  = POSE_BRACE if (t >= T_DIST+0.3 and t_in < T_BRACE) else POSE_RELEASE
-        _apply(m, data, ids, F_arm, pose)
+        _apply(m, data, ids, F_arm, pose, Pc_)
         for _ in range(2):
             mujoco.mj_step(m, data)
 
     return t_log, e_log, switch_times
 
 
-def _apply(m, data, ids, F_arm, left_pose):
-    """Assemble ctrl: leg stance PD, right-arm task force, left-arm brace PD."""
+def _apply(m, data, ids, F_arm, left_pose, Pc=None):
+    """Assemble ctrl: leg stance PD, right-arm task force, left-arm brace PD.
+
+    Pc: contact null-space projector (nv,nv), or None for the raw (non-
+    contact-consistent) J^T F mapping this always used before -- kept as
+    the default only so the zero-force settling phase (called before any
+    contact state is meaningful) doesn't need a dummy projector; every
+    force-producing call from run_controller now passes Pc explicitly."""
     c = np.zeros(m.nu)
     for i, (qa, da) in enumerate(ids['leg_q']):
         c[ids['leg_a'][i]] = KPL[i]*(LEG_REF[i]-data.qpos[qa]) - KDL[i]*data.qvel[da]
     Jr = get_site_jacobian(m, data, ids['hand'])
-    tau_task = Jr[:, ids['rarm_dof']].T @ F_arm
+    if Pc is not None:
+        # Contact-consistent projection (paper's priority-preserving
+        # torque realization, Sec. IV): project the full-order task
+        # torque through Pc^T before extracting the arm's own rows, so the
+        # right-arm task force does not fight the current contact set
+        # (feet, plus the bracing hand when engaged). Arm-only extraction,
+        # no leg-coupling feedback -- same conservative choice as
+        # WBCController.apply_leg_coupling=False, documented there: feeding
+        # the coupling torques back to the PD-balanced legs can fight the
+        # balance PD.
+        tau_full = Pc.T @ (Jr.T @ F_arm)
+        tau_task = tau_full[ids['rarm_dof']]
+    else:
+        tau_task = Jr[:, ids['rarm_dof']].T @ F_arm
     for i, (qa, da) in enumerate(ids['rarm_q']):
         null = 3.0*(RARM_REF[i]-data.qpos[qa]) - 0.5*data.qvel[da]
         c[ids['rarm_a'][i]] = tau_task[i] + null

@@ -29,7 +29,8 @@ from pathlib import Path
 from wbc_core import (
     WBCController, get_hand_state, get_mass_matrix,
     get_contact_jacobian, get_contact_consistent_inverse,
-    get_task_inertia, get_site_jacobian, get_robot_com,
+    get_task_inertia, get_site_jacobian, get_site_jacobian_dot,
+    get_arm_bias_force, get_robot_com,
     _get_ids,
 )
 from impedance_mpc import ImpedanceMPC
@@ -151,6 +152,11 @@ def run_controller(ctrl_name, ctrl_cfg):
                 Mbar_ = np.linalg.inv(M_ + 1e-4 * np.eye(model.nv))   # D3: free-space
             Jarm_  = get_site_jacobian(model, data, ids['hand_site'])
             La_cur = get_task_inertia(Jarm_, Mbar_)
+            # Task-space Coriolis/gravity bias -- see scenario_a.py's
+            # comment at the same point; p_ddot_d left at zero (fixed
+            # target, not a moving reference, in this scenario too).
+            Jarm_dot_ = get_site_jacobian_dot(model, data, ids['hand_site'])
+            mu_arm_ = get_arm_bias_force(model, data, Jarm_, Jarm_dot_, Mbar_, La_cur)
             mode = mpc.get_or_update_mode('ds', La_cur)   # constant predictor, updated recovery inertia
             d_hat = None
             if kalman:
@@ -159,7 +165,7 @@ def run_controller(ctrl_name, ctrl_cfg):
                 _, d_hat = kalman.update(e_pos)
             x_e_vec = np.concatenate([e_pos, e_vel])
             F_mpc   = mpc.solve(x_e_vec, La_cur, mode_key='ds',
-                                d_hat=d_hat, use_osqp=False)
+                                d_hat=d_hat, use_osqp=False, mu_arm=mu_arm_)
             F_arm      = F_mpc
             u_prev     = mpc.last_u
         else:
