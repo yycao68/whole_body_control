@@ -71,6 +71,19 @@ def terrain_scene(step_type, h, x_step=1.1):
 
 
 def load_reference():
+    # The frozen reference is a *regenerable* artifact, and the repository
+    # gitignores *.npz, so a fresh clone does not have it. Fail with the exact
+    # regeneration command rather than a bare FileNotFoundError -- external
+    # review found the run path unreproducible partly for this reason.
+    if not REF.exists():
+        raise FileNotFoundError(
+            f"missing frozen nominal reference: {REF}\n"
+            "It is gitignored (*.npz) and must be regenerated once with the "
+            "command recorded in FROZEN_PLATFORM.md:\n"
+            "    python3 run_policy_walk.py --duration 20 --seeds 0 "
+            "--save reference/frozen_walk_seed0.npz\n"
+            "That step itself needs the G1 meshes (see check_platform.py)."
+        )
     d = np.load(REF)
     return d["t"], d["com"]
 

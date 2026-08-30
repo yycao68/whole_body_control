@@ -9,9 +9,26 @@ and arbitrated by a self-calibrating confidence gate.
 
 ## Contents
 
-- `wbc_ieee_v5.md` — the manuscript (paper draft). `wbc_ieee_v5.pdf` is a pandoc render.
+- **`wbc_v5.tex` — the canonical manuscript.** Built with `latexmk -pdf wbc_v5.tex`.
+  `wbc_v5_supplementary.tex` is its supplement; `*_zh.tex` are Chinese translations.
+- `wbc_ieee_v5.md` — the earlier Markdown draft the TeX was written from. It is
+  **no longer the source of truth** and there is no sync script in either
+  direction; edit the TeX. (v3/v4 generate their TeX from Markdown; v5 does not.)
 - `PAPER_REDESIGN.md` — paper contract, figure plan, claim matrix (C1–C11).
 - `Interaction_Dynamics_Change_Direction_Plan.md` — the two-stage change-of-direction plan + V1–V6 validation.
 - `code/` — implementation and experiments (see `code/README.md`).
+- `code/PROVENANCE.md` — which script and artifact produces each reported number.
 
-The tex (`wbc_v5.tex`) is not yet written; it will be synced from the markdown after review.
+## Reproducing
+
+```bash
+cd code
+python3 check_platform.py     # reports every missing prerequisite at once
+```
+
+The repository gitignores `*.STL` and `*.npz`, so a fresh clone is missing the
+G1 meshes and the frozen nominal reference; `check_platform.py` prints the exact
+command to restore each. Building the TeX needs a LaTeX install providing
+`IEEEtran`, `algorithmicx`/`algpseudocode`, `amsmath`, `amssymb`, `booktabs`,
+`graphicx`, and `hyperref` (TeX Live `collection-latexrecommended`; a minimal
+install may need `tlmgr install algorithmicx IEEEtran booktabs`).

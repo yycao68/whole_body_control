@@ -3,24 +3,24 @@
   "transient": {
     "280": {
       "policy_falls": 24,
-      "wrench_falls": 6,
-      "policy_only_fall": 20,
-      "wrench_only_fall": 2,
-      "mcnemar_p": 0.00012111663818359375
+      "wrench_falls": 2,
+      "policy_only_fall": 22,
+      "wrench_only_fall": 0,
+      "mcnemar_p": 4.76837158203125e-07
     },
     "300": {
       "policy_falls": 40,
-      "wrench_falls": 23,
-      "policy_only_fall": 17,
+      "wrench_falls": 20,
+      "policy_only_fall": 20,
       "wrench_only_fall": 0,
-      "mcnemar_p": 1.52587890625e-05
+      "mcnemar_p": 1.9073486328125e-06
     },
     "320": {
       "policy_falls": 40,
-      "wrench_falls": 37,
-      "policy_only_fall": 3,
+      "wrench_falls": 36,
+      "policy_only_fall": 4,
       "wrench_only_fall": 0,
-      "mcnemar_p": 0.25
+      "mcnemar_p": 0.125
     }
   },
   "sustained": {
@@ -30,10 +30,10 @@
         431.9210750456452,
         487.174210230433
       ],
-      "wrench_med": 20.20066169640967,
+      "wrench_med": 13.122734783774023,
       "wrench_iqr": [
-        6.983426461476235,
-        28.69646364121247
+        6.280725643118468,
+        21.34767313028054
       ]
     },
     "12": {
@@ -42,10 +42,10 @@
         700.6803267369017,
         753.8066759904228
       ],
-      "wrench_med": 280.4896169877072,
+      "wrench_med": 189.70184555494967,
       "wrench_iqr": [
-        233.18812494555004,
-        327.0516004097113
+        159.49779484380528,
+        242.6586699715725
       ]
     }
   }
