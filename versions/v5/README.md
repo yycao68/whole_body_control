@@ -11,10 +11,6 @@ and arbitrated by a self-calibrating confidence gate.
 
 - **`wbc_v5.tex` — the canonical manuscript.** Built with `latexmk -pdf wbc_v5.tex`.
   `wbc_v5_supplementary.tex` is its supplement; `*_zh.tex` are Chinese translations.
-- `wbc_ieee_v5.md` — the earlier Markdown draft the TeX was written from. It is
-  **no longer the source of truth** and there is no sync script in either
-  direction; edit the TeX. (v4 was switched to TeX-only as well; only the
-  archived v3 still carries a Markdown source, and its sync script is broken.)
 - `PAPER_REDESIGN.md` — paper contract, figure plan, claim matrix (C1–C11).
 - `Interaction_Dynamics_Change_Direction_Plan.md` — the two-stage change-of-direction plan + V1–V6 validation.
 - `code/` — implementation and experiments (see `code/README.md`).
