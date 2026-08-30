@@ -28,3 +28,8 @@ external_deps/
 *.stl
 *.STL
 *.npz
+
+# Generated terrain/torque MJCF variants written into results/ by the
+# benchmarks. Regenerable, and they embed an absolute machine-local
+# meshdir, so they must not be committed.
+**/results/g1_wbc_torque_*.xml

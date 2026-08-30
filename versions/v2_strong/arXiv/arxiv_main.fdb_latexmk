@@ -1,14 +1,13 @@
 # Fdb version 4
-["bibtex arxiv_main"] 1783567479.35812 "arxiv_main.aux" "arxiv_main.bbl" "arxiv_main" 1783567481.07154 0
+["bibtex arxiv_main"] 1788128287.03454 "arxiv_main.aux" "arxiv_main.bbl" "arxiv_main" 1788128288.75337 0
   "./references.bib" 1783122424.63672 6892 9f7b9095eaf7d49c020466e75975f025 ""
   "/usr/local/texlive/2026/texmf-dist/bibtex/bst/ieeetran/IEEEtran.bst" 1440712899 57748 7c8250ecf02814ce6ddc0cdbb63df1dd ""
-  "arxiv_main.aux" 1783567480.78753 14616 16378919dd115393dee5d7ee8c2df98a "pdflatex"
+  "arxiv_main.aux" 1788128288.42621 14707 a75ac2be797f633bbe80ff691fdda91b "pdflatex"
   (generated)
   "arxiv_main.bbl"
   "arxiv_main.blg"
   (rewritten before read)
-["pdflatex"] 1783567479.48506 "/Users/yycao/ai_learn/whole_body_control/versions/v2_strong/arXiv/arxiv_main.tex" "arxiv_main.pdf" "arxiv_main" 1783567481.07174 0
-  "/Users/yycao/ai_learn/whole_body_control/versions/v2_strong/arXiv/arxiv_main.tex" 1783270223.28907 1318 568ddbaa4edb50fcc7ca01d853863f80 ""
+["pdflatex"] 1788128287.14844 "arxiv_main.tex" "arxiv_main.pdf" "arxiv_main" 1788128288.75357 0
   "/usr/local/texlive/2026/texmf-dist/fonts/enc/dvips/base/8r.enc" 1165713224 4850 80dc9bab7f31fb78a000ccfed0e27cab ""
   "/usr/local/texlive/2026/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/local/texlive/2026/texmf-dist/fonts/tfm/adobe/courier/pcrr7t.tfm" 1136768653 960 379cc0019370a9e0208a0a3f949f847a ""
@@ -136,15 +135,15 @@
   "/usr/local/texlive/2026/texmf-var/fonts/map/pdftex/updmap/pdftex.map" 1782350032 5573038 b99aad5e4898a9034e953632f940512b ""
   "/usr/local/texlive/2026/texmf-var/web2c/pdftex/pdflatex.fmt" 1774209607 3636776 dc5fa9b6b1453b9d196cd42edf876004 ""
   "/usr/local/texlive/2026/texmf.cnf" 1774209515 577 648cd9f92f9c0eac486f4c71c85cfbbe ""
-  "arxiv_main.aux" 1783567480.78753 14616 16378919dd115393dee5d7ee8c2df98a "pdflatex"
-  "arxiv_main.bbl" 1783567479.48201 5790 aca538f40367753ccb9d1cfe79a57e6b "bibtex arxiv_main"
-  "arxiv_main.out" 1783567480.78868 4690 f1e69416aeb76725e2765c4b827be1e7 "pdflatex"
+  "arxiv_main.aux" 1788128288.42621 14707 a75ac2be797f633bbe80ff691fdda91b "pdflatex"
+  "arxiv_main.bbl" 1788128287.14555 5882 7bd3e24654b52b33ee9cf965db1babfe "bibtex arxiv_main"
+  "arxiv_main.out" 1788128288.42744 4690 f1e69416aeb76725e2765c4b827be1e7 "pdflatex"
   "arxiv_main.tex" 1783270223.28907 1318 568ddbaa4edb50fcc7ca01d853863f80 ""
-  "body.tex" 1783567475.59435 54149 47a05537d63e32885cc849effd2ad021 ""
-  "scenario_a_results.png" 1783564806.48092 108420 ad94d17560594fe5398d745621e9de41 ""
-  "scenario_b_results.png" 1783564806.48429 203703 b5309c7bd9f13d5e414a3fde980c132f ""
-  "scenario_c_g1_results.png" 1783564806.48772 111864 af992bb860c2037a436daf3a99b685aa ""
-  "scenario_f_results.png" 1783564806.49177 127071 5f46d57282621211af539a3b61cc4aff ""
+  "body.tex" 1788128277.68396 57338 15d630d5e8d2162caf527be5813fa0d0 ""
+  "scenario_a_results.png" 1788127388.4032 118300 8fafbdd3b03a8f0ad98cb889ce7a1074 ""
+  "scenario_b_results.png" 1788127388.40643 201879 c4ea7b60546bde58a0e9f87aedc1c98e ""
+  "scenario_c_g1_results.png" 1788127388.40987 130849 6ca6b7ef93ebe7dbbc0650ed128ca838 ""
+  "scenario_f_results.png" 1788127388.41279 129270 be2b0a00a504055b5f77a5f2e0af3f01 ""
   (generated)
   "arxiv_main.aux"
   "arxiv_main.log"
