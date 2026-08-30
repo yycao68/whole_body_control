@@ -41,3 +41,13 @@ external_deps/
 # can reconstruct this set. Committing them is the only way v5 reproduces from
 # a clean checkout. v3/v4 meshes stay ignored: robot_descriptions supplies them.
 !versions/v5/code/g1_description/meshes/*.STL
+
+# EXCEPTION: v3 is archived (superseded by v4), so its irreplaceable outputs are
+# tracked rather than left one `rm` away from permanent loss. The rendered demo
+# videos cannot be cheaply regenerated, and the built PDFs are the archived
+# record. Deliberately NOT tracked for v3: the 51 STL meshes (robot_descriptions
+# supplies them since 2251856), the 28 MB of per-seed *.npz trial logs (a single
+# regenerable condition), and generated/cache files.
+!versions/v3/videos/*.mp4
+!versions/v3/wbc_v3.pdf
+!versions/v3/wbc_ieee.pdf
