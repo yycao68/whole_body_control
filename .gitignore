@@ -60,3 +60,6 @@ external_deps/
 !versions/v2_strong/arXiv/arxiv_main.pdf
 !versions/v2_strong/arXiv/main.pdf
 !versions/v4/wbc_v4.pdf
+
+# XeLaTeX intermediate (produced when building the _zh papers)
+*.xdv
