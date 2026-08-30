@@ -23,10 +23,14 @@ XML = HERE / "g1_description" / "g1_12dof.xml"
 REF = HERE / "reference" / "frozen_walk_seed0.npz"
 POLICY = HERE / "motion.pt"
 
-# Third-party Python packages the publication path needs. These are NOT
-# declared anywhere else in the repo -- the review noted the absence of any
-# requirements file or lockfile.
-REQUIRED = ("numpy", "mujoco", "torch", "matplotlib", "scipy")
+# Third-party Python packages the publication path needs. Keep in sync with
+# requirements.txt.
+REQUIRED = ("numpy", "mujoco", "torch", "matplotlib", "scipy", "osqp")
+
+# Expected identity of the regenerable frozen reference, so a stale or
+# truncated copy is reported rather than silently used. See ASSETS.md.
+REF_SHA256 = "ff5187be469ef53d499af984bc250272d2fb7bc14c35eb06d30cbc8db2ef1e33"
+REF_BYTES = 3552081
 
 
 def _missing_packages():
@@ -80,6 +84,18 @@ def main() -> int:
             "    python3 run_policy_walk.py --duration 20 --seeds 0 "
             "--save reference/frozen_walk_seed0.npz"
         )
+    else:
+        import hashlib
+        got = hashlib.sha256(REF.read_bytes()).hexdigest()
+        if got != REF_SHA256:
+            problems.append(
+                f"frozen reference does not match the recorded manifest: {REF}\n"
+                f"    expected sha256 {REF_SHA256} ({REF_BYTES} bytes)\n"
+                f"    found    sha256 {got} ({REF.stat().st_size} bytes)\n"
+                "    Results generated against a different reference are not\n"
+                "    comparable to the committed artifacts. Regenerate with the\n"
+                "    command in ASSETS.md, or accept the difference knowingly."
+            )
 
     if problems:
         print("PLATFORM INCOMPLETE -- the V5 experiments cannot run here.\n")

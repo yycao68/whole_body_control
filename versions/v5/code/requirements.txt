@@ -1,0 +1,25 @@
+# V5 Python dependencies.
+#
+# External review (2026-08-30) noted the absence of any dependency
+# specification: the policy loop failed immediately on a missing `torch` with
+# nothing in the repository saying it was needed.
+#
+# Version bounds are deliberately loose (>=) rather than pinned; the exact
+# versions that produced the committed artifacts in code/results/ are recorded
+# as comments. Pin these instead if you need bit-identical reruns.
+#
+# Install:  pip install -r requirements.txt
+# Verify :  python3 check_platform.py
+#
+# NOTE: pip cannot supply the two non-Python assets this code needs --
+# the 27 G1 STL meshes and the frozen nominal reference .npz, both of which
+# are gitignored. See ASSETS.md.
+
+numpy>=1.24          # produced results with 2.4.4
+mujoco>=3.1          # produced results with 3.10.0
+torch>=2.0           # produced results with 2.11.0; CPU build is sufficient
+matplotlib>=3.7      # produced results with 3.10.8; figure generation only
+scipy>=1.10          # produced results with 1.17.1; sparse matrices for the QP
+osqp>=0.6            # produced results with 1.1.1; QP solver in normalized_mpc.py
+
+# Reference environment: Python 3.13.12, macOS (arm64).
