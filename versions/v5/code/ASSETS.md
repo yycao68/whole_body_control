@@ -1,14 +1,16 @@
-# Required assets not tracked in git
+# Large assets: what is tracked, and what you must supply
 
-`code/` is **not** self-contained. The repository's `.gitignore` excludes
-`*.STL` and `*.npz` (see the repo-root `.gitignore`, "Vendored mesh assets and
-regenerable simulation logs"), so a fresh clone is missing the G1 meshes and the
-frozen nominal reference. Every torque-level and policy-loop experiment fails at
-MuJoCo model load or reference load without them.
+The repository's `.gitignore` excludes `*.STL` and `*.npz`, but **v5's G1 meshes
+are an explicit exception and ARE committed** (see the `!versions/v5/...` rule at
+the end of the root `.gitignore`). They are the only part of the platform that
+cannot be reconstructed from any public source, so they are carried in-tree.
 
-External review (2026-08-30) hit exactly this and could not run the publication
-path. Run the preflight first — it reports everything missing at once with the
-exact fix for each:
+After cloning, the one remaining step is regenerating the frozen nominal
+reference (§2). Everything else is present.
+
+External review (2026-08-30) could not run the publication path at all, because
+at that time neither the meshes nor the reference were available. Run the
+preflight first — it reports anything missing at once with the exact fix:
 
 ```bash
 cd code
@@ -20,7 +22,7 @@ python3 check_platform.py
 | Asset | Tracked in git? | Size | How to obtain |
 | --- | --- | ---: | --- |
 | `motion.pt` (frozen RL policy) | **yes** | 145,745 B | already present |
-| `g1_description/meshes/*.STL` (27 files) | no (`*.STL`) | 25.2 MB | copy from `unitree_rl_gym`, or set `$G1_MESH_DIR` |
+| `g1_description/meshes/*.STL` (27 files) | **yes** (gitignore exception) | 25.2 MB | already present |
 | `reference/frozen_walk_seed0.npz` | no (`*.npz`) | 3,552,081 B | regenerate (command below) |
 
 ## 1. Python packages
@@ -73,9 +75,16 @@ not, so the v3/v4 auto-fetch fallback cannot be reused here:
 - `left_wrist_roll_rubber_hand.STL` — Menagerie names it `left_rubber_hand.STL`
 - `right_wrist_roll_rubber_hand.STL` — Menagerie names it `right_rubber_hand.STL`
 
-Obtain them by copying `resources/robots/g1_description/meshes/` from a
-`unitree_rl_gym` checkout into `code/g1_description/meshes/`, or point
-`$G1_MESH_DIR` at a directory containing all 27.
+**These 27 files are committed to this repository** precisely because of that
+gap: with three of them unavailable from Menagerie -- and those three being the
+largest, 14.8 MB of the 25.2 MB total -- no auto-fetch fallback can rebuild the
+set, so carrying them in-tree is the only way v5 reproduces from a clean clone.
+(v3/v4 meshes are *not* committed; `robot_descriptions` supplies those.)
+
+If you ever need to replace them, copy
+`resources/robots/g1_description/meshes/` from a `unitree_rl_gym` checkout into
+`code/g1_description/meshes/`, or point `$G1_MESH_DIR` at a directory
+containing all 27. The manifest below lets you verify any such copy.
 
 Verify with:
 

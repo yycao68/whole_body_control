@@ -11,9 +11,10 @@
 # Install:  pip install -r requirements.txt
 # Verify :  python3 check_platform.py
 #
-# NOTE: pip cannot supply the two non-Python assets this code needs --
-# the 27 G1 STL meshes and the frozen nominal reference .npz, both of which
-# are gitignored. See ASSETS.md.
+# NOTE: pip cannot supply the non-Python assets this code needs. The 27 G1 STL
+# meshes are committed to the repository (a .gitignore exception, since three
+# of them have no public equivalent); the frozen nominal reference .npz is
+# gitignored and must be regenerated once. See ASSETS.md.
 
 numpy>=1.24          # produced results with 2.4.4
 mujoco>=3.1          # produced results with 3.10.0

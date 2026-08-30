@@ -26,9 +26,12 @@ cd code
 python3 check_platform.py     # reports every missing prerequisite at once
 ```
 
-The repository gitignores `*.STL` and `*.npz`, so a fresh clone is missing the
-G1 meshes and the frozen nominal reference; `check_platform.py` prints the exact
-command to restore each. Building the TeX needs a LaTeX install providing
+The G1 meshes are committed (a deliberate `.gitignore` exception -- three of the
+27 have no public equivalent, so they cannot be auto-fetched). The frozen nominal
+reference is gitignored (`*.npz`) because it is regenerable;
+`check_platform.py` prints the exact command to rebuild it. See `code/ASSETS.md`.
+
+Building the TeX needs a LaTeX install providing
 `IEEEtran`, `algorithmicx`/`algpseudocode`, `amsmath`, `amssymb`, `booktabs`,
 `graphicx`, and `hyperref` (TeX Live `collection-latexrecommended`; a minimal
 install may need `tlmgr install algorithmicx IEEEtran booktabs`).

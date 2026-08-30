@@ -33,3 +33,11 @@ external_deps/
 # benchmarks. Regenerable, and they embed an absolute machine-local
 # meshdir, so they must not be committed.
 **/results/g1_wbc_torque_*.xml
+
+# EXCEPTION: v5's G1 meshes ARE tracked. They are the 12-DoF legs-only G1 from
+# unitree_rl_gym, and three of the 27 (torso_link_23dof_rev_1_0.STL and the two
+# *_wrist_roll_rubber_hand.STL) have no mujoco_menagerie equivalent -- those
+# three are also the largest, 14.8 of the 25.2 MB -- so no auto-fetch fallback
+# can reconstruct this set. Committing them is the only way v5 reproduces from
+# a clean checkout. v3/v4 meshes stay ignored: robot_descriptions supplies them.
+!versions/v5/code/g1_description/meshes/*.STL
