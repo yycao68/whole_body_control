@@ -63,3 +63,11 @@ external_deps/
 
 # XeLaTeX intermediate (produced when building the _zh papers)
 *.xdv
+
+# EXCEPTION: v5's built manuscripts and the vector figures they embed.
+# wbc_v5.tex uses \includegraphics{name} with no extension, so LaTeX prefers
+# the .pdf figure over the .png of the same name; without these a clone would
+# silently build against the raster fallbacks and not match the committed PDF.
+!versions/v5/wbc_v5.pdf
+!versions/v5/wbc_v5_supplementary.pdf
+!versions/v5/code/figures/*.pdf
