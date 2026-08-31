@@ -1,12 +1,42 @@
-# LaTeX build artifacts
+# LaTeX build artifacts -- everything latexmk/pdflatex/xelatex/bibtex regenerates
+# from the .tex sources. Only the .tex, the figures, and the final .pdf are
+# tracked. (Historically some of these were committed before these rules
+# existed; gitignore does not untrack, so they were removed with
+# `git rm --cached`.)
 *.aux
 *.log
 *.out
 *.fls
 *.fdb_latexmk
 *.synctex.gz
+*.synctex(busy)
 *.bbl
 *.blg
+*.bcf
+*.run.xml
+*.toc
+*.lof
+*.lot
+*.lol
+*.idx
+*.ind
+*.ilg
+*.glo
+*.gls
+*.glg
+*.acn
+*.acr
+*.alg
+*.nav
+*.snm
+*.vrb
+*.spl
+*.brf
+*.figlist
+*.makefile
+*.listing
+*-blx.bib
+*.xdv
 
 # Python
 __pycache__/
