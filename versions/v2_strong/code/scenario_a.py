@@ -184,6 +184,13 @@ def run_controller(name, cfg):
         t_log[step] = t
         e_log[step] = e_pos
 
+        # Leg stance is also the non-MPC torque offset in the local horizon
+        # authority model passed to the interaction MPC below.
+        com, _ = get_robot_com(model, data)
+        q_ref = STANCE_Q.copy()
+        q_ref[0] = -2.0 * com[1]
+        q_ref[4] = -2.0 * com[1]
+
         # ── Real contact-consistent task inertia Lambda_arm(q) ───────
         Lam_arm = None
         if mpc is not None:
@@ -203,6 +210,17 @@ def run_controller(name, cfg):
             # really is zero, not silently dropped.
             J_arm_dot = get_site_jacobian_dot(model, data, ids['hand_site'])
             mu_arm = get_arm_bias_force(model, data, J_arm, J_arm_dot, Mbar, Lam_arm)
+            # Freeze the full current pre-clip WBC torque map over the short
+            # MPC horizon. At u=0 the arm command is F_ff=mu_arm because this
+            # fixed-target scenario has p_ddot_d=0.
+            _, authority = wbc.compute(
+                data, mu_arm, contact_mask=[True, True],
+                q_ref_legs=q_ref, Kp_leg=KP_LEG, Kd_leg=KD_LEG,
+            )
+            torque_map = np.einsum(
+                'ij,jk->ik', authority['force_to_torque'], Lam_arm
+            )
+            torque_offset = authority['tau_preclip']
 
         # ── Arm force command (1 kHz) ─────────────────────────────────
         if mpc is not None:
@@ -215,8 +233,11 @@ def run_controller(name, cfg):
                 kalman.predict(F_prev)
                 _, d_hat = kalman.update(e_pos)
             F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]),
-                              Lam_arm, 'ds', d_hat, use_osqp=False,
-                              mu_arm=mu_arm)
+                              Lam_arm, 'ds', d_hat, use_osqp=True,
+                              mu_arm=mu_arm, torque_map=torque_map,
+                              torque_offset=torque_offset,
+                              torque_min=-wbc._tau_max,
+                              torque_max=wbc._tau_max)
             F_arm  = F_mpc
             F_prev = mpc.last_u
         else:
@@ -226,12 +247,6 @@ def run_controller(name, cfg):
                 integral += e_pos * 0.001
                 integral = np.clip(integral, -0.05, 0.05)
                 F_arm -= cfg.get('Ki', KI_PI) * integral
-
-        # ── Leg stance ─────────────────────────────────────────────────
-        com, _ = get_robot_com(model, data)
-        q_ref  = STANCE_Q.copy()
-        q_ref[0] = -2.0 * com[1]
-        q_ref[4] = -2.0 * com[1]
 
         if wbc is not None:
             # D4-D7: contact-consistent WBC — projects the arm task force

@@ -9,6 +9,15 @@ import numpy as np
 import mujoco
 
 
+def _checked_matmul(left, right, name):
+    """Multiply dense arrays while detecting real non-finite results."""
+    with np.errstate(all="ignore"):
+        product = np.asarray(left) @ np.asarray(right)
+    if not np.all(np.isfinite(product)):
+        raise FloatingPointError(f"non-finite matrix product: {name}")
+    return product
+
+
 # --------------------------------------------------------------------------
 # Model index cache
 # --------------------------------------------------------------------------
@@ -162,8 +171,19 @@ def get_contact_consistent_inverse(M, Jc, reg=1e-6, contact_damp=0.1):
     if Jc.shape[0] == 0:
         return M_inv
     nc = Jc.shape[0]
-    Lambda_c = np.linalg.inv(Jc @ M_inv @ Jc.T + contact_damp * np.eye(nc))
-    M_bar_inv = M_inv - M_inv @ Jc.T @ Lambda_c @ Jc @ M_inv
+    contact_inertia = _checked_matmul(
+        _checked_matmul(Jc, M_inv, "Jc @ M_inv"), Jc.T, "Jc @ M_inv @ Jc.T"
+    )
+    Lambda_c = np.linalg.inv(contact_inertia + contact_damp * np.eye(nc))
+    M_bar_inv = M_inv - _checked_matmul(
+        _checked_matmul(
+            _checked_matmul(M_inv, Jc.T, "M_inv @ Jc.T"),
+            Lambda_c,
+            "M_inv @ Jc.T @ Lambda_c",
+        ),
+        _checked_matmul(Jc, M_inv, "Jc @ M_inv"),
+        "M_inv @ Jc.T @ Lambda_c @ Jc @ M_inv",
+    )
     return 0.5 * (M_bar_inv + M_bar_inv.T)
 
 
@@ -173,17 +193,27 @@ def get_contact_consistent_inverse(M, Jc, reg=1e-6, contact_damp=0.1):
 
 def get_task_inertia(J, M_bar_inv, reg=1e-4):
     """Λ = (J M̄⁻¹ J^T)⁻¹  with eigenvalue clamping to guarantee PSD."""
-    A = J @ M_bar_inv @ J.T
+    A = _checked_matmul(
+        _checked_matmul(J, M_bar_inv, "J @ M_bar_inv"), J.T,
+        "J @ M_bar_inv @ J.T",
+    )
     # Symmetrise and clamp eigenvalues so A stays PD
     A = 0.5 * (A + A.T)
     eigvals, eigvecs = np.linalg.eigh(A)
     eigvals = np.maximum(eigvals, reg)
-    A_psd = eigvecs @ np.diag(eigvals) @ eigvecs.T
+    A_psd = _checked_matmul(
+        _checked_matmul(eigvecs, np.diag(eigvals), "eigvecs @ diag(eigvals)"),
+        eigvecs.T,
+        "eigvecs @ diag(eigvals) @ eigvecs.T",
+    )
     return np.linalg.inv(A_psd)
 
 def get_dynamically_consistent_pseudoinverse(J, M_bar_inv, Lambda):
     """J̄ = M̄⁻¹ J^T Λ."""
-    return M_bar_inv @ J.T @ Lambda
+    return _checked_matmul(
+        _checked_matmul(M_bar_inv, J.T, "M_bar_inv @ J.T"), Lambda,
+        "M_bar_inv @ J.T @ Lambda",
+    )
 
 def get_null_space_projector(J_bar, J):
     """N̄ = I − J̄ J."""
@@ -231,8 +261,18 @@ def get_contact_consistent_projector(M, Jc, reg=1e-4, contact_damp=0.1):
     M_inv = np.linalg.inv(M + reg * np.eye(nv))
     if Jc.shape[0] == 0:
         return np.eye(nv)
-    Lam_c = np.linalg.inv(Jc @ M_inv @ Jc.T + contact_damp * np.eye(Jc.shape[0]))
-    return np.eye(nv) - Jc.T @ Lam_c @ Jc @ M_inv
+    contact_inertia = _checked_matmul(
+        _checked_matmul(Jc, M_inv, "Jc @ M_inv"), Jc.T, "Jc @ M_inv @ Jc.T"
+    )
+    Lam_c = np.linalg.inv(contact_inertia + contact_damp * np.eye(Jc.shape[0]))
+    return np.eye(nv) - _checked_matmul(
+        _checked_matmul(
+            _checked_matmul(Jc.T, Lam_c, "Jc.T @ Lam_c"), Jc,
+            "Jc.T @ Lam_c @ Jc",
+        ),
+        M_inv,
+        "Jc.T @ Lam_c @ Jc @ M_inv",
+    )
 
 
 def get_arm_bias_force(model, data, J_arm, J_arm_dot, Mbar_inv, Lambda_arm):
@@ -245,7 +285,14 @@ def get_arm_bias_force(model, data, J_arm, J_arm_dot, Mbar_inv, Lambda_arm):
     h = get_bias_force(data)
     J_bar_arm = get_dynamically_consistent_pseudoinverse(J_arm, Mbar_inv, Lambda_arm)
     qdot = data.qvel.copy()
-    return J_bar_arm.T @ h - Lambda_arm @ (J_arm_dot @ qdot)
+    return (
+        _checked_matmul(J_bar_arm.T, h, "J_bar_arm.T @ bias")
+        - _checked_matmul(
+            Lambda_arm,
+            _checked_matmul(J_arm_dot, qdot, "J_arm_dot @ qdot"),
+            "Lambda_arm @ J_arm_dot @ qdot",
+        )
+    )
 
 
 # --------------------------------------------------------------------------
@@ -408,18 +455,31 @@ class WBCController:
         arm_qadrs = [ids[k] for k in self._ARM_QADR_KEYS]
         leg_dofs  = [ids[k] for k in self._LEG_DOF_KEYS]
         tau_leg_cc = np.zeros(8)
+        force_to_torque = np.zeros((11, 3))
         if self.contact_consistent and Jc.shape[0] > 0:
             # Contact null-space projector P_c (generalized-force space):
             # In the undamped exact-model limit, a task force mapped through
             # P_c^T produces no contact acceleration. With the regularization
             # below, this decoupling is approximate.
             Pc    = get_contact_consistent_projector(M, Jc)
-            tau_full     = Pc.T @ (J_arm.T @ F_arm_mpc)   # (nv,) projected torque
-            tau_arm_task = tau_full[arm_dofs]
+            tau_full_map = _checked_matmul(
+                Pc.T, J_arm.T, "Pc.T @ J_arm.T"
+            )
+            tau_arm_task = _checked_matmul(
+                tau_full_map[arm_dofs], F_arm_mpc, "arm force-to-torque map"
+            )
+            force_to_torque[8:] = tau_full_map[arm_dofs]
             if self.apply_leg_coupling:
-                tau_leg_cc = tau_full[leg_dofs]  # legs help hold contact under the arm task
+                tau_leg_cc = _checked_matmul(
+                    tau_full_map[leg_dofs], F_arm_mpc,
+                    "leg force-to-torque map",
+                )
+                force_to_torque[:8] = tau_full_map[leg_dofs]
         else:
-            tau_arm_task = J_arm[:, arm_dofs].T @ F_arm_mpc  # arm-only (no projection)
+            force_to_torque[8:] = J_arm[:, arm_dofs].T
+            tau_arm_task = _checked_matmul(
+                force_to_torque[8:], F_arm_mpc, "arm-only force-to-torque map"
+            )
 
         # ── Arm null-space centering (Level 4) ────────────────────────────
         # Simple PD on arm joints, projected to not fight the task force.
@@ -438,9 +498,11 @@ class WBCController:
         tau_leg = tau_leg + tau_leg_cc
 
         # ── Assembly (Eq. 28) ────────────────────────────────────────────
-        tau = np.concatenate([tau_leg, tau_arm])
-        tau = np.clip(tau, -self._tau_max, self._tau_max)
+        tau_preclip = np.concatenate([tau_leg, tau_arm])
+        tau = np.clip(tau_preclip, -self._tau_max, self._tau_max)
 
         return tau, dict(Lam_arm=Lam_arm, J_arm=J_arm, Mbar=Mbar,
                          Jc=Jc, contact_mask=contact_mask,
-                         contact_consistent=self.contact_consistent)
+                 contact_consistent=self.contact_consistent,
+                 tau_preclip=tau_preclip,
+                 force_to_torque=force_to_torque)

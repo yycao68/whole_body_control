@@ -17,6 +17,39 @@ import osqp
 import scipy.sparse as sp
 
 
+def affine_output_box_polytope(
+    output_map: np.ndarray,
+    output_offset: np.ndarray,
+    output_lower: np.ndarray,
+    output_upper: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``H, h`` for ``lower <= offset + map @ u <= upper``.
+
+    This converts an affine local realization map, such as joint torque as a
+    function of a requested task acceleration, to the stagewise polytope used
+    by :class:`NormalizedMPC`.
+    """
+    output_map = np.asarray(output_map, dtype=float)
+    output_offset = np.asarray(output_offset, dtype=float).reshape(-1)
+    output_lower = np.asarray(output_lower, dtype=float).reshape(-1)
+    output_upper = np.asarray(output_upper, dtype=float).reshape(-1)
+    if output_map.ndim != 2 or output_map.shape[0] != output_offset.size:
+        raise ValueError("output_map rows must match output_offset")
+    if not (output_offset.shape == output_lower.shape == output_upper.shape):
+        raise ValueError("output bounds must match output_offset")
+    if not np.all(np.isfinite(output_map)):
+        raise ValueError("output_map must be finite")
+    if not (np.all(np.isfinite(output_offset)) and np.all(np.isfinite(output_lower))
+            and np.all(np.isfinite(output_upper))):
+        raise ValueError("affine output bounds must be finite")
+    if np.any(output_lower > output_upper):
+        raise ValueError("output_lower must not exceed output_upper")
+    return (
+        np.vstack((output_map, -output_map)),
+        np.concatenate((output_upper - output_offset, output_offset - output_lower)),
+    )
+
+
 @dataclass
 class NormalizedMPC:
     dim: int
@@ -47,8 +80,11 @@ class NormalizedMPC:
         self._build_lifted_matrices()
         self._solver = None
         self._poly_solver = None
+        self._poly_fallback_solver = None
+        self._poly_fallback_shape = None
         self._H_poly = None
         self._h_poly = None
+        self._poly_fallback = None
         self.last_polytope_failed = False
         self._u_lower = None
         self._u_upper = None
@@ -118,6 +154,7 @@ class NormalizedMPC:
         # invalid and the caller deliberately requests a conservative box.
         self._H_poly = None
         self._h_poly = None
+        self._poly_fallback = None
         self._u_lower = lower
         self._u_upper = upper
         if self._solver is None:
@@ -129,8 +166,14 @@ class NormalizedMPC:
         self._u_upper = None
         self._H_poly = None
         self._h_poly = None
+        self._poly_fallback = None
 
-    def update_input_polytope(self, H: np.ndarray, h: np.ndarray) -> None:
+    def update_input_polytope(
+        self,
+        H: np.ndarray,
+        h: np.ndarray,
+        fallback_input: np.ndarray | None = None,
+    ) -> None:
         """Constrain every horizon stage by the realization polytope H u <= h.
 
         This is the general form of the residual-command constraint supplied by
@@ -146,6 +189,42 @@ class NormalizedMPC:
             raise ValueError("H must be (n_con, dim) and h must be (n_con,)")
         if not (np.all(np.isfinite(H)) and np.all(np.isfinite(h))):
             raise ValueError("H and h must be finite")
+        if fallback_input is None:
+            fallback = np.zeros(self.dim)
+        else:
+            fallback = np.asarray(fallback_input, dtype=float).reshape(-1)
+            if fallback.shape != (self.dim,) or not np.all(np.isfinite(fallback)):
+                raise ValueError("fallback_input must be a finite vector of length dim")
+        if np.any(H @ fallback > h + 1e-6):
+            # The prior command is a natural fallback but can leave the new
+            # frozen local authority set after a contact/state change. Project
+            # it to the closest currently feasible command rather than silently
+            # removing the torque constraint. This tiny QP is only solved on
+            # that change; the common feasible case has no extra solve.
+            fallback_shape = H.shape
+            if (self._poly_fallback_solver is None
+                    or self._poly_fallback_shape != fallback_shape):
+                fallback_pattern = sp.csc_matrix(np.ones(H.shape))
+                self._poly_fallback_solver = osqp.OSQP()
+                self._poly_fallback_solver.setup(
+                    P=sp.eye(self.dim, format="csc"), q=-fallback,
+                    A=fallback_pattern, l=-np.inf * np.ones(H.shape[0]), u=h,
+                    verbose=False, polish=False,
+                    eps_abs=1e-7, eps_rel=1e-7, max_iter=1000,
+                )
+                self._poly_fallback_shape = fallback_shape
+                self._poly_fallback_solver.update(
+                    q=-fallback, Ax=H.flatten(order="F"), u=h
+                )
+            else:
+                self._poly_fallback_solver.update(
+                    q=-fallback, Ax=H.flatten(order="F"), u=h
+                )
+            fallback_result = self._poly_fallback_solver.solve()
+            fallback = None if fallback_result.x is None else fallback_result.x
+            if (fallback is None or fallback_result.info.status_val not in (1, 2)
+                    or np.any(H @ fallback > h + 1e-5)):
+                raise RuntimeError("current input polytope has no feasible fallback")
         rebuild = (
             self._poly_solver is None
             or self._H_poly is None
@@ -153,6 +232,7 @@ class NormalizedMPC:
         )
         self._H_poly = H.copy()
         self._h_poly = h.copy()
+        self._poly_fallback = fallback.copy()
         self._u_lower = None          # polytope supersedes the box
         self._u_upper = None
         # A = blockdiag(H, ..., H) has a FIXED pattern once H's shape is fixed, so
@@ -236,19 +316,17 @@ class NormalizedMPC:
                                      l=-np.inf * np.ones(ub.size), u=ub)
             result = self._poly_solver.solve()
             if result.x is None or result.info.status_val not in (1, 2):
-                # The fallback must itself be ADMISSIBLE.  -d_hat (the offset-free
-                # cancelling input) is not: it can lie outside H u <= h, and
-                # returning it would hand the realizer a command the contacts
-                # cannot produce -- exactly what this constraint exists to stop.
-                # u = 0 is always admissible whenever the nominal is feasible
-                # (then h >= 0), so fall back to it.
+                # The fallback must itself be ADMISSIBLE.  For a nonzero affine
+                # realization offset, u = 0 need not satisfy the polytope, so
+                # retain the feasible command supplied with the constraint map.
                 self.last_u_sequence = None
                 self.last_bound_active = False
                 self.last_polytope_failed = True
-                return np.zeros(self.dim)
+                return self._poly_fallback.copy()
             self.last_polytope_failed = False
             self.last_u_sequence = result.x.reshape(self.horizon, self.dim) - d_hat
             u0 = result.x[:self.dim] - d_hat
+            self._poly_fallback = u0.copy()
             slack = self._h_poly - self._H_poly @ u0
             self.last_bound_active = bool(np.any(slack <= 1e-6))
             return u0

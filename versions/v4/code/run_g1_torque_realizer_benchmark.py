@@ -363,6 +363,12 @@ class InverseDynamicsQPRealizer:
         self.last_com_acc_des = np.zeros(3)   # last requested CoM acceleration (c_ddot_d + u_c)
         self.last_task_acc_des = np.zeros(3)  # last requested hand acceleration (x_ddot_td + u_t)
         self.last_hand_jac = None             # hand Jacobian of the last solve
+        # Local affine map used by the task MPC: tau_QP ~= offset + map @ u,
+        # where u = [CoM xyz acceleration; roll/pitch acceleration].
+        self.last_mpc_torque_map = None
+        self.last_mpc_torque_offset = None
+        self.last_mpc_qdd_map = None
+        self.last_mpc_qdd_offset = None
         self._task_dq_du = None
         self._task_clipped = False
         self._qp_row_labels = np.zeros(0, dtype="<U32")
@@ -705,6 +711,7 @@ class InverseDynamicsQPRealizer:
         external_hand_force_ff: np.ndarray | None = None,
         contact_force_z_max_override: dict[str, float] | None = None,
         attitude_acc_correction: np.ndarray | None = None,
+        mpc_correction: np.ndarray | None = None,
     ):
         self.last_com_bias_acc = np.zeros(3)
         self._yaw_dq_du = None
@@ -747,6 +754,21 @@ class InverseDynamicsQPRealizer:
         ncontacts = len(stance_contacts)
         nlam = 3 * ncontacts
         n = self.nv + self.nu + nlam
+        if mpc_correction is None:
+            correction = None
+            authority_dq_du = None
+        else:
+            correction = np.asarray(mpc_correction, dtype=float).reshape(-1)
+            if correction.shape != (5,) or not np.all(np.isfinite(correction)):
+                raise ValueError("mpc_correction must be a finite 5-D vector")
+            if com_acc_des is None or attitude_acc_correction is None:
+                raise ValueError("mpc_correction requires CoM and attitude corrections")
+            authority_dq_du = np.zeros((n, 5))
+        authority_clipped = False
+        self.last_mpc_torque_map = None
+        self.last_mpc_torque_offset = None
+        self.last_mpc_qdd_map = None
+        self.last_mpc_qdd_offset = None
         P = 1e-5 * np.eye(n)
         q = np.zeros(n)
         foot_eq_rows = []
@@ -782,6 +804,11 @@ class InverseDynamicsQPRealizer:
             # centroidal-wrench term below.  The map is affine only off the clip.
             self._com_dq_du = -self.com_task_weight * C_com[:2, :].T
             self._com_clipped = bool(np.any(np.abs(np.asarray(com_acc_des)[:2]) >= 35.0))
+            if authority_dq_du is not None:
+                authority_dq_du[:, :3] -= self.com_task_weight * C_com.T
+                authority_clipped |= bool(
+                    np.any(np.abs(np.asarray(com_acc_des)) >= 35.0)
+                )
             self.last_com_acc_des = np.asarray(com_acc_des, dtype=float).copy()
             # Vertical height stays stiff (weight 8). Torso attitude uses a
             # separate weight: relaxing it (attitude_weight < 8) lets the QP use
@@ -808,6 +835,9 @@ class InverseDynamicsQPRealizer:
                 attitude_acc_des[2] = float(yaw_acc_des)
             self.last_yaw_acc_target = float(attitude_acc_des[2])
             self._add_ls(P, q, C_att, np.clip(attitude_acc_des, -35.0, 35.0), attitude_weight)
+            if authority_dq_du is not None:
+                authority_dq_du[:, 3:5] -= attitude_weight * C_att[:2, :].T
+                authority_clipped |= bool(np.any(np.abs(attitude_acc_des[:2]) >= 35.0))
             # The yaw command changes only the yaw row of this least-squares
             # target.  It is retained separately until the CoM sensitivity has
             # also received its centroidal-wrench contribution below.
@@ -1063,6 +1093,19 @@ class InverseDynamicsQPRealizer:
         self.last_tau_qp = tau_qp.copy()
         saturation = np.maximum(tau_qp - self.torque_max, 0.0) + np.maximum(self.torque_min - tau_qp, 0.0)
         tau = np.clip(tau_qp, self.torque_min, self.torque_max)
+        if authority_dq_du is not None and not authority_clipped:
+            sensitivity = self.input_sensitivity(authority_dq_du)
+            if sensitivity is not None:
+                torque_map = sensitivity[self.nv:self.nv + self.nu]
+                torque_offset = tau_qp - torque_map @ correction
+                if np.all(np.isfinite(torque_map)) and np.all(np.isfinite(torque_offset)):
+                    self.last_mpc_torque_map = torque_map
+                    self.last_mpc_torque_offset = torque_offset
+                    qdd_map = sensitivity[:self.nv]
+                    qdd_offset = qdd - qdd_map @ correction
+                    if np.all(np.isfinite(qdd_map)) and np.all(np.isfinite(qdd_offset)):
+                        self.last_mpc_qdd_map = qdd_map
+                        self.last_mpc_qdd_offset = qdd_offset
         lam = z[self.nv + self.nu:] if nlam else np.zeros(0)
         with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
             dyn = M @ qdd + data.qfrc_bias - self.Btau @ tau

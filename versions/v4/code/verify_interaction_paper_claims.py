@@ -114,6 +114,8 @@ def verify_configuration() -> dict:
             "ID-MPC must use the combined interaction+realization estimate (est.effective)")
     require("measured_error_acceleration - correction" in src,
             "logged residual must be measured minus commanded task acceleration")
+    require("update_input_polytope" in src and "mpc_torque_polytope_samples" in src,
+            "published MPC runner lacks horizon-wide torque-authority enforcement")
     realizer_src = (HERE / "run_g1_torque_realizer_benchmark.py").read_text()
     require("mj_jacDot" in realizer_src,
             "realizer must include Jdot*qdot in Cartesian acceleration tasks")
@@ -388,7 +390,7 @@ def main() -> None:
                 f"manuscript still contains superseded numerical claim: {stale!r}")
     for claim in ("three controllers", "0.30", "0.50", "0.70",
                   "prototype measurement on a non-real-time host",
-                  "240 torque-level", "7.0%", "22.6%"):
+                  "240 torque-level", "8.0%", "22.8%"):
         require(claim in manuscript, f"manuscript evidence statement missing: {claim!r}")
 
     config_report = verify_configuration()

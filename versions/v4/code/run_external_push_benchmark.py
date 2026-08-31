@@ -102,6 +102,10 @@ def run_condition(direction: str, phase: str, controller: str, seed: int,
         "seed": int(seed), "push": summary["push"],
         "qp_fallbacks": summary["qp_fallbacks"],
         "max_torque_utilization": summary["max_torque_utilization"],
+        "mpc_torque_polytope_samples": summary["mpc_torque_polytope_samples"],
+        "mpc_torque_polytope_valid_samples": summary["mpc_torque_polytope_valid_samples"],
+        "mpc_torque_polytope_active_samples": summary["mpc_torque_polytope_active_samples"],
+        "max_mpc_torque_polytope_violation": summary["max_mpc_torque_polytope_violation"],
         "peak_contact_force_n": summary["peak_contact_force_n"],
     }
     if onset is None:

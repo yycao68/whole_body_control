@@ -165,16 +165,27 @@ def _apply_legs(d, ids, hip_roll, l_ref, lifted, tau_ank):
     d.ctrl[A['left_ankle_x']]  = 0.0 if lifted else tau_ank
 
 
-def _apply_arm(d, ids, tau_task=None):
-    """tau_task None -> pure hold; else add the Cartesian task torque."""
+def _arm_preclip(d, ids, tau_task=None):
+    """Return arm torque before the actuator-limit clip."""
     A, QAD, DAD = ids['A'], ids['QAD'], ids['DAD']
+    command = d.ctrl.copy()
     for i, jn in enumerate(ARM_JOINTS):
         q = d.qpos[QAD[jn]]; dq = d.qvel[DAD[jn]]; g = d.qfrc_bias[DAD[jn]]
         lim = 80. if 'shoulder' in jn else 60.
         u = 20.*(ARM_REF[jn]-q) - 2.*dq + g              # posture hold + gravity
         if tau_task is not None:
             u += tau_task[i]
-        d.ctrl[A[jn]] = float(np.clip(u, -lim, lim))
+        command[A[jn]] = u
+    return command
+
+
+def _apply_arm(d, ids, tau_task=None):
+    """tau_task None -> pure hold; else add the Cartesian task torque."""
+    command = _arm_preclip(d, ids, tau_task)
+    for jn in ARM_JOINTS:
+        actuator = ids['A'][jn]
+        limit = 80. if 'shoulder' in jn else 60.
+        d.ctrl[actuator] = float(np.clip(command[actuator], -limit, limit))
 
 
 def _balance_step(m, d, ids, t, e_int):
@@ -298,6 +309,14 @@ def run_interaction(cfg, verbose=False):
         Jtorso_dot = get_body_jacobian_dot(m, d, ids['torso_body'])
         Jrel_dot = Jh_dot - Jtorso_dot
         mu_arm = get_arm_bias_force(m, d, Jrel, Jrel_dot, Mbar, La)
+        tau_full_map = np.einsum('ij,jk->ik', Pc.T, Jrel.T)
+        force_to_torque = np.zeros((m.nu, 3))
+        arm_actuators = [ids['A'][joint] for joint in ARM_JOINTS]
+        force_to_torque[arm_actuators] = tau_full_map[arm_dofs]
+        torque_offset = _arm_preclip(
+            d, ids, np.einsum('ij,j->i', force_to_torque[arm_actuators], mu_arm)
+        )
+        torque_map = np.einsum('ij,jk->ik', force_to_torque, La)
 
         # Contact mode: single support is recognized only during the scheduled
         # lift window [T_LIFT, T_PLACE]. Outside it the robot is committed to
@@ -318,7 +337,10 @@ def run_interaction(cfg, verbose=False):
             kalman.set_mode(mpc.A_d, mode['B_d'])
             kalman.predict(F_prev); _, d_hat = kalman.update(e_pos)
         F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]), La, mode_key, d_hat,
-                          use_osqp=False, mu_arm=mu_arm)
+                          use_osqp=True, mu_arm=mu_arm,
+                          torque_map=torque_map, torque_offset=torque_offset,
+                          torque_min=m.actuator_ctrlrange[:, 0],
+                          torque_max=m.actuator_ctrlrange[:, 1])
         F_arm = F_mpc; F_prev = mpc.last_u; prev_mode = mode_key
 
         # Contact-consistent projection (paper's priority-preserving torque

@@ -142,6 +142,11 @@ def run_controller(ctrl_name, ctrl_cfg):
             mode_switch_times.append(t)
             prev_switch_idx = switch_idx
 
+        # The current stance torque is the non-MPC offset of the frozen local
+        # torque authority model used by the interaction MPC.
+        com_pos, _ = get_robot_com(model, data)
+        q_ref_legs, dq_ref_legs = stance.get_refs(0.0, com_pos[1])
+
         # Compute arm force — real contact-consistent Lambda_arm(q)
         if mpc is not None:
             M_  = get_mass_matrix(model, data)
@@ -157,6 +162,15 @@ def run_controller(ctrl_name, ctrl_cfg):
             # target, not a moving reference, in this scenario too).
             Jarm_dot_ = get_site_jacobian_dot(model, data, ids['hand_site'])
             mu_arm_ = get_arm_bias_force(model, data, Jarm_, Jarm_dot_, Mbar_, La_cur)
+            _, authority = wbc_ctrl.compute(
+                data, mu_arm_, contact_mask=[True, True],
+                q_ref_legs=q_ref_legs, dq_ref_legs=dq_ref_legs,
+                Kp_leg=KP_LEG, Kd_leg=KD_LEG,
+            )
+            torque_map = np.einsum(
+                'ij,jk->ik', authority['force_to_torque'], La_cur
+            )
+            torque_offset = authority['tau_preclip']
             mode = mpc.get_or_update_mode('ds', La_cur)   # constant predictor, updated recovery inertia
             d_hat = None
             if kalman:
@@ -165,7 +179,11 @@ def run_controller(ctrl_name, ctrl_cfg):
                 _, d_hat = kalman.update(e_pos)
             x_e_vec = np.concatenate([e_pos, e_vel])
             F_mpc   = mpc.solve(x_e_vec, La_cur, mode_key='ds',
-                                d_hat=d_hat, use_osqp=False, mu_arm=mu_arm_)
+                                d_hat=d_hat, use_osqp=True, mu_arm=mu_arm_,
+                                torque_map=torque_map,
+                                torque_offset=torque_offset,
+                                torque_min=-wbc_ctrl._tau_max,
+                                torque_max=wbc_ctrl._tau_max)
             F_arm      = F_mpc
             u_prev     = mpc.last_u
         else:
@@ -174,10 +192,6 @@ def run_controller(ctrl_name, ctrl_cfg):
                 integral_err += e_pos * CTRL_DT
                 integral_err  = np.clip(integral_err, -0.05, 0.05)
                 F_arm        -= Ki * integral_err
-
-        # Stance balance (always double support)
-        com_pos, _ = get_robot_com(model, data)
-        q_ref_legs, dq_ref_legs = stance.get_refs(0.0, com_pos[1])
 
         if ctrl_cfg.get('use_wbc', False) or mpc is not None:
             tau, _ = wbc_ctrl.compute(data, F_arm,

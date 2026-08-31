@@ -138,6 +138,8 @@ def run_controller(name, cfg):
         # previously never went through any contact-consistent projection
         # at all, unlike wbc_core.WBCController's arm task).
         Pc_ = get_contact_consistent_projector(M_, Jc_) if use_cc else np.eye(m.nv)
+        t_in = t % T_CYCLE
+        pose = POSE_BRACE if (t >= T_DIST + 0.3 and t_in < T_BRACE) else POSE_RELEASE
         if mpc is not None:
             La = get_task_inertia(Jr, Mbar_)
             # Task-space Coriolis/gravity bias -- see scenario_a.py's
@@ -146,6 +148,10 @@ def run_controller(name, cfg):
             # p_ddot_d stays zero.
             Jr_dot = get_site_jacobian_dot(m, data, ids['hand'])
             mu_arm = get_arm_bias_force(m, data, Jr, Jr_dot, Mbar_, La)
+            torque_offset, force_to_torque = _assemble_control(
+                m, data, ids, mu_arm, pose, Pc_
+            )
+            torque_map = np.einsum('ij,jk->ik', force_to_torque, La)
             mode = mpc.get_or_update_mode(mode_key, La)
             d_hat = None
             if kalman is not None:
@@ -154,14 +160,14 @@ def run_controller(name, cfg):
                 kalman.set_mode(mpc.A_d, mode['B_d'])
                 kalman.predict(F_prev); _, d_hat = kalman.update(e_pos)
             F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]), La, mode_key, d_hat,
-                              use_osqp=False, mu_arm=mu_arm)
+                              use_osqp=True, mu_arm=mu_arm,
+                              torque_map=torque_map, torque_offset=torque_offset,
+                              torque_min=m.actuator_ctrlrange[:, 0],
+                              torque_max=m.actuator_ctrlrange[:, 1])
             F_arm = F_mpc; F_prev = mpc.last_u
         else:
             F_arm = -(800.0*e_pos + 40.0*e_vel)
 
-        # left-arm brace schedule
-        t_in  = t % T_CYCLE
-        pose  = POSE_BRACE if (t >= T_DIST+0.3 and t_in < T_BRACE) else POSE_RELEASE
         _apply(m, data, ids, F_arm, pose, Pc_)
         for _ in range(2):
             mujoco.mj_step(m, data)
@@ -169,7 +175,7 @@ def run_controller(name, cfg):
     return t_log, e_log, switch_times
 
 
-def _apply(m, data, ids, F_arm, left_pose, Pc=None):
+def _assemble_control(m, data, ids, F_arm, left_pose, Pc=None):
     """Assemble ctrl: leg stance PD, right-arm task force, left-arm brace PD.
 
     Pc: contact null-space projector (nv,nv), or None for the raw (non-
@@ -178,6 +184,7 @@ def _apply(m, data, ids, F_arm, left_pose, Pc=None):
     contact state is meaningful) doesn't need a dummy projector; every
     force-producing call from run_controller now passes Pc explicitly."""
     c = np.zeros(m.nu)
+    force_to_torque = np.zeros((m.nu, 3))
     for i, (qa, da) in enumerate(ids['leg_q']):
         c[ids['leg_a'][i]] = KPL[i]*(LEG_REF[i]-data.qpos[qa]) - KDL[i]*data.qvel[da]
     Jr = get_site_jacobian(m, data, ids['hand'])
@@ -191,15 +198,23 @@ def _apply(m, data, ids, F_arm, left_pose, Pc=None):
         # WBCController.apply_leg_coupling=False, documented there: feeding
         # the coupling torques back to the PD-balanced legs can fight the
         # balance PD.
-        tau_full = Pc.T @ (Jr.T @ F_arm)
-        tau_task = tau_full[ids['rarm_dof']]
+        tau_full_map = np.einsum('ij,jk->ik', Pc.T, Jr.T)
+        force_to_torque[ids['rarm_a']] = tau_full_map[ids['rarm_dof']]
+        tau_task = np.einsum('ij,j->i', force_to_torque[ids['rarm_a']], F_arm)
     else:
-        tau_task = Jr[:, ids['rarm_dof']].T @ F_arm
+        force_to_torque[ids['rarm_a']] = Jr[:, ids['rarm_dof']].T
+        tau_task = np.einsum('ij,j->i', force_to_torque[ids['rarm_a']], F_arm)
     for i, (qa, da) in enumerate(ids['rarm_q']):
         null = 3.0*(RARM_REF[i]-data.qpos[qa]) - 0.5*data.qvel[da]
         c[ids['rarm_a'][i]] = tau_task[i] + null
     for i, (qa, da) in enumerate(ids['larm_q']):
         c[ids['larm_a'][i]] = 60.0*(left_pose[i]-data.qpos[qa]) - 5.0*data.qvel[da]
+    return c, force_to_torque
+
+
+def _apply(m, data, ids, F_arm, left_pose, Pc=None):
+    """Apply the bracing controller's raw torque command."""
+    c, _ = _assemble_control(m, data, ids, F_arm, left_pose, Pc)
     data.ctrl[:] = c
 
 

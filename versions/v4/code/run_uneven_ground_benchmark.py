@@ -22,7 +22,7 @@ import mujoco
 import numpy as np
 
 from interaction_estimator import FilteredAccelerationResidualEstimator
-from normalized_mpc import NormalizedMPC
+from normalized_mpc import NormalizedMPC, affine_output_box_polytope
 from reference_provider import DCMReferenceProvider
 from capture_point import CapturePointStabilizer, StabilizerParams
 from run_g1_root_assist_demo import (
@@ -405,9 +405,12 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
         smooth_lateral_only=g["smooth_lateral_only"],
     )
     task_dim = 5  # CoM x/y/z and body roll/pitch
+    mpc_command_limit = np.array([6.0, 6.0, 4.0, 15.0, 15.0])
+    command_box_H = np.vstack((np.eye(task_dim), -np.eye(task_dim)))
+    command_box_h = np.concatenate((mpc_command_limit, mpc_command_limit))
     mpc = NormalizedMPC(
         dim=task_dim, dt=MPC_DT, horizon=25, q_pos=90.0, q_vel=16.0,
-        r=0.05, u_max=np.array([6.0, 6.0, 4.0, 15.0, 15.0]),
+        r=0.05, u_max=mpc_command_limit,
     )
     estimator = FilteredAccelerationResidualEstimator(task_dim, WBC_DT, bandwidth_hz=3.0)
 
@@ -430,6 +433,10 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
         "friction_margin": np.zeros(n), "torque_utilization": np.zeros(n),
         "qp_fallback": np.zeros(n, int), "fell": np.zeros(n, int),
         "mpc_sample": np.zeros(n, int), "wbc_sample": np.zeros(n, int),
+        "mpc_torque_polytope": np.zeros(n, int),
+        "mpc_torque_polytope_valid": np.zeros(n, int),
+        "mpc_torque_polytope_active": np.zeros(n, int),
+        "mpc_torque_polytope_violation": np.full(n, np.nan),
         "obstacle_contact": np.zeros(n, int),
     }
     com_ref_xy = com0[:2].copy()
@@ -605,6 +612,41 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
                 log["mpc_sample"][k] = 1
                 tm = time.perf_counter()
                 state = np.r_[error, error_velocity]
+                torque_polytope = None
+                if controller != "impedance":
+                    if (realizer.last_mpc_torque_map is not None
+                            and realizer.last_mpc_torque_offset is not None
+                            and realizer.last_mpc_qdd_map is not None
+                            and realizer.last_mpc_qdd_offset is not None):
+                        # The plant applies a 1 kHz joint-servo torque after the
+                        # 500 Hz QP. Map the proposed correction through both
+                        # layers so the MPC limits the pre-clip applied torque.
+                        servo_qdd_gain = (
+                            0.5 * servo_kp * WBC_DT**2 + servo_kd * WBC_DT
+                        )
+                        torque_map = realizer.last_mpc_torque_map + (
+                            servo_qdd_gain
+                            * realizer.last_mpc_qdd_map[realizer.dof]
+                        )
+                        torque_offset = realizer.last_mpc_torque_offset + (
+                            servo_qdd_gain
+                            * realizer.last_mpc_qdd_offset[realizer.dof]
+                        )
+                        torque_H, torque_h = affine_output_box_polytope(
+                            torque_map,
+                            torque_offset,
+                            realizer.torque_min,
+                            realizer.torque_max,
+                        )
+                        torque_row_count = torque_H.shape[0]
+                        torque_H = np.vstack((torque_H, command_box_H))
+                        torque_h = np.concatenate((torque_h, command_box_h))
+                        mpc.update_input_polytope(
+                            torque_H, torque_h, fallback_input=correction,
+                        )
+                        torque_polytope = (torque_H, torque_h, torque_row_count)
+                    else:
+                        mpc.update_input_box(-mpc_command_limit, mpc_command_limit)
                 if controller == "impedance":
                     kp = np.array([16.72048113, 16.72048113, 20.0, 24.0, 24.0])
                     kd = np.array([17.17302876, 17.17302876, 12.0, 10.0, 10.0])
@@ -613,12 +655,26 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
                         np.array([-6.0, -6.0, -4.0, -15.0, -15.0]),
                         np.array([6.0, 6.0, 4.0, 15.0, 15.0]),
                     )
-                elif controller == "nominal_mpc":
-                    candidate = mpc.solve(state, np.zeros(task_dim))
                 elif controller == "interaction_mpc":
                     candidate = mpc.solve(state, conditioned_effective)
+                elif controller == "nominal_mpc":
+                    candidate = mpc.solve(state, np.zeros(task_dim))
                 else:
                     candidate = mpc.solve(state, _condition_residual(estimate_interaction))
+                if torque_polytope is not None and mpc.last_u_sequence is not None:
+                    torque_H, torque_h, torque_row_count = torque_polytope
+                    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                        preview_slack = torque_h[:, None] - torque_H @ mpc.last_u_sequence.T
+                    if np.all(np.isfinite(preview_slack)):
+                        log["mpc_torque_polytope"][k] = 1
+                        log["mpc_torque_polytope_valid"][k] = 1
+                        torque_slack = preview_slack[:torque_row_count]
+                        log["mpc_torque_polytope_active"][k] = int(
+                            np.any(torque_slack <= 1e-6)
+                        )
+                        log["mpc_torque_polytope_violation"][k] = float(
+                            np.max(-torque_slack)
+                        )
                 # Shared transparent command-slew constraint.  This is the
                 # input-rate penalty's hard safety counterpart and prevents a
                 # noisy touchdown sample from becoming an acceleration step.
@@ -666,6 +722,7 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
                 com_acc_des=com_reference_acceleration + correction[:3],
                 swing_task=swing_task, attitude_weight=120.0,
                 attitude_acc_correction=correction[3:5],
+                mpc_correction=correction,
             )
             wbc_ms.append(1000.0 * (time.perf_counter() - tw))
             Jcom = np.zeros((3, model.nv))
@@ -805,6 +862,18 @@ def run_trial(controller: str, terrain: str, seed: int, duration: float = 4.0,
         "peak_contact_force_n": float(np.max(log["contact_force_n"][:k + 1])),
         "contact_impulse_ns": float(np.sum(np.maximum(log["contact_force_n"][:k + 1], 0.0)) * SIM_DT),
         "max_torque_utilization": float(np.max(log["torque_utilization"][:k + 1])),
+        "mpc_torque_polytope_samples": int(np.sum(log["mpc_torque_polytope"][:k + 1])),
+        "mpc_torque_polytope_valid_samples": int(np.sum(
+            log["mpc_torque_polytope_valid"][:k + 1]
+        )),
+        "mpc_torque_polytope_active_samples": int(np.sum(
+            log["mpc_torque_polytope_active"][:k + 1]
+        )),
+        "max_mpc_torque_polytope_violation": (
+            float(np.nanmax(log["mpc_torque_polytope_violation"][:k + 1]))
+            if np.any(np.isfinite(log["mpc_torque_polytope_violation"][:k + 1]))
+            else None
+        ),
         "min_friction_margin": float(np.min(log["friction_margin"][:k + 1])),
         "obstacle_contacted": bool(np.any(log["obstacle_contact"][:k + 1])),
         "obstacle_contact_during_settling": bool(initial_obstacle_contact),

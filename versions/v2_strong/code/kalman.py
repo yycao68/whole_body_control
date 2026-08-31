@@ -12,6 +12,16 @@ Contact-mode transition: inflate covariance by α (Section VI-A).
 import numpy as np
 
 
+
+def _checked_matmul(left, right, name):
+    """Multiply dense arrays while detecting real non-finite results."""
+    with np.errstate(all="ignore"):
+        product = np.asarray(left) @ np.asarray(right)
+    if not np.all(np.isfinite(product)):
+        raise FloatingPointError(f"non-finite matrix product: {name}")
+    return product
+
+
 class KalmanDisturbanceEstimator:
     """
     Kalman filter for joint estimation of tracking error and pHRI disturbance.
@@ -81,8 +91,20 @@ class KalmanDisturbanceEstimator:
         """Prior prediction step."""
         if self.A_aug is None:
             return
-        self.x_aug = self.A_aug @ self.x_aug + self.B_ctrl @ u_prev
-        self.P     = self.A_aug @ self.P @ self.A_aug.T + self.Q_w
+        self.x_aug = (
+            _checked_matmul(self.A_aug, self.x_aug, "A_aug @ x_aug")
+            + _checked_matmul(self.B_ctrl, u_prev, "B_ctrl @ u_prev")
+        )
+        self.P = (
+            _checked_matmul(
+                _checked_matmul(self.A_aug, self.P, "A_aug @ P"),
+                self.A_aug.T,
+                "A_aug @ P @ A_aug.T",
+            )
+            + self.Q_w
+        )
+        if not (np.all(np.isfinite(self.x_aug)) and np.all(np.isfinite(self.P))):
+            raise FloatingPointError("non-finite Kalman predicted state or covariance")
 
     def update(self, e_pos_meas, e_vel_meas=None):
         """
@@ -110,15 +132,27 @@ class KalmanDisturbanceEstimator:
             R   = self.R_v     # 3×3
             meas = e_pos_meas  # (3,)
 
-        y_pred = C @ self.x_aug
+        y_pred = _checked_matmul(C, self.x_aug, "C @ x_aug")
         innov  = meas - y_pred
 
-        S = C @ self.P @ C.T + R
-        K = self.P @ C.T @ np.linalg.inv(S)
+        S = _checked_matmul(
+            _checked_matmul(C, self.P, "C @ P"), C.T, "C @ P @ C.T"
+        ) + R
+        S_inv = np.linalg.inv(S)
+        if not np.all(np.isfinite(S_inv)):
+            raise FloatingPointError("non-finite Kalman innovation inverse")
+        K = _checked_matmul(
+            _checked_matmul(self.P, C.T, "P @ C.T"), S_inv, "P @ C.T @ inv(S)"
+        )
 
-        self.x_aug = self.x_aug + K @ innov
-        self.P     = (np.eye(9) - K @ C) @ self.P
+        self.x_aug = self.x_aug + _checked_matmul(K, innov, "K @ innovation")
+        self.P = _checked_matmul(
+            np.eye(9) - _checked_matmul(K, C, "K @ C"), self.P,
+            "(I - K @ C) @ P",
+        )
         self.P     = 0.5 * (self.P + self.P.T)
+        if not (np.all(np.isfinite(self.x_aug)) and np.all(np.isfinite(self.P))):
+            raise FloatingPointError("non-finite Kalman updated state or covariance")
 
         return self.x_aug[:6].copy(), self.x_aug[6:].copy()
 

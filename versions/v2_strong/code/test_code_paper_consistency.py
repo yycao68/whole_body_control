@@ -139,6 +139,23 @@ class ConstraintTests(unittest.TestCase):
             mpc._osqp = original
         np.testing.assert_allclose(u, np.zeros(mpc.nu))
 
+    def test_qp_constrains_total_torque_at_every_horizon_stage(self):
+        mpc = ImpedanceMPC(N=4, F_max=1e6)
+        inertia = np.eye(3)
+        torque_map = np.array([[3.0, 0.0, 0.0], [0.0, -2.0, 0.0]])
+        torque_offset = np.array([4.0, -4.5])
+        torque_min = np.array([-5.0, -5.0])
+        torque_max = np.array([5.0, 5.0])
+        mpc.solve(
+            np.array([1.0, -1.0, 0.0, 0.0, 0.0, 0.0]), inertia,
+            use_osqp=True, torque_map=torque_map,
+            torque_offset=torque_offset, torque_min=torque_min,
+            torque_max=torque_max,
+        )
+        planned_torque = torque_offset + mpc.last_u_sequence @ torque_map.T
+        self.assertTrue(np.all(planned_torque <= torque_max + 1e-5))
+        self.assertTrue(np.all(planned_torque >= torque_min - 1e-5))
+
 
 class ContactConsistencyTests(unittest.TestCase):
     """Paper Sec. IV's contact-consistent torque realization.
@@ -176,7 +193,10 @@ class ContactConsistencyTests(unittest.TestCase):
         from wbc_core import get_contact_consistent_projector
         M, Jc = self._stance()
         Pc = get_contact_consistent_projector(M, Jc, contact_damp=1e-10)
-        np.testing.assert_allclose(Pc, Pc @ Pc, atol=1e-6)
+        with np.errstate(all='ignore'):
+            Pc_squared = Pc @ Pc
+        self.assertTrue(np.all(np.isfinite(Pc_squared)))
+        np.testing.assert_allclose(Pc, Pc_squared, atol=1e-6)
         eig = np.sort(np.linalg.eigvals(Pc).real)
         np.testing.assert_allclose(eig, np.round(eig), atol=1e-6)
 

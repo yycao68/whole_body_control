@@ -519,14 +519,20 @@ The receding-horizon QP is:
   \quad\text{s.t.}\quad
   \|F_{\mathrm{ff},k}+\Larm^{(m)}(q_k)u_k\|_\infty\leq F_{\max}
 \end{equation}
-where $H=\Gamma^\top\bar Q\Gamma+\bar R$ is constant. A corresponding
-total-joint-torque row may be added through $J_{\rm arm}^\top\Larm u_k$.
-The reported simulations use the unconstrained fast path because the
-recovered force remains inside the cap: the largest commanded
-$\|F_{\text{arm}}\|_\infty$ over all reported runs is $46.1$\,N against
-$F_{\max}=80$\,N (Scenario~F, D7; $22.5$--$31.9$\,N elsewhere). The
-constrained branch is therefore exercised by unit tests rather than by the
-reported benchmarks, and no active-limit or safety claim is made from them.
+where $H=\Gamma^\top\bar Q\Gamma+\bar R$ is constant. Direct-torque biped
+scenarios additionally impose a horizon-wide, frozen local actuator row:
+\begin{equation}
+  \tau_{\min}\leq\tau_{\mathrm{offset},k}+T_{\tau,k}u_i\leq\tau_{\max},
+  \qquad i=0,\ldots,N-1,
+\end{equation}
+where $T_{\tau,k}$ maps residual task acceleration to the complete pre-clip
+actuator torque, including projected arm task torque, stance feedback,
+null-space torque, and gravity offset. The reported simulations use the
+constrained OSQP path. The recovered force remains below its 80\,N cap in
+the nominal experiments, so these results do not constitute an active-limit
+or safety-margin study. Scenario~C uses a position-actuator realization with
+no configured actuator force range and therefore makes no torque-feasibility
+claim.
 
 The disturbance $d(t)$ in \eqref{eq:errordyn} captures: (i)~external pHRI
 forces; (ii)~unmodeled contact reactions from the feet; and (iii)~SRBD
@@ -928,7 +934,7 @@ Results are shown in Table~\ref{tab:scenarioC} and Fig.~\ref{fig:scenarioC}.
 \midrule
 D1 OS PD          & 9.06  & 9.50  \\
 D2 OS PI          & 6.50  & 4.98  \\
-D3 Free-space recovery & 8.19 & 1.424 \\
+D3 Free-space recovery & 8.06 & 1.493 \\
 D4 WBC + PD         & 9.06  & 9.50  \\
 D5 Proposed, no Kalman & 16.77 & 20.50 \\
 D6 Proposed, no inflation & \textbf{6.85} & \textbf{0.884} \\
@@ -951,7 +957,7 @@ D7 Proposed full    & \textbf{6.85} & \textbf{0.884} \\
 \end{figure}
 
 As in Scenario~A, the static G1 stance does not distinguish contact-consistent
-from free-space recovery: D3 (1.424\,mm SS) and D7 (0.884\,mm) remain the same
+from free-space recovery: D3 (1.493\,mm SS) and D7 (0.885\,mm) remain the same
 order. D5 remains at 20.50\,mm, confirming that disturbance estimation
 drives the improvement. Hardware torque-mode performance is not inferred from
 this position-actuator simulation.
@@ -988,18 +994,18 @@ A sustained 8\,N pHRI force acts on the right (task) arm throughout.
 \toprule
 \textbf{Controller} & \textbf{RMS err [mm]} & \textbf{Peak at switch [mm]} \\
 \midrule
-D5 no Kalman              & 20.06 & 20.31 \\
-D6 Kalman, no infl. ($\alpha=1$) & 4.52 & 7.63 \\
-D7 Kalman + infl. ($\alpha=4$)   & \textbf{4.32} & \textbf{7.48} \\
+D5 no Kalman              & 20.11 & 20.38 \\
+D6 Kalman, no infl. ($\alpha=1$) & 4.54 & 7.81 \\
+D7 Kalman + infl. ($\alpha=4$)   & \textbf{4.34} & \textbf{7.65} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 This scenario validates disturbance estimation across a
 genuine contact-set switch. The no-Kalman controller is biased by the sustained
-pHRI load ($20.06$\,mm RMS), while the Kalman-augmented controllers track the
+pHRI load ($20.11$\,mm RMS), while the Kalman-augmented controllers track the
 switch to ${\sim}4.4$\,mm. Here covariance inflation gives a small further
-improvement (D7 $4.32$\,mm / $7.48$\,mm peak vs D6 $4.52$ / $7.63$),
+improvement (D7 $4.34$\,mm / $7.65$\,mm peak vs D6 $4.54$ / $7.81$),
 consistent with adaptation to a changed normalized disturbance rather than a
 changed predictor. Scenario~F extends the contact-model
 test to a scheduled \emph{single$\leftrightarrow$double} support-mode
@@ -1047,9 +1053,9 @@ dynamic walking or physically clean single-support result.
 \toprule
 \textbf{Controller} & \textbf{RMS err [mm]} & \textbf{Peak at switch [mm]} \\
 \midrule
-D5 no Kalman               & 24.01 & 25.65 \\
-D6 Kalman, no infl. ($\alpha=1$) & 12.11 & 16.66 \\
-D7 Kalman + infl. ($\alpha=4$)   & \textbf{12.04} & \textbf{16.65} \\
+D5 no Kalman               & 24.11 & 25.72 \\
+D6 Kalman, no infl. ($\alpha=1$) & 12.48 & 16.68 \\
+D7 Kalman + infl. ($\alpha=4$)   & \textbf{12.42} & \textbf{16.68} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1059,9 +1065,9 @@ precludes a physical single-support claim. The recovered inertia changes by
 less than two percent: $[1.11,1.04,2.30]$\,kg in the double-support model
 versus $[1.09,1.04,2.31]$\,kg in the right-foot model.
 
-The observer reduces RMS error from 24.01 to 12.04\,mm. Inflation is neutral
-within numerical variation: RMS changes from 12.11 to 12.04\,mm while switch
-peak changes from 16.66 to 16.65\,mm.
+The observer reduces RMS error from 24.11 to 12.42\,mm. Inflation is neutral
+within numerical variation: RMS changes from 12.48 to 12.42\,mm while switch
+peak is 16.68\,mm for both controllers.
 
 \begin{figure}[!t]
   \centering

@@ -6,8 +6,8 @@
 \usepackage{amsthm}
 \usepackage{graphicx}
 \usepackage{array,booktabs,longtable}
-\usepackage{placeins}
 \usepackage{url}
+\providecommand{\FloatBarrier}{}
 
 \theoremstyle{plain}
 \newtheorem{theorem}{Theorem}
@@ -19,15 +19,15 @@
 
 \begin{document}
 
-\title{Interaction Dynamics: A Configuration-Invariant Predictive Model for\\
-Humanoid Locomotion under Terrain and External Disturbances}
+\title{Interaction Dynamics: A Fixed Requested-Task Predictor for\\
+Humanoid Transient Attenuation under Contact and Push Disturbances}
 \author{Yongyan Cao%
 \thanks{Y. Cao. E-mail: yongyancao@gmail.com.}}
 \markboth{Manuscript}{Cao: Configuration-Invariant Interaction Dynamics for Humanoid Locomotion}
 \maketitle
 
 \begin{abstract}
-Humanoid locomotion is shaped by two recurring interaction classes: terrain-mediated contact mismatch and external forces applied to the body. This paper represents their observable task-space effect, together with realization and model mismatch, as an interaction residual \(d_{\rm eff}\) on the normalized requested-task model \(\ddot e=a_e+d_{\rm eff}\). For these coordinates, the exact zero-order-hold pair is fixed across robot configuration and contact mode; contact-dependent mechanics remain in the residual and in a separate high-rate whole-body realizer. Interaction-Dynamics MPC (ID-MPC) estimates the measured acceleration residual and selects a bounded task-acceleration correction at 100 Hz, while a 500 Hz inverse-dynamics/contact QP enforces floating-base dynamics, contact, friction, and torque limits. A paired study comprising 240 torque-level Unitree G1 simulations evaluates four terrain conditions and four measured-phase push conditions under a shared motion plan and realizer. Both MPC controllers complete every flat and raised-obstacle trial without QP fallback. Relative to nominal MPC, ID-MPC reduces median peak CoM error by 7.0\% on the raised obstacle and by 6.2--22.6\% across the four push conditions; in the lateral single-support case, median recovery time decreases from 0.754 to 0.278 s. These results show that a compact, configuration-invariant interaction model can add repeatable transient attenuation to an existing locomotion stack without placing full multibody dynamics in the prediction horizon.
+Humanoid locomotion is shaped by two recurring interaction classes: terrain-mediated contact mismatch and external forces applied to the body. This paper represents their observable task-space effect, together with realization and model mismatch, as an interaction residual \(d_{\rm eff}\) on the normalized requested-task model \(\ddot e=a_e+d_{\rm eff}\). For these coordinates, the exact zero-order-hold pair is fixed across robot configuration and contact mode; contact-dependent mechanics remain in the residual and in a separate high-rate whole-body realizer. Interaction-Dynamics MPC (ID-MPC) estimates the measured acceleration residual and selects a bounded task-acceleration correction at 100 Hz, while a 500 Hz inverse-dynamics/contact QP enforces floating-base dynamics, virtual-contact friction, unilateral-force, and torque limits. A paired study comprising 240 torque-level Unitree G1 simulations characterizes four terrain conditions and four measured-phase push conditions under a shared motion plan and realizer. Both MPC controllers complete every flat and raised-obstacle trial without QP fallback, while all controllers fail on the depression and rough-terrain cases. Relative to nominal MPC, ID-MPC reduces median peak CoM error by 8.0\% on the raised obstacle and by 6.2--22.8\% across the four push conditions; in the lateral single-support case, median recovery time decreases from 0.746 to 0.262 s. These results show phase-dependent, repeatable transient attenuation in a fixed-plan simulation, not terrain-robust locomotion or real-time deployment.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -65,9 +65,9 @@ The contributions are:
 \item
   \textbf{A measured interaction predictor.} A low-pass task-acceleration-residual estimator converts already-observable physical mismatch into a conditioned horizon sequence without requiring terrain preview or force-source classification.
 \item
-  \textbf{A multirate predictive-realization architecture.} A 100 Hz residual-augmented MPC selects bounded, slew-limited task corrections, and a 500 Hz inverse-dynamics/contact QP realizes them under floating-base, friction, unilateral-contact, and torque constraints.
+  \textbf{A multirate predictive-realization architecture.} A 100 Hz residual-augmented MPC selects bounded, slew-limited task corrections under a frozen local torque-authority polytope across every horizon stage, and a 500 Hz inverse-dynamics/contact QP realizes them under floating-base, virtual-contact friction, unilateral-contact, and torque constraints.
 \item
-  \textbf{Paired terrain-and-push validation.} A 240-trial protocol verifies future terrain contact and measured support phase. ID-MPC lowers obstacle peak error and the peak response in every tested push condition while using the same planner, realizer, and controller settings as the baselines.
+  \textbf{Paired terrain-and-push characterization.} A 240-trial protocol verifies future terrain contact and measured support phase. It reports both the failure boundary of the fixed plan and the phase-dependent peak attenuation produced by ID-MPC under the same planner, realizer, and controller settings as the baselines.
 \end{enumerate}
 
 Figure 1 summarizes the multirate architecture. The external reference publishes nominal body, foot, and contact trajectories; the ID-MPC updates the acceleration correction at 100 Hz; the inverse-dynamics/contact QP is scheduled at 500 Hz; and torque is applied at the 1 kHz simulation rate. These are simulated update periods; Section IX-G reports their wall-clock measurements.
@@ -241,14 +241,14 @@ M\ddot q+h=S^\top\tau+J_c^\top\lambda,\\
 \tag{12}
 \]
 
-Body, contact, and swing-foot accelerations are tracked as weighted least-squares objectives, while the floating-base dynamics, friction and unilateral-force limits, and torque bounds are hard constraints. The body, active-contact, and swing-foot objectives are soft, so an unrealizable request produces task-acceleration slack rather than a hard infeasibility. With finite-differenced measured task acceleration \(\hat{\ddot y}^{\rm meas}\), the aggregate requested-model residual is
+Body, contact, and swing-foot accelerations are tracked as weighted least-squares objectives, while the floating-base dynamics, virtual-support friction and unilateral-force limits, and torque bounds are hard QP constraints. The body, active-contact, and swing-foot objectives are soft, so an unrealizable request produces task-acceleration slack rather than a hard infeasibility. These virtual support limits do not certify subsequently measured MuJoCo contact forces, which are logged separately as a physical-contact diagnostic. With finite-differenced measured task acceleration \(\hat{\ddot y}^{\rm meas}\), the aggregate requested-model residual is
 
 \[
 r_{{\rm eff},k}=\hat{\ddot y}^{\rm meas}_k-\big(\ddot y_d+a_{e,k}^\star\big),
 \tag{13}
 \]
 
-which contains interaction, realization, differentiation, and model effects and is the signal filtered in (9). It must not be interpreted as isolated WBC slack. The QP-predicted task acceleration is logged separately for diagnosis. The realizer enforces floating-base dynamics, friction, unilateral-force, and torque limits as hard constraints and tracks contact and body accelerations as weighted objectives. Rigid-contact acceleration equalities and one-step joint-position limits are available in an exact-realization mode but are not used in the evaluated configuration. With a friction-pyramid approximation (12) is a convex QP solvable by operator splitting \cite{ref14}; exact Coulomb cones make it a second-order cone program.
+which contains interaction, realization, differentiation, and model effects and is the signal filtered in (9). It must not be interpreted as isolated WBC slack. The QP-predicted task acceleration is logged separately for diagnosis. The realizer enforces floating-base dynamics, virtual-support friction, unilateral-force, and torque limits as hard QP constraints and tracks contact and body accelerations as weighted objectives. Rigid-contact acceleration equalities and one-step joint-position limits are available in an exact-realization mode but are not used in the evaluated configuration. With a friction-pyramid approximation (12) is a convex QP solvable by operator splitting \cite{ref14}; exact Coulomb cones make it a second-order cone program.
 
 The realizer runs at the high (simulated \(500\) Hz) rate with step \(\Delta t_{\rm w}\) (\(2\) ms) and the MPC at \(100\) Hz (\(\Delta t=10\) ms of (8)). The QP feedforward is held for 2 ms while a bounded joint servo updates the applied torque at 1 kHz. Section IX-G reports the measured wall-clock cost of the QP, which does not yet meet the simulated schedule.
 
@@ -272,7 +272,7 @@ The evaluation tests whether one canonical residual-acceleration model explains 
 
 All trials use the Unitree G1 MuJoCo model (MuJoCo 3.10.0) with 1 ms integration and torque application. Simulated updates are scheduled at 500 Hz for the whole-body QP and estimator and at 100 Hz for the MPC. The external reference supplies nominal body, swing-foot, and contact trajectories and is not modified by terrain feedback. The 500 Hz value is therefore the simulated schedule, not a demonstrated wall-clock rate; measured computation is reported in Section IX-G.
 
-The WBC enforces the floating-base dynamics, unilateral-force, friction, and torque limits as hard constraints, and tracks the active-contact and body accelerations as weighted objectives. Body and swing-foot objectives being soft, an unrealizable request produces a measurable acceleration residual rather than a hard-task infeasibility. The interaction layer neither changes the contact schedule nor selects footsteps. The controlled vector is CoM position plus roll and pitch; the paper does not interpret this simulated attitude channel as a hardware centroidal-momentum measurement.
+The WBC enforces floating-base dynamics, virtual-support unilateral-force/friction, and torque limits as hard QP constraints, and tracks active-contact and body accelerations as weighted objectives. Actual MuJoCo foot-floor friction margin is an independently logged diagnostic, not a physical-feasibility certificate for the virtual support model. Body and swing-foot objectives being soft, an unrealizable request produces a measurable acceleration residual rather than a hard-task infeasibility. The interaction layer neither changes the contact schedule nor selects footsteps. The controlled vector is CoM position plus roll and pitch; the paper does not interpret this simulated attitude channel as a hardware centroidal-momentum measurement.
 
 The locomotion planner, contact schedule, and whole-body realization stack are shared by all evaluated controllers, and the interaction layer modifies only the body-task acceleration command. To isolate interaction-prediction performance from long-horizon gait-stabilization effects --- the shared locomotion stack's long-horizon robustness is a separate problem, outside this paper's scope (Section X) --- the comparisons are conducted over a fixed evaluation window in which the shared locomotion infrastructure remains repeatable for every controller.
 
@@ -340,18 +340,18 @@ The primary outcomes are CoM RMS and peak error, roll/pitch RMS, falls, measured
 \toprule
 Terrain & Controller & CoM RMS (mm) & CoM peak (mm) & Roll/pitch RMS (mrad) & Falls/10 \\
 \midrule
-Flat & Impedance & 4.782 & 52.204 & 66.89 & 10 \\
- & Nominal MPC & \textbf{4.110} & 11.434 & 41.89 & 0 \\
- & ID-MPC & 4.508 & \textbf{10.636} & \textbf{39.81} & 0 \\
-Depression & Impedance & 5.839 & 48.472 & \textbf{66.36} & 10 \\
- & Nominal MPC & 5.821 & 47.506 & 68.53 & 10 \\
- & ID-MPC & \textbf{5.807} & \textbf{42.679} & 68.88 & 10 \\
-Obstacle & Impedance & \textbf{3.989} & 11.564 & \textbf{34.32} & 0 \\
- & Nominal MPC & 4.572 & 11.434 & 40.99 & 0 \\
- & ID-MPC & 4.567 & \textbf{10.636} & 40.06 & 0 \\
-Rough & Impedance & \textbf{6.072} & 48.900 & \textbf{64.44} & 10 \\
- & Nominal MPC & 6.166 & 48.325 & 66.92 & 10 \\
- & ID-MPC & 6.082 & \textbf{43.517} & 66.57 & 10 \\
+Flat & Impedance & 5.330 & 45.090 & 64.11 & 4 \\
+ & Nominal MPC & \textbf{3.940} & 11.586 & 45.15 & 0 \\
+ & ID-MPC & 4.426 & \textbf{10.660} & \textbf{39.97} & 0 \\
+Depression & Impedance & \textbf{5.841} & 48.991 & \textbf{66.26} & 10 \\
+ & Nominal MPC & 5.852 & 47.842 & 68.43 & 10 \\
+ & ID-MPC & 5.872 & \textbf{43.334} & 68.60 & 10 \\
+Obstacle & Impedance & \textbf{3.999} & 11.690 & \textbf{33.99} & 0 \\
+ & Nominal MPC & 4.299 & 11.586 & 40.82 & 0 \\
+ & ID-MPC & 4.735 & \textbf{10.660} & 39.89 & 0 \\
+Rough & Impedance & \textbf{6.046} & 48.968 & \textbf{64.24} & 10 \\
+ & Nominal MPC & 6.213 & 49.517 & 67.08 & 10 \\
+ & ID-MPC & 6.118 & \textbf{43.333} & 67.07 & 10 \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -364,7 +364,7 @@ Rough & Impedance & \textbf{6.072} & 48.900 & \textbf{64.44} & 10 \\
 \end{figure*}
 
 
-On flat ground, nominal MPC and ID-MPC complete all ten 15 s trials and travel median distances of 0.228 and 0.231 m, respectively, whereas impedance falls in every trial. ID-MPC has a lower peak than nominal MPC (10.636 versus 11.434 mm) but a higher RMS error (4.508 versus 4.110 mm); it is therefore not a flat-ground tracking improvement. On the valid future obstacle, all controllers complete all trials. ID-MPC reduces median peak error by 7.0\% relative to nominal MPC, while their RMS errors are essentially equal (4.567 versus 4.572 mm) and impedance has the lowest RMS. On the depression and rough sequence every controller falls, typically after reaching the terrain change. The smaller ID-MPC peak in those truncated records does not constitute fall prevention; it shows only pre-fall attenuation. Figure 5 exposes representative time histories rather than hiding these failures in aggregate bars.
+On flat ground, nominal MPC and ID-MPC complete all ten 15 s trials, whereas impedance falls in four trials. ID-MPC has a lower peak than nominal MPC (10.660 versus 11.586 mm) but a higher RMS error (4.426 versus 3.940 mm); it is therefore not a flat-ground tracking improvement. On the valid future obstacle, all controllers complete all trials. ID-MPC reduces median peak error by 8.0\% relative to nominal MPC, while its RMS is higher (4.735 versus 4.299 mm) and impedance has the lowest RMS. On the depression and rough sequence every controller falls, typically after reaching the terrain change. The smaller ID-MPC peak in those truncated records does not constitute fall prevention; it shows only pre-fall attenuation. Figure 5 exposes representative time histories rather than hiding these failures in aggregate bars.
 
 \begin{figure}[!t]
 \centering
@@ -389,15 +389,15 @@ The accepted artifact contains exactly the three declared controllers and ten pa
 \toprule
 Condition & Peak error: imp./nom./ID (mm) & ID vs. nominal & Recovery: imp./nom./ID (s) & Falls: imp./nom./ID \\
 \midrule
-Lateral, double support & 60.08 / 59.28 / \textbf{50.96} & $-14.0\%$ & -- / -- / -- & 10 / 10 / 10 \\
-Lateral, single support & 15.83 / 16.00 / \textbf{12.38} & $-22.6\%$ & 0.764 / 0.754 / \textbf{0.278} & 0 / 0 / 0 \\
-Forward, double support & 19.91 / 19.39 / \textbf{18.18} & $-6.2\%$ & 0.752 / 0.728 / \textbf{0.661} & 0 / 0 / 0 \\
-Forward, single support & 15.74 / 15.82 / \textbf{13.66} & $-13.7\%$ & -- / -- / -- & 0 / 0 / 0 \\
+Lateral, double support & 60.79 / 60.24 / \textbf{51.77} & $-14.1\%$ & -- / -- / -- & 10 / 10 / 10 \\
+Lateral, single support & 15.76 / 15.88 / \textbf{12.25} & $-22.8\%$ & 0.759 / 0.746 / \textbf{0.262} & 0 / 0 / 0 \\
+Forward, double support & 19.69 / 19.12 / \textbf{17.93} & $-6.2\%$ & 0.747 / 0.720 / \textbf{0.654} & 0 / 0 / 0 \\
+Forward, single support & 15.71 / 15.88 / \textbf{13.69} & $-13.8\%$ & -- / -- / -- & 0 / 0 / 0 \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
-ID-MPC reduces median peak error relative to nominal MPC in all four conditions. The clearest recoverable case is the lateral single-support push, where peak error decreases by 22.6\% and median recovery time decreases from 0.754 to 0.278 s. Forward double-support recovery improves more modestly. All controllers fall under the lateral double-support push, and none satisfies the recovery-band definition for the forward single-support push despite zero falls. Thus the result is phase- and direction-dependent attenuation, not general push rejection.
+ID-MPC reduces median peak error relative to nominal MPC in all four conditions. The clearest recoverable case is the lateral single-support push, where peak error decreases by 22.8\% and median recovery time decreases from 0.746 to 0.262 s. Forward double-support recovery improves more modestly. All controllers fall under the lateral double-support push, and none satisfies the recovery-band definition for the forward single-support push despite zero falls. Thus the result is phase- and direction-dependent attenuation, not general push rejection.
 
 \begin{figure*}[!t]
 \centering
@@ -417,7 +417,7 @@ ID-MPC reduces median peak error relative to nominal MPC in all four conditions.
 
 \subsection{Computational and Reproducibility Evaluation}
 
-Timing is measured on a general-purpose workstation under a standard, non-real-time operating system in an unoptimized Python implementation; it is a prototype measurement on a non-real-time host, not a deployment result. Across terrain trials, the median of per-trial WBC medians is 3.91 ms and the median WBC p99 is 10.89 ms, both exceeding the simulated 2 ms period. The corresponding MPC values are 0.31 and 0.45 ms, below the simulated 10 ms period. The 500 Hz WBC value is therefore a simulation schedule, not demonstrated wall-clock feasibility.
+Timing is measured on a general-purpose workstation under a standard, non-real-time operating system in an unoptimized Python implementation; it is a prototype measurement on a non-real-time host, not a deployment result. Across terrain trials, the median of per-trial WBC medians is 1.61 ms and the median WBC p99 is 5.67 ms; the median WBC deadline-miss fraction is 30.3\% against the simulated 2 ms period. The corresponding MPC values are 0.95 and 1.65 ms, below the simulated 10 ms period. The 500 Hz WBC value is therefore a simulation schedule, not demonstrated wall-clock feasibility.
 
 \begin{figure}[!t]
 \centering
@@ -427,7 +427,7 @@ Timing is measured on a general-purpose workstation under a standard, non-real-t
 \end{figure}
 
 
-The authoritative terrain and push JSON files are stored with the code. The supplied evidence gate passes only if they use schema version 2, contain the exact three-controller paired matrices, record the frozen residual conditioning, show valid future obstacle contact, gate every push on the requested measured support phase, report zero QP fallback, and match the hashed no-root-assist video. The accepted terrain and push SHA-256 values begin da87a08b and 1b74c445, respectively; a machine-readable verification record accompanies the data.
+The authoritative terrain and push JSON files are stored with the code. The supplied evidence gate passes only if they use schema version 2, contain the exact three-controller paired matrices, record the frozen residual conditioning, show valid future obstacle contact, gate every push on the requested measured support phase, report zero QP fallback, and match the hashed no-root-assist video. A machine-readable verification record accompanies the data.
 
 \section{Limitations}\label{sec:limitations}
 
@@ -444,7 +444,7 @@ Within this scope, the experiments establish repeatable peak-error attenuation u
 
 This paper introduced a configuration-invariant interaction representation for humanoid locomotion. Terrain-mediated contact mismatch, external body force, and realization error are expressed through one observable residual on the normalized requested-task model \(\ddot e=a_e+d_{\rm eff}\). Theorem 1 establishes that its exact-ZOH matrices remain fixed across configuration and contact mode, while a separate inverse-dynamics/contact QP retains the full robot and support dependence. This separation yields a compact predict--realize--observe interface that can be inserted between an existing motion planner and whole-body controller.
 
-The 240-trial torque-level evaluation used paired seeds, verified future terrain contact, measured-phase push gating, and identical planning and realization infrastructure across controllers. ID-MPC completed every flat and raised-obstacle trial, reduced obstacle peak CoM error by 7.0\% relative to nominal MPC, and reduced median peak response in all four push conditions by 6.2--22.6\%. The lateral single-support recovery result---0.754 s for nominal MPC and 0.278 s for ID-MPC---shows the practical value of conditioning an already-observable interaction residual before a large tracking deviation develops.
+The 240-trial torque-level evaluation used paired seeds, verified future terrain contact, measured-phase push gating, and identical planning and realization infrastructure across controllers. ID-MPC completed every flat and raised-obstacle trial, reduced obstacle peak CoM error by 8.0\% relative to nominal MPC, and reduced median peak response in all four push conditions by 6.2--22.8\%. The lateral single-support recovery result---0.746 s for nominal MPC and 0.262 s for ID-MPC---shows the practical value of conditioning an already-observable interaction residual before a large tracking deviation develops. The same study identifies the boundary of this approach: it does not prevent falls on the tested depression, rough-terrain, or lateral double-support-push cases.
 
 The results support interaction dynamics as a reusable layer rather than a replacement for locomotion planning. Combining the fixed predictor with online foot placement and timing adaptation is the most direct next extension: the interaction residual can regulate the current task while the planner changes the reference when the support strategy must change. A compiled real-time whole-body implementation and hardware evaluation will test the same interface under sensing delay, actuator bandwidth, and physical contact variability.
 

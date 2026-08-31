@@ -287,7 +287,7 @@ def run_interaction(cfg):
             kal.set_mode(mpc.A_d, mode["B_d"])
             kal.predict(F_prev)
             _, d_hat = kal.update(e_pos)
-        F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]), La, mode_key, d_hat, use_osqp=False)
+        F_mpc = mpc.solve(np.concatenate([e_pos, e_vel]), La, mode_key, d_hat, use_osqp=True)
         F_arm = F_mpc
         F_prev = mpc.last_u
         prev_mode = mode_key

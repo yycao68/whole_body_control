@@ -278,7 +278,7 @@ def run_controller(name, cfg):
                 kalman.predict(F_prev)
                 _, d_hat = kalman.update(e_pos)
             F_mpc  = mpc.solve(np.concatenate([e_pos, e_vel]),
-                               La_use, 'ds', d_hat, use_osqp=False, mu_arm=mu_arm_)
+                               La_use, 'ds', d_hat, use_osqp=True, mu_arm=mu_arm_)
             F_arm  = F_mpc;  F_prev = mpc.last_u
         else:
             F_arm = -(KP_DIST * e_pos + KD_PD * e_vel)
