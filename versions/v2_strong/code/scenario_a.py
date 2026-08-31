@@ -14,6 +14,8 @@ import mujoco
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import osqp
+import scipy.sparse as sp
 from pathlib import Path
 
 from wbc_core import (
@@ -25,6 +27,42 @@ from wbc_core import (
 )
 from impedance_mpc import ImpedanceMPC
 from kalman import KalmanDisturbanceEstimator
+
+
+class _TorqueBoxQP:
+    """Solve min ||tau - target||^2 s.t. -tau_max <= tau <= tau_max via OSQP.
+
+    Bellicoso et al.'s hierarchical WBC enforces actuator limits as part of
+    its cascaded QP sequence, not by post-hoc clipping the closed-form
+    projector output (what D4's WBCController.compute() does). D8 below
+    reuses D4's identical priority-consistent force allocation but replaces
+    the final np.clip with this explicit per-step QP solve, so its torque
+    command is a genuine hierarchical-optimization output. For a box
+    constraint on a fixed target these two are mathematically identical
+    whenever the target is feasible or the box is separable per component
+    (true here); D8 exists to confirm that equivalence numerically under
+    the tested disturbance rather than assume it, and to provide the
+    machinery that would diverge from clipping once multiple tasks share a
+    torque budget.
+    """
+
+    def __init__(self, n, tau_max):
+        self.n = n
+        self.tau_max = np.asarray(tau_max, dtype=float)
+        P = sp.csc_matrix(2.0 * np.eye(n))
+        A = sp.csc_matrix(np.eye(n))
+        self._prob = osqp.OSQP()
+        self._prob.setup(P, np.zeros(n), A, -self.tau_max, self.tau_max,
+                          verbose=False, polishing=False,
+                          eps_abs=1e-9, eps_rel=1e-9, max_iter=2000)
+
+    def solve(self, target):
+        target = np.asarray(target, dtype=float)
+        self._prob.update(q=-2.0 * target)
+        res = self._prob.solve()
+        if res.info.status_val not in (1, 2):
+            return np.clip(target, -self.tau_max, self.tau_max)
+        return np.asarray(res.x)
 
 MODEL_PATH = Path(__file__).with_name('biped.xml')
 OUT_DIR    = Path(__file__).parent / 'results'
@@ -125,11 +163,24 @@ def _settle(model, data, ids, arm_grav, n=N_SETTLE):
 
 # ── Per-controller episode runner ──────────────────────────────────────────
 
-def run_controller(name, cfg):
+def run_controller(name, cfg, seed=None):
     """
     Run one 5-second episode and return (t_log, e_log) arrays.
     cfg keys: use_mpc, use_kalman, use_contact_consist, use_integral, Ki, alpha
+
+    seed: if given, jitters the disturbance magnitude (\u00b115%) and onset
+    time (\u00b10.1 s) via a seeded RNG so that repeated calls with distinct
+    seeds -- but the same cfg -- sample a distribution of disturbance
+    parameters instead of the single fixed nominal case. seed=None
+    reproduces the original deterministic F_DIST/T_DIST exactly.
     """
+    f_dist = F_DIST
+    t_dist = T_DIST
+    if seed is not None:
+        rng = np.random.default_rng(seed)
+        f_dist = F_DIST * rng.uniform(0.85, 1.15)
+        t_dist = T_DIST + rng.uniform(-0.1, 0.1)
+
     model, data = _make_robot()
     ids = _get_ids(model)
     arm_grav = _precompute_arm_gravity(model)
@@ -148,6 +199,8 @@ def run_controller(name, cfg):
     wbc = (WBCController(model, contact_consistent=use_proj)
            if (cfg.get('use_wbc') or cfg.get('use_mpc')) else None)
     foot_site_ids = [ids['left_foot_site'], ids['right_foot_site']]
+
+    hqp = _TorqueBoxQP(11, wbc._tau_max) if (wbc is not None and cfg.get('use_hqp_torque_qp')) else None
 
     # ── MPC / Kalman setup ─────────────────────────────────────────────
     mpc    = None
@@ -174,7 +227,7 @@ def run_controller(name, cfg):
         t = step * 0.001
 
         # ── pHRI disturbance ──────────────────────────────────────────
-        data.xfrc_applied[hand_body, :3] = F_DIST if t >= T_DIST else np.zeros(3)
+        data.xfrc_applied[hand_body, :3] = f_dist if t >= t_dist else np.zeros(3)
 
         # ── Measure arm error ─────────────────────────────────────────
         p_act, v_act = get_hand_state(model, data)
@@ -251,10 +304,12 @@ def run_controller(name, cfg):
         if wbc is not None:
             # D4-D7: contact-consistent WBC — projects the arm task force
             # through the contact null space (arm cannot push the stance).
-            tau, _ = wbc.compute(data, F_arm,
+            tau, info = wbc.compute(data, F_arm,
                                  contact_mask=[True, True],
                                  q_ref_legs=q_ref,
                                  Kp_leg=KP_LEG, Kd_leg=KD_LEG)
+            if hqp is not None:
+                tau = hqp.solve(info['tau_preclip'])
             data.ctrl[:8]   = tau[:8]
             data.ctrl[8:11] = tau[8:]
         else:
@@ -298,7 +353,53 @@ CONTROLLERS = {
                                  use_contact_consist=True, alpha=1.0),
     'D7 Proposed Full':    dict(use_mpc=True,  use_kalman=True,  use_integral=False,
                                  use_contact_consist=True, alpha=4.0),
+    'D8 HQP WBC+PD':       dict(use_mpc=False, use_kalman=False, use_integral=False,
+                                 use_contact_consist=True, use_wbc=True,
+                                 use_hqp_torque_qp=True),
 }
+
+
+# ── Multi-seed disturbance-jitter statistics ────────────────────────────────
+
+def run_multiseed(n_seeds=10, base_seed=4300):
+    """Repeat every controller under \u00b115% force / \u00b10.1 s onset jitter.
+
+    Each seed draws one (force_scale, onset_offset) pair shared across all
+    controllers (paired comparison across a common disturbance draw). Returns
+    {name: {'rms_mean','rms_std','ss_mean','ss_std','rms_all','ss_all'}}.
+    """
+    seeds = [base_seed + i for i in range(n_seeds)]
+    stats = {}
+    for name, cfg in CONTROLLERS.items():
+        rms_all, ss_all = [], []
+        for seed in seeds:
+            t_log, e_log = run_controller(name, cfg, seed=seed)
+            rms, ss = compute_metrics(t_log, e_log)
+            rms_all.append(rms)
+            ss_all.append(ss)
+        rms_all = np.array(rms_all)
+        ss_all  = np.array(ss_all)
+        stats[name] = dict(rms_mean=float(rms_all.mean()), rms_std=float(rms_all.std()),
+                            ss_mean=float(ss_all.mean()),   ss_std=float(ss_all.std()),
+                            rms_all=rms_all.tolist(), ss_all=ss_all.tolist())
+        print(f"  {name:<24} RMS {rms_all.mean():7.3f}\u00b1{rms_all.std():5.3f}   "
+              f"SS {ss_all.mean():8.4f}\u00b1{ss_all.std():6.4f}  (n={n_seeds})")
+    return stats
+
+
+def verify_d8_matches_d4(seed=4300):
+    """Confirm D8's QP-based torque-limit enforcement matches D4's clip.
+
+    Reports the max absolute per-joint torque and steady-state-error
+    difference between D4 and D8 under the identical (unjittered or
+    jittered) disturbance draw. Both should be ~0 in the non-saturating
+    regime tested here since the two share the same priority-consistent
+    force allocation and differ only in how the box constraint is enforced.
+    """
+    _, e_d4 = run_controller('D4 WBC+PD',    CONTROLLERS['D4 WBC+PD'],    seed=seed)
+    _, e_d8 = run_controller('D8 HQP WBC+PD', CONTROLLERS['D8 HQP WBC+PD'], seed=seed)
+    max_abs_diff_mm = float(np.max(np.abs(e_d4 - e_d8)) * 1000)
+    return max_abs_diff_mm
 
 
 # ── Main ───────────────────────────────────────────────────────────────────

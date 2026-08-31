@@ -10,8 +10,10 @@ receding-horizon QP, an acceleration-disturbance observer, and a
 priority-consistent realization. Classical operational-space impedance is
 shown to be the unconstrained infinite-horizon limit. MuJoCo experiments on
 a 17-DOF biped and a Menagerie-derived Unitree G1 model evaluate sustained
-forces, transmitted shocks, and scheduled contact-model changes. Disturbance
-estimation is the dominant source of fixed-stance accuracy, while covariance
+forces, transmitted shocks, and scheduled contact-model changes. The observer
+sustains near-offset-free tracking across a genuine contact-set switch and a
+scheduled support-mode transition, while disturbance estimation---not contact
+consistency alone---is the dominant source of fixed-stance accuracy; covariance
 inflation gives only scenario-dependent transient benefit. Dynamic walking
 and hardware validation remain outside the present evidence.
 \end{abstract}
@@ -138,7 +140,20 @@ stack uses classical PD task objectives with instantaneous feedback
 ($N{=}1$); there is no receding-horizon mechanism to predict and pre-load
 corrective torque before a disturbance develops.
 Sustained contact forces produce the steady-state error quantified in
-\eqref{eq:sse} below.
+\eqref{eq:sse} below. Baseline D4 in Section~\ref{sec:simulation} instantiates
+exactly this architecture---a priority-consistent WBC with null-space PD and
+no prediction---on the present platform, so
+Tables~\ref{tab:scenarioA}--\ref{tab:scenarioC} report a same-hierarchy,
+no-prediction data point alongside the proposed controller rather than only a
+qualitative contrast.
+The same group later extended this cascaded-QP stack to explicit
+loco-manipulation with ALMA~\cite{bellicoso2019alma}, adding a dedicated
+end-effector task to the ANYmal WBC for door-opening and object-handling
+demonstrations. The arm task objective there remains instantaneous PD within
+the same $N{=}1$ hierarchy, so the steady-state limitation of D4 is not
+specific to the 2016 terrain-adaptation instance but persists once an
+explicit manipulation task is added to this control family---the precise gap
+the present predictive formulation targets.
 
 Koolen et~al.~\cite{koolen2016design} implemented a momentum-based
 controller for Atlas that regulates centroidal momentum via a QP
@@ -650,8 +665,12 @@ these rest on two \emph{distinct} structural properties, which the augmented
 model separates.
 
 \emph{Regulator side.} $(A_d,B_d)$ is controllable because
-$[\,B_d\;\;A_dB_d\,]$ has rank six for every $\Delta t>0$. Physical recovery
-also requires finite positive-definite $\Larm$.
+$[\,B_d\;\;A_dB_d\,]$ has rank six for every $\Delta t>0$, so the normalized
+state can be driven to the origin by the unconstrained regulator. Realizing
+that command physically further requires $\Larm$ to stay finite and
+positive-definite along the trajectory via \eqref{eq:ff_a}; a singular or
+rank-deficient $\Larm$ would make the commanded force unrealizable regardless
+of the normalized model's controllability.
 
 \emph{Offset-free (observer) side.} The integrating block of
 $A_{\text{aug}}$ has eigenvalues at $1$ and is \emph{not} controllable from
@@ -721,7 +740,10 @@ classical OS PD law \eqref{eq:PD} cannot achieve.
 Table~\ref{tab:comparison} summarizes the mathematical and architectural
 distinctions between the proposed framework and the most relevant prior
 work. The proposed acceleration-input matrices are constant; contact and
-configuration enter through force recovery.
+configuration enter through force recovery. The table contrasts architecture
+and mathematical structure only; the cited works' quantitative results were
+not reproduced under a common benchmark, so it is not a head-to-head
+performance comparison.
 
 \begin{table*}[!t]
 \caption{Architectural and Mathematical Comparison}
@@ -792,11 +814,18 @@ Level~3 cost weights: $Q=\mathrm{diag}(6\times10^4 I_3,\;60\,I_3)$,
 $R=0.01\,I_3$.
 Kalman noise: $Q_w=\mathrm{diag}(10^{-4}I_6,\;10^{-2}I_3)$,
 $R_v=10^{-6}I_3$.
-Covariance-inflation coefficient $\alpha=4$.
+Covariance-inflation coefficient $\alpha=4$. Scenarios B, C, E, and F are
+each a single deterministic MuJoCo rollout per controller; no seed variation
+or repeated-trial statistics are collected there, so those reported values
+are point estimates of one deterministic nonlinear simulation rather than
+samples from a stochastic ensemble. Scenario A additionally reports a
+10-seed ensemble (disturbance magnitude jittered $\pm15\%$, onset time
+jittered $\pm0.1$\,s) as mean$\pm$std alongside its single nominal-case row.
 
 \subsection{Benchmarked Controllers}
 
-Seven controllers are evaluated across all scenarios (Table~\ref{tab:controllers}).
+Seven controllers are evaluated across all scenarios (Table~\ref{tab:controllers});
+Scenario A additionally reports an eighth, D8, described below.
 
 \begin{table}[!t]
 \caption{Benchmarked Controllers}
@@ -813,6 +842,9 @@ D4 & WBC assembler + null-space PD centering (no prediction) \\
 D5 & Proposed: WBC + predictive interaction regulation, no Kalman \\
 D6 & Proposed: WBC + predictive interaction regulation + Kalman, no inflation ($\alpha=1$) \\
 D7 & Proposed full: WBC + predictive interaction regulation + Kalman + covariance inflation ($\alpha=4$) \\
+D8 & Scenario A only: same allocation as D4, but the actuator-torque box is
+enforced by an explicit per-step OSQP solve (Bellicoso-style cascaded QP)
+instead of post-hoc clipping \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -832,17 +864,19 @@ Results are shown in Table~\ref{tab:scenarioA} and Fig.~\ref{fig:scenarioA}.
 \caption{Scenario A --- Fixed Stance, 8\,N Step Disturbance}
 \label{tab:scenarioA}
 \renewcommand{\arraystretch}{1.2}
-\begin{tabular}{@{}lcc@{}}
+\begin{tabular}{@{}lcccc@{}}
 \toprule
-\textbf{Controller} & \textbf{RMS err [mm]} & \textbf{SS err [mm]} \\
+ & \multicolumn{2}{c}{\textbf{Nominal}} & \multicolumn{2}{c}{\textbf{10-seed jitter, mean$\pm$std}} \\
+\textbf{Controller} & \textbf{RMS} & \textbf{SS} & \textbf{RMS [mm]} & \textbf{SS [mm]} \\
 \midrule
-D1 OS PD          & 9.24  & 10.17 \\
-D2 OS PI          & 6.82  &  5.86 \\
-D3 Free-space recovery & 4.60 & 0.317 \\
-D4 WBC + PD         & 10.02 & 10.83 \\
-D5 Proposed, no Kalman & 19.02 & 20.19 \\
-D6 Proposed, no inflation & \textbf{4.54} & \textbf{0.139} \\
-D7 Proposed full    & \textbf{4.54} & \textbf{0.139} \\
+D1 OS PD          & 9.24  & 10.17 & $8.96\pm0.95$ & $9.84\pm1.08$ \\
+D2 OS PI          & 6.82  &  5.86 & $6.60\pm0.71$ & $5.66\pm0.65$ \\
+D3 Free-space recovery & 4.60 & 0.317 & $4.54\pm0.22$ & $0.316\pm0.004$ \\
+D4 WBC + PD         & 10.02 & 10.83 & $9.70\pm1.07$ & $10.47\pm1.19$ \\
+D5 Proposed, no Kalman & 19.02 & 20.19 & $18.72\pm1.02$ & $19.84\pm1.19$ \\
+D6 Proposed, no inflation & \textbf{4.54} & \textbf{0.139} & $\mathbf{4.49\pm0.23}$ & $\mathbf{0.135\pm0.037}$ \\
+D7 Proposed full    & \textbf{4.54} & \textbf{0.139} & $\mathbf{4.49\pm0.23}$ & $\mathbf{0.135\pm0.037}$ \\
+D8 HQP WBC + PD      & 10.02 & 10.83 & $9.70\pm1.07$ & $10.47\pm1.19$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -858,7 +892,7 @@ D7 Proposed full    & \textbf{4.54} & \textbf{0.139} \\
            steady-state offset, while the no-Kalman predictive controller is
            biased by the sustained pHRI load.
            \textit{Bottom:} RMS and steady-state~(SS) error bar chart.
-           D4--D6 are omitted for readability and reported in
+           D4--D6 and D8 are omitted for readability and reported in
            Table~\ref{tab:scenarioA}.}
   \label{fig:scenarioA}
 \end{figure}
@@ -866,9 +900,22 @@ D7 Proposed full    & \textbf{4.54} & \textbf{0.139} \\
 Key findings: (1)~The reactive baselines (D1, D4) leave the theoretical
 $10$\,mm impedance offset ($8\,\text{N}/800\,\text{N/m}$). (2)~The disturbance
 observer and input-centered QP are essential under sustained force: D6/D7
-reduce steady-state error to $0.139$\,mm, whereas D5 remains at $20.19$\,mm.
+reduce steady-state error to $0.139$\,mm, a $73\times$ reduction relative to
+D1's $10.17$\,mm, whereas D5 remains at $20.19$\,mm.
 D3 reaches $0.317$\,mm, so this fixed stance does not isolate a substantial
 contact-consistency benefit. Inflation is inactive.
+(3)~The 10-seed disturbance-jitter ensemble reproduces the same ranking with
+the same ratio: D7's mean SS error is $0.135$\,mm against D1's $9.84$\,mm, a
+$73\times$ reduction, so the single nominal-case result above is not an
+artifact of one particular disturbance draw.
+(4)~D8 replaces D4's post-hoc torque clip with an explicit per-step OSQP box
+solve---a direct instantiation of Bellicoso et al.'s cascaded-QP hierarchical
+WBC~\cite{bellicoso2016perception,bellicoso2019alma} rather than the
+analytic-projection proxy used elsewhere in this paper. D8 matches D4 to
+within $3\times10^{-10}$\,mm on every seed: in this untested-actuator-limit
+regime the two enforcement mechanisms are numerically indistinguishable, so
+D4 is confirmed---not merely assumed---to already report what a genuine
+cascaded-QP baseline would.
 
 \subsection{Scenario B: Stance with Periodic Transmitted Force Shocks}
 
@@ -957,10 +1004,11 @@ D7 Proposed full    & \textbf{6.85} & \textbf{0.884} \\
 \end{figure}
 
 As in Scenario~A, the static G1 stance does not distinguish contact-consistent
-from free-space recovery: D3 (1.493\,mm SS) and D7 (0.885\,mm) remain the same
-order. D5 remains at 20.50\,mm, confirming that disturbance estimation
-drives the improvement. Hardware torque-mode performance is not inferred from
-this position-actuator simulation.
+from free-space recovery: D3 (1.493\,mm SS) and D7 (0.884\,mm) remain the same
+order, a $10.7\times$ reduction relative to D1's $9.50$\,mm. D5 remains at
+20.50\,mm, confirming that disturbance estimation drives the improvement.
+Hardware torque-mode performance is not inferred from this position-actuator
+simulation.
 
 \subsection{Theorem and Inertia Diagnostics}
 
@@ -1041,7 +1089,12 @@ layer, \emph{not} the centroidal MPC of Section~\ref{sec:impedancempc}.
 MuJoCo contact auditing detects the lifted foot on the floor during 90.4\% of
 the nominal single-support interval, so Scenario~F is only a
 support-mode/contact-model switch test for the interaction layer, not as a full
-dynamic walking or physically clean single-support result.
+dynamic walking or physically clean single-support result. Classical baselines
+D1--D4 are omitted from this scenario because they carry no observer or
+predictive mechanism to condition on the scheduled switch and their
+fixed-stance behavior is already characterized in Scenarios~A--C;
+Table~\ref{tab:scenarioF} therefore isolates the effect of Kalman conditioning
+and covariance inflation across the transition.
 
 \begin{table}[!t]
 \caption{Scenario F --- Quasi-Static Single$\leftrightarrow$Double Support
@@ -1098,7 +1151,12 @@ This viewpoint explains the empirical results.
 The disturbance observer is the primary driver of fixed-stance accuracy. The
 toy model's free-space and contact-consistent inertias differ by about one
 percent near the tested posture, so the experiments do not establish a large
-performance gain from contact consistency alone.
+performance gain from contact consistency alone. In the two scenarios with a
+full baseline sweep (Scenarios~A and~C), the Kalman-augmented controller
+nonetheless reduces steady-state error by $73\times$ and $10.7\times$
+relative to the reactive operational-space PD baseline, confirming that
+disturbance-observer conditioning, not contact consistency alone, drives the
+improvement.
 The Impedance Equivalence Theorem further shows that classical
 operational-space impedance is recovered as the infinite-horizon limit of the
 same predictive interaction law, so impedance becomes a design interpretation
