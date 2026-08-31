@@ -17,8 +17,7 @@ __pycache__/
 .mplconfig/
 .DS_Store
 
-# Large binaries
-*.pdf
+# Large binaries (compiled paper PDFs are tracked deliverables, not ignored)
 *.mp4
 
 # Vendored third-party assets (mujoco_menagerie model zoo, >1 GB of meshes)
@@ -49,25 +48,22 @@ external_deps/
 # supplies them since 2251856), the 28 MB of per-seed *.npz trial logs (a single
 # regenerable condition), and generated/cache files.
 !versions/v3/videos/*.mp4
-!versions/v3/wbc_v3.pdf
-!versions/v3/wbc_ieee.pdf
 
-# EXCEPTION: built manuscript PDFs for v2_strong and v4, so the compiled paper
-# matching each committed source is available without a local TeX install.
-# Rebuild with `latexmk -pdf <name>.tex`. (v4's wbc_ieee_v4.pdf, the Markdown
-# export, is deliberately NOT tracked: the committed copy is stale relative to
-# wbc_ieee_v4.md and its export settings are not reproducible from this repo.)
-!versions/v2_strong/arXiv/arxiv_main.pdf
-!versions/v2_strong/arXiv/main.pdf
-!versions/v4/wbc_v4.pdf
+# NOTE: compiled paper PDFs are tracked deliverables (the blanket *.pdf rule was
+# removed on main). This matters for v5 specifically: wbc_v5.tex writes
+# \includegraphics{name} with no extension, so LaTeX prefers the .pdf figure
+# over the .png of the same basename -- versions/v5/code/figures/*.pdf must stay
+# tracked or a clone silently builds against the raster fallbacks.
 
 # XeLaTeX intermediate (produced when building the _zh papers)
 *.xdv
 
-# EXCEPTION: v5's built manuscripts and the vector figures they embed.
-# wbc_v5.tex uses \includegraphics{name} with no extension, so LaTeX prefers
-# the .pdf figure over the .png of the same name; without these a clone would
-# silently build against the raster fallbacks and not match the committed PDF.
-!versions/v5/wbc_v5.pdf
-!versions/v5/wbc_v5_supplementary.pdf
-!versions/v5/code/figures/*.pdf
+# Downloaded third-party reference papers and superseded draft builds. Removing
+# the blanket *.pdf rule (so compiled deliverables are tracked) exposed these as
+# untracked noise; they are inputs and history, not deliverables.
+/[0-9][0-9][0-9][0-9].[0-9]*.pdf
+/centroidal_double_integrator.pdf
+/g1_simulation_design.pdf
+/wbc_rewrite.pdf
+versions/v0_original/**/*.pdf
+versions/v1_honest/**/*.pdf
