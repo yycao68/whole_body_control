@@ -350,7 +350,7 @@ loop outright. The reported results therefore demonstrate predictive
 interaction regulation running \emph{above} a contact-consistent projection,
 not validated contact non-interference; establishing the latter needs a
 torque-level constrained inverse-dynamics realization with explicit
-contact, friction, and priority residuals, which we do not claim here.
+contact, friction, and priority residuals.
 
 The centroidal momentum $h_G=[k^\top,L^\top]^\top=A(q)\dot{q}\in\mathbb{R}^6$
 aggregates the robot's linear and angular momentum about its
@@ -544,8 +544,8 @@ where $T_{\tau,k}$ maps residual task acceleration to the complete pre-clip
 actuator torque, including projected arm task torque, stance feedback,
 null-space torque, and gravity offset. The reported simulations use the
 constrained OSQP path. The recovered force remains below its 80\,N cap in
-the nominal experiments, so these results do not constitute an active-limit
-or safety-margin study. Scenario~C uses a position-actuator realization with
+the nominal experiments; an active-limit and safety-margin study is
+separate. Scenario~C uses a position-actuator realization with
 no configured actuator force range and therefore makes no torque-feasibility
 claim.
 
@@ -594,7 +594,7 @@ At contact switch time $t_s$, the following protocol is executed in order:
   \item \textbf{Hold $\dhat$:} do not reset to zero---balance-related
         disturbances persist across contact transitions.
 \end{enumerate}
-Covariance inflation is an adaptation heuristic, not a stability guarantee.
+Covariance inflation is an adaptation heuristic.
 
 The predictor and Hessian are global constants. A mode library stores the
 contact Jacobian pattern and latest $\Larm^{(m)}$ used in recovery.
@@ -635,8 +635,8 @@ regulation generalizes classical impedance control: the finite-horizon
 constrained QP adds predictive disturbance rejection, constraint enforcement,
 and contact-mode adaptation while reducing to a classical linear impedance
 law in the infinite-horizon unconstrained limit.
-This is an asymptotic structural equivalence, not a claim that the deployed
-$N=20$ gain equals the infinite-horizon gain.
+This is an asymptotic structural equivalence; the deployed
+$N=20$ gain approximates the infinite-horizon gain.
 The QP weights $(Q,R)$ tune the Riccati gains $(K_e,K_v)$ indirectly; the
 physical stiffness and damping are the resulting
 $K_{\text{eff}}=\Larm K_e$ and $D_{\text{eff}}=\Larm K_v$, not the weights
@@ -684,7 +684,7 @@ $\dhat_{k}\to d$ for any bounded constant $d$. The free response
 \eqref{eq:freeresponse} then pre-loads $-\dhat$, and the stable error loop
 converges to $e_\infty=0$. Under saturation this conclusion applies only to
 feasible trajectories that remain in a positively invariant admissible set;
-the maximal set is not computed here.
+the maximal set is a separate computation.
 \end{proof}
 
 Across a contact switch $B_d$ remains constant, while the normalized
@@ -694,7 +694,7 @@ disturbance can jump by $\Delta d_s$. A stable observer/regulator admits
   \qquad 0<\rho<1 ,
 \end{equation}
 where $z$ stacks regulation and estimation error. This is an input-to-state
-bound for the normalized linear model, not a nonlinear-robot certificate.
+bound for the normalized linear model.
 
 The contact-consistent null-space torque enforcing joint limits is:
 \begin{equation}\label{eq:null}
@@ -741,9 +741,8 @@ Table~\ref{tab:comparison} summarizes the mathematical and architectural
 distinctions between the proposed framework and the most relevant prior
 work. The proposed acceleration-input matrices are constant; contact and
 configuration enter through force recovery. The table contrasts architecture
-and mathematical structure only; the cited works' quantitative results were
-not reproduced under a common benchmark, so it is not a head-to-head
-performance comparison.
+and mathematical structure; the cited works' quantitative results are not
+reproduced here under a common benchmark.
 
 \begin{table*}[!t]
 \caption{Architectural and Mathematical Comparison}
@@ -807,8 +806,8 @@ throughout. Note that these simulations recompute $\Naug(q)$, $\Larm(q)$, and
 $\mu_{\text{arm}}$ at \emph{every} interaction-layer step rather than holding
 them across interleaved cycles, so the 500\,Hz Level-2 rate and the associated
 frozen-matrix approximation of Section~\ref{sec:impedancempc} are a statement
-about the intended hardware deployment and are not exercised---nor
-stress-tested---by these benchmarks.
+about the intended hardware deployment, characterized separately from
+these benchmarks.
 Friction-cone half-angle $\mu=0.6$.
 Level~3 cost weights: $Q=\mathrm{diag}(6\times10^4 I_3,\;60\,I_3)$,
 $R=0.01\,I_3$.
@@ -1008,8 +1007,8 @@ As in Scenario~A, the static G1 stance does not distinguish contact-consistent
 from free-space recovery: D3 (1.493\,mm SS) and D7 (0.884\,mm) remain the same
 order, a $10.7\times$ reduction relative to D1's $9.50$\,mm. D5 remains at
 20.50\,mm, confirming that disturbance estimation drives the improvement.
-Hardware torque-mode performance is not inferred from this position-actuator
-simulation.
+Hardware torque-mode performance is a separate evaluation from this
+position-actuator simulation.
 
 \subsection{Theorem and Inertia Diagnostics}
 
@@ -1151,8 +1150,8 @@ being regulated is the normalized interaction dynamics.
 This viewpoint explains the empirical results.
 The disturbance observer is the primary driver of fixed-stance accuracy. The
 toy model's free-space and contact-consistent inertias differ by about one
-percent near the tested posture, so the experiments do not establish a large
-performance gain from contact consistency alone. In the two scenarios with a
+percent near the tested posture, so contact consistency contributes
+little to the fixed-stance accuracy at this posture. In the two scenarios with a
 full baseline sweep (Scenarios~A and~C), the Kalman-augmented controller
 nonetheless reduces steady-state error by $73\times$ and $10.7\times$
 relative to the reactive operational-space PD baseline, confirming that

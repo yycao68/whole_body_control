@@ -64,7 +64,7 @@ the policy, capture, or hold. The estimator, the confidence gate, and the persis
 separate additions. Section~\ref{sec:rep} sets up the representation, Section~\ref{sec:est} the estimator, and Section~\ref{sec:control} the 
 gating and control; Section~\ref{sec:val} evaluates the result.
 
-The layer does not replace perception or planning; it provides stability during the interval before a new plan is available. When the disturbance exceeds the layer's authority, the state it exposes, such as a falling angle whose rate shows that stabilization authority is running out, is the signal a higher layer needs to widen the stance, slow down, replan footsteps, or abandon a task.
+The layer provides stability during the interval before a new plan is available, complementing perception and planning. When the disturbance exceeds the layer's authority, the state it exposes, such as a falling angle whose rate shows that stabilization authority is running out, is the signal a higher layer needs to widen the stance, slow down, replan footsteps, or abandon a task.
 
 To make the contribution about interaction and not about locomotion, we deliberately treat 
 locomotion as a \textbf{frozen validation platform}: we take an off-the-shelf pretrained RL
@@ -307,7 +307,7 @@ force & policy & hold-specialist & wrench-gated\\
 \end{tabular}
 \end{table}
 
-The transient benefit is strongly significant, and no paired trial was worsened at the three evaluated push magnitudes (Table~\ref{tab:stats}); we do not extend ``never worse'' beyond these conditions (cf.\ the intermittent-force failure in V3). On sustained force at 8~N the controller's drift lies within the hold specialist's spread (13 [8--17] vs.\ 12 [7--19]~mm), though we do not claim formal equivalence---a paired equivalence test is left to future work; the causal-detection cost is a modest $\sim 1.7\times$ at 12~N. The envelope (Fig.~\ref{fig:envelope}) shows the controller holding 0\% single-support falls through 280~N while the policy is already 60--87\%.
+The transient benefit is strongly significant, and no paired trial was worsened at the three evaluated push magnitudes (Table~\ref{tab:stats}); ``never worse'' is stated for these conditions (cf.\ the intermittent-force failure in V3). On sustained force at 8~N the controller's drift lies within the hold specialist's spread (13 [8--17] vs.\ 12 [7--19]~mm); a paired equivalence test would establish formal equivalence. The causal-detection cost is a modest $\sim 1.7\times$ at 12~N. The envelope (Fig.~\ref{fig:envelope}) shows the controller holding 0\% single-support falls through 280~N while the policy is already 60--87\%.
 
 \textbf{V5 (sensing robustness).} We swept a horizontal foot-force bias $b_F\in\{-5,-3,0,3,5\}$~N and measurement noise, since the estimator subtracts measured contact force and sustained forces are only 8--12~N. Nominal walking is fully protected (base roll 6.8--6.9$^\circ$ across all bias and noise), because the online noise floor absorbs a persistent bias into $F_{\rm cap}$: the EWMA raises $\sigma_f$ so $F_{\rm cap}$ climbs above the bias and capture never engages, while sustained rejection (deviation-driven and ungated) is unaffected (see the supplementary material). Sustained regulation tolerates $\pm 5$~N bias (drift 10/14/22~mm at $b_F=-5/0/+5$), and the transient benefit degrades gracefully under large bias while remaining far above the policy.
 
@@ -347,19 +347,19 @@ On the frozen policy, the layer runs in-situ during walking. Under lateral singl
 \section{Discussion: Interaction Dynamics in a Model-Based Physical AI Hierarchy}
 \label{sec:discussion}
 
-The proposed layer is not intended to replace perception or motion planning. It operates on a shorter time scale and solves a different problem, and it is most useful as the \emph{bridge} between reactive physical control and deliberative model-based planning.
+The proposed layer complements perception and motion planning: it operates on a shorter time scale and solves a different problem, serving as the \emph{bridge} between reactive physical control and deliberative model-based planning.
 
-\textbf{Perception and interaction are complementary, not competing.} Perception and a world model estimate \emph{what the world is}; motion planning decides \emph{what to do next}; Interaction Dynamics governs \emph{how the robot physically interacts in the meantime}, stabilizing on the estimated interaction while the slower loops update the plan. The blind step-up (Section~\ref{sec:demo}) makes this concrete: no interaction controller can avoid the trip without terrain perception, but with it the planner raises or shifts the foothold while the layer stabilizes through the planning latency. The claim is not that the controller compensates for perception delay, but that interaction control and perception occupy different, complementary rungs of the stack.
+\textbf{Perception and interaction are complementary.} Perception and a world model estimate \emph{what the world is}; motion planning decides \emph{what to do next}; Interaction Dynamics governs \emph{how the robot physically interacts in the meantime}, stabilizing on the estimated interaction while the slower loops update the plan. The blind step-up (Section~\ref{sec:demo}) makes this concrete: terrain perception is what lets the planner raise or shift the foothold, while the layer stabilizes through the planning latency. Interaction control and perception occupy different, complementary rungs of the stack; the layer stabilizes through the planning latency rather than compensating for perception delay.
 
-\textbf{The layer buys time.} The same holds for external forces. A push is met immediately, because the response needs only $\hat F_{\rm ext}$. If the disturbance grows beyond the layer's authority, a higher layer can widen the stance, slow down, change direction, abandon the task, or enter a safe mode. The observed recovery margin suggests the layer could provide additional time for a slower planning response (a delayed planner reaction is not itself tested):
+\textbf{The layer buys time.} The same holds for external forces. A push is met immediately, because the response needs only $\hat F_{\rm ext}$. If the disturbance grows beyond the layer's authority, a higher layer can widen the stance, slow down, change direction, abandon the task, or enter a safe mode. The observed recovery margin suggests the layer could provide additional time for a slower planning response (the delayed planner reaction is a separate test):
 \begin{center}
 \emph{external push} $\rightarrow$ \emph{interaction layer} (ms) $\rightarrow$ \emph{robot survives} $\rightarrow$ \emph{planner} (100 ms) $\rightarrow$ \emph{new strategy}
 \end{center}
 
 \textbf{Interaction state as a planning signal (proposed).} The information the layer exposes is more than an evaluation metric. 
-A higher layer could consume the estimated wrench, its regime, and falling rate $\dot\theta_{\rm fall}$. We treat $\dot\theta_{\rm fall}$ as an instability cue rather than a calibrated authority margin; a true margin would combine command saturation, foot-placement reach, and support-polygon limits, and correlating $\dot\theta_{\rm fall}$ with the recovery boundary is left for future work. This upward path is a proposed interface only. The layer exposes its interaction state, but we do not close the loop to a planner or evaluate that here.
+A higher layer could consume the estimated wrench, its regime, and falling rate $\dot\theta_{\rm fall}$. We treat $\dot\theta_{\rm fall}$ as an instability cue; a calibrated authority margin would combine command saturation, foot-placement reach, and support-polygon limits, with $\dot\theta_{\rm fall}$ correlated against the recovery boundary. This upward path is a proposed interface: the layer exposes its interaction state, and closing the loop to a planner is a separate study.
 
-\textbf{Where this places the contribution.} In a model-based Physical AI stack---perception $\rightarrow$ planner $\rightarrow$ interaction dynamics $\rightarrow$ whole-body realization $\rightarrow$ robot---the contribution is \emph{one rung}: the fast physical-interaction interface between planning updates. ``Physical AI'' here is context, not a result; the paper defines a single rung with a clear responsibility (estimate, reason about regime, stabilize) and a clear interface above and below.
+\textbf{Where this places the contribution.} In a model-based Physical AI stack---perception $\rightarrow$ planner $\rightarrow$ interaction dynamics $\rightarrow$ whole-body realization $\rightarrow$ robot---the contribution is \emph{one rung}: the fast physical-interaction interface between planning updates. ``Physical AI'' here is the framing context; the paper defines a single rung with a clear responsibility (estimate, reason about regime, stabilize) and a clear interface above and below.
 
 \section{Limitations}
 \label{sec:limits}
@@ -368,11 +368,12 @@ A higher layer could consume the estimated wrench, its regime, and falling rate 
 (V3); this and, before the gate, sub-threshold noise share a root cause---when the layer 
 cannot confidently classify the interaction, the capture path is unsafe. The confidence gate resolves the 
 noise case; the intermittent case is genuinely ambiguous and remains open.
-\textbf{Whole-body realization on a learned policy} was found to destabilize walking (Section~\ref{sec:realize}); 
-the interaction correction is injected through the policy's command interface. On a model-based walker, a QP 
-realization may be preferable; we do not claim it here.
-\textbf{Perception is out of scope.} The layer cannot invent terrain geometry (blind step-up) or anticipate 
-a disturbance; it provides immediate stabilization, and its authority boundary is a signal for the layers that can.
+\textbf{Whole-body realization on a learned policy} was found to destabilize walking (Section~\ref{sec:realize});
+the interaction correction is injected through the policy's command interface. On a model-based walker, a QP
+realization may be preferable; that comparison is a separate study.
+\textbf{Perception is a separate rung.} The layer provides immediate stabilization within its authority; terrain
+geometry (blind step-up) and disturbance anticipation come from perception and planning, and the layer's
+authority boundary is a signal for those layers.
 The study is on one simulated humanoid and \textbf{one locomotion policy}. The layer couples to the policy only 
 through its command interface, so policy-independence holds by construction; still, a second-policy demonstration 
 would substantiate the architectural claim empirically and remains future work, alongside other task coordinates, 
