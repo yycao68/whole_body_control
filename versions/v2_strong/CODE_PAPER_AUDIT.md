@@ -30,8 +30,8 @@ in parentheses.
 | Scenario A | D7 SS 0.139 mm (was 0.079); D5 SS 20.19 mm (was 13.21) |
 | Scenario B | D7 RMS 4.37 mm (was 3.17); D5 RMS 21.19 mm (was 14.41) |
 | Scenario C, corrected timing | D7 SS 0.884 mm (was 1.589); D5 SS 20.50 mm (was 26.37) |
-| Scenario E | D7 RMS 4.32 mm (was 2.53); D6 RMS 4.52 mm (was 2.69) |
-| Scenario F | D7 RMS 12.04 mm (was 10.88); D6 RMS 12.11 mm (was 10.95) |
+| Scenario E | D7 RMS 4.34 mm (was 2.53); D6 RMS 4.54 mm (was 2.69) |
+| Scenario F | D7 RMS 12.04 mm (was 10.88); D6 RMS 12.11 mm (was 10.95); D5 RMS 24.01 mm (was 24.11 in an earlier, unreproduced measurement) |
 | Gain convergence | relative error 0.671 at N=20, 0.0246 at N=80 (unchanged) |
 
 ## Second audit (2026-08-30)
@@ -139,6 +139,12 @@ Run the regression audit with:
 cd whole_body_control/versions/v2_strong/code
 python3 -m unittest -v test_code_paper_consistency.py
 ```
+
+The suite contains 20 tests. MuJoCo 3.13 uses
+`mj_fullM(model, data, destination)` and no longer exposes `data.qM`; the mass
+matrix helper now supports that signature while retaining the legacy fallback.
+Without the full 29-DoF G1 mesh set, 18 tests pass and the two Scenario-C asset
+tests stop with the documented asset error.
 
 Reproduce the reported tables (each prints its own table; Scenario B takes a
 few minutes):

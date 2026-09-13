@@ -37,8 +37,10 @@ Nominal MPC and ID-MPC also completed the 15 s flat gate without falls or QP
 fallbacks for the additional paired seeds 4301 and 4302. This three-seed smoke
 gate preceded the completed ten-seed publication matrix reported below.
 
-The complete torque-level video is `code/results/continuous_flat_idmpc.mp4`,
-with metrics and its SHA-256 recorded in `code/results/continuous_flat_idmpc.json`.
+The complete torque-level video is expected at
+`code/results/continuous_flat_idmpc.mp4`, with metrics and its SHA-256 recorded
+in `code/results/continuous_flat_idmpc.json`. The MP4 is absent from the current
+checkout and must be regenerated before the release gate can pass.
 It is labeled as ID-MPC with no root assistance and displays the moving lateral
 reference, actual CoM, and zero-centered lateral error.
 
@@ -51,18 +53,19 @@ paired matrices.
 The corrected terrain matrix contains four terrains, three controllers, and ten
 paired seeds (120 trials). The corrected push matrix contains four phase/direction
 conditions, three controllers, and ten paired seeds (120 trials). Both use the
-frozen continuous gait and zero QP fallback. The verifier reports `PASS`.
+frozen continuous gait and zero QP fallback. Their numerical checks pass; the
+complete verifier remains blocked by the missing MP4 described above.
 
 Key outcomes:
 
-- Nominal MPC and ID-MPC complete all flat and obstacle trials; impedance falls
-  in all flat trials.
+- Nominal MPC and ID-MPC complete all flat trials; all controllers complete the
+  obstacle trials. Impedance falls in all flat trials.
 - Every controller falls on the fixed 20 mm depression and rough sequence,
   identifying a planner/shared-stack failure boundary.
 - On the valid future obstacle, ID-MPC reduces median peak CoM error from
   11.434 to 10.636 mm (7.0%) versus nominal MPC, while RMS is essentially equal.
 - Across the four push conditions, ID-MPC reduces median peak error versus
-  nominal MPC by 6.2--22.6%; all controllers fall for lateral double-support
+  nominal MPC by 6.2--22.7%; all controllers fall for lateral double-support
   pushes.
 - The full verification record is `code/results/uneven_ground_verification.json`.
 
@@ -91,5 +94,6 @@ MPLCONFIGDIR=/tmp/mpl-cache XDG_CACHE_HOME=/tmp/xdg-cache \
 python3 code/verify_interaction_paper_claims.py
 ```
 
-The current accepted run reports `PASS`; the numerical tables, bounded claims,
-timing results, and no-root-assist video are now recorded in `wbc_ieee_v4.md`.
+The current numerical terrain, push, configuration, figure, and timing checks
+pass against `wbc_v4.tex`; the complete gate remains blocked by the missing
+no-root-assist MP4.

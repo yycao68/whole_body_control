@@ -50,7 +50,7 @@ v2_strong, `versions/v2_strong/CODE_PAPER_AUDIT.md`.
 ```bash
 # v2_strong — WBC/OSC pHRI scenarios
 cd versions/v2_strong/code
-python3 -m unittest test_code_paper_consistency.py   # 19 tests
+python3 -m unittest test_code_paper_consistency.py   # 20 tests
 python3 scenario_a.py        # and scenario_b / _brace / _c_g1 / _qstatic
 
 # v4 — torque-level terrain and push study
@@ -64,6 +64,11 @@ python3 check_platform.py                            # reports missing assets
 python3 -m unittest test_gate_semantics.py           # 6 tests
 python3 revalidate_gated.py                          # authoritative artifact
 ```
+
+On the current review workstation, v2 passes 18/20 tests; the remaining two
+require the full 29-DoF Menagerie G1 mesh set. V5's six confidence-gate tests
+run without PyTorch, while policy simulation requires PyTorch and the frozen
+reference reported by `check_platform.py`.
 
 ### Assets, and what the repository does not carry
 

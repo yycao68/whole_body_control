@@ -393,7 +393,7 @@ class MixedBodyMPC:
 
 @dataclass
 class CentroidalBodyMPC:
-    """Joint planar-CoM and three-axis centroidal-momentum MPC.
+    r"""Joint planar-CoM and three-axis centroidal-momentum MPC.
 
     State ordering is ``[e_x,e_y,rpy_x,rpy_y,rpy_z,v_x,v_y,L_x,L_y,L_z]``;
     input ordering is ``[a_x,a_y,M_x,M_y,M_z]``.  The angular model is the

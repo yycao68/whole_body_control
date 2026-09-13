@@ -21,7 +21,7 @@ reported studies under one protocol, and the only one that emits the
 | Abstract, Table `tab:stats` (transient) | 280 N: 24/40 → 2/40, $p<10^{-4}$, 0 worse; 300 N: 40/40 → 20/40; 320 N: 40/40 → 36/40, $p=0.125$ | `revalidate_gated.json` `stats.transient` — exact match on all 12 cells |
 | Table `tab:stats` (sustained) | 8 N: 462 / 12 [7–19] / **13 [8–17]**; 12 N: 728 / 121 [114–132] / 202 [186–218] | `revalidate_gated.json` `stats.sustained` — exact match on all 6 cells |
 | Table `tab:ablation`, transient column | 20 / 11 / 20 / 16 / 12 / 11 falls | `revalidate_gated.json` `ablation.*.trans_falls` — exact match |
-| Table `tab:ablation`, sustained column | 462 / 1080 / 12 / 719 / 13 / 12 mm | **Mixed** — see "Known inconsistency" below |
+| Table `tab:ablation`, sustained column | 462 / 1080 / 10 / 719 / 14 / 10 mm | `revalidate_gated.json` `ablation.*.8N` — rounded medians from one 20-seed block |
 | §V5 sensing robustness | drift 10/14/22 mm at $b_F=-5/0/+5$ N | `revalidate_gated.json` `bias` = {−5: 10.41, 0: 13.83, +5: 21.57} |
 | §V5 nominal protection | base roll 6.8–6.9° across all bias/noise | `sensorbias_validation.json` `bias_sweep.*.nominal_roll` = 6.8634 (constant) |
 | Fig. `fig:envelope` | 0% single-support falls through 280 N; policy already 60–87% | `revalidate_gated.json` `envelope.trans`: wrench [0.0, 0.0, …] at 240/280 N; policy [0.867, 0.600, …] |
@@ -66,16 +66,12 @@ below the $10^{-4}$ the abstract claims. Re-running the *same, documented*
 (24/40 → 2/40, 0 worse, $p=4.77\times10^{-7}$). The artifact was stale, not the
 paper.
 
-## Known inconsistency (unresolved)
+## Resolved ablation-source inconsistency
 
-`tab:ablation`'s **sustained** column is not drawn from a single block.
-Four of six cells match `ablation.*` exactly (policy 462, capture 1080,
-CoM-only 719); but hold-specialist (12) and wrench-gated (13) match the
-40-seed `stats.sustained` block (11.62, 13.43) rather than the 20-seed
-`ablation` block (10.41, 13.83). The transient column in the same table *is*
-from `ablation`. Every value is real and defensible; the table simply mixes a
-20-seed and a 40-seed source without saying so. Either relabel the column or
-regenerate it from one block.
+`tab:ablation` now draws both columns from the 20-seed `ablation` block. Its
+sustained medians are 462 / 1080 / 10 / 719 / 14 / 10 mm. The separate
+40-seed `stats.sustained` block remains the source of Table `tab:stats`, where
+the corresponding hold-specialist and wrench medians are 12 and 13 mm.
 
 Note that `ablation.sustained` and `ablation.oracle` carry byte-identical 8 N
 and 12 N arrays. This is correct by construction, not aliasing: the sustained

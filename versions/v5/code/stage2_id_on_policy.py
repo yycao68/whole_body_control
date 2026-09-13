@@ -25,7 +25,11 @@ from pathlib import Path
 
 import numpy as np
 import mujoco
-import torch
+
+try:
+    import torch
+except ModuleNotFoundError:
+    torch = None
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))              # NormalizedMPC, estimator live alongside this file
@@ -298,6 +302,11 @@ def run(controller, push_n=0.0, push_t=2.5, push_dir=(0, 1), push_dur=0.15,
     process_noise: std [N] of a seeded lateral force on the torso each control
     step, so seeds diverge and per-cell statistics are meaningful.
     scene_path: terrain scene (a step to walk over) instead of flat SCENE."""
+    if torch is None:
+        raise ModuleNotFoundError(
+            "stage2_id_on_policy.py requires PyTorch for policy execution; "
+            "install it with `pip install torch`."
+        )
     model = mujoco.MjModel.from_xml_path(str(scene_path or SCENE)); model.opt.timestep = SIM_DT
     data = mujoco.MjData(model)
     ref_t, ref_com = load_reference()

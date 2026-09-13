@@ -21,12 +21,15 @@ and arbitrated by a self-calibrating confidence gate.
 ```bash
 cd code
 python3 check_platform.py     # reports every missing prerequisite at once
+python3 -m unittest test_gate_semantics.py  # six gate tests; no torch required
 ```
 
 The G1 meshes are committed (a deliberate `.gitignore` exception -- three of the
 27 have no public equivalent, so they cannot be auto-fetched). The frozen nominal
 reference is gitignored (`*.npz`) because it is regenerable;
 `check_platform.py` prints the exact command to rebuild it. See `code/ASSETS.md`.
+Policy execution still requires PyTorch; importing and testing the gate state
+machine does not.
 
 Building the TeX needs a LaTeX install providing
 `IEEEtran`, `algorithmicx`/`algpseudocode`, `amsmath`, `amssymb`, `booktabs`,

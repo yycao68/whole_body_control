@@ -80,7 +80,7 @@ This paper makes four contributions.
 \item \emph{Problem formulation.} We show that transient and sustained interactions call for opposite command-space recovery actions under a shared locomotion interface, and that CoM kinematics alone cannot tell the two apart online.
 \item \emph{Method.} A wrench-gated persistence arbitration that blends a predictive capture command with an integral hold and drives a frozen learned policy through its native velocity-command interface. The external-force estimate from the CoM linear-momentum residual is the enabling signal, and the fixed configuration-invariant model (Lemma~\ref{lem:model}, adapted from \cite{r1}) is the substrate.
 \item \emph{Properties.} Capture-path transparency, so the layer reduces to the frozen policy when disengaged and cannot start the capture runaway, and a bounded augmentation command under bounded estimation error (Propositions~\ref{prop:gate}--\ref{prop:bounded}).
-\item \emph{Evaluation.} A paired humanoid study on a Unitree G1 with specialist, CoM-only, and oracle ablations, statistical push and sustained-force tests, sensing-robustness sweeps, and a capture-amplification failure mode resolved by the confidence gate.
+\item \emph{Evaluation.} A paired humanoid study on a Unitree G1 with specialist, CoM-only, and oracle ablations, statistical push and sustained-force tests, sensing-robustness sweeps, and characterization of capture amplification before and after confidence gating.
 \end{enumerate}
 
 \section{Related Work}
@@ -257,7 +257,7 @@ The estimator does not read touchdown/liftoff, step transitions, or commanded ac
 \textbf{V2 (architecture necessity, oracle ablation).} Six controllers on the same transient (300~N single-support) and sustained (8~N) tests: policy; a capture specialist; a hold specialist; a CoM-kinematics-only unified controller (persistence on the \emph{deviation}, not the wrench); the wrench-gated controller; and an \textbf{oracle} that knows the true disturbance class at onset with zero delay.
 
 \begin{table}[t]
-\caption{Oracle ablation: each specialist fails outside its regime.}
+\caption{Oracle ablation (20 paired seeds per column).}
 \label{tab:ablation}
 \centering
 \begin{tabular}{lrr}
@@ -266,17 +266,17 @@ controller & transient falls /20 & sustained drift (mm)\\
 \hline
 policy & 20 & 462\\
 capture-specialist & 11 & 1080\\
-hold-specialist & 20 & 12\\
+hold-specialist & 20 & 10\\
 CoM-only unified & 16 & 719\\
-\textbf{wrench-gated} & \textbf{12} & \textbf{13}\\
-oracle & 11 & 12\\
+\textbf{wrench-gated} & \textbf{12} & \textbf{14}\\
+oracle & 11 & 10\\
 \hline
 \end{tabular}
 \end{table}
 
-Each specialist fails outside its regime (opposite-sign dichotomy); pure capture \emph{amplifies} a sustained force (1080~mm, worse than policy). The CoM-only unified controller is dominated on both: in the tested controller family and disturbance protocol, CoM-only arbitration is insufficient while wrench persistence enables near-oracle selection (Table~\ref{tab:ablation}). We do not claim wrench information is mathematically necessary for \emph{every} classifier---a richer temporal model might infer duration from context. The wrench-gated controller matches the oracle on transient and nearly matches it on sustained.
+The specialist responses are regime-specific: pure capture \emph{amplifies} a sustained force (1080~mm versus 462~mm for the policy), while hold does not improve the transient fall count. In the tested controller family and disturbance protocol, CoM-only arbitration gives 16 falls and 719~mm drift, whereas wrench persistence gives 12 falls and 14~mm drift (Table~\ref{tab:ablation}). This establishes the value of force persistence for the evaluated arbitration, not its mathematical necessity for every possible classifier. The wrench-gated controller operates near the oracle in both columns.
 
-\textbf{V3 (generalization, held-out).} With all thresholds and gains frozen, we evaluated cases never used for tuning: held-out impulse \emph{durations} (0.10/0.25/0.40~s vs.\ the 0.15~s used in design), off-grid sustained magnitudes (6/10/14~N), ramped forces, and intermittent forces. The controller generalizes: at the held-out 0.25~s duration it matches the capture specialist (correctly classified transient, not degraded toward hold); off-grid sustained magnitudes track the trend; a 1~s ramp is rejected better than the bare policy. \textbf{One failure mode:} a rapidly intermittent force (0.5~s on/off) defeats the persistence discriminator---an intermittent force is genuinely ambiguous (repeated pushes vs.\ a sustained-ish force), and both the confidence gate and the persistence blend keep it in an unstable regime. We state this as a limitation (Section~\ref{sec:limits}).
+\textbf{V3 (generalization, held-out).} With all thresholds and gains frozen, we evaluated cases never used for tuning: held-out impulse \emph{durations} (0.10/0.25/0.40~s vs.\ the 0.15~s used in design), off-grid sustained magnitudes (6/10/14~N), ramped forces, and intermittent forces. At the held-out 0.25~s duration the controller matches the capture specialist; off-grid sustained magnitudes follow the calibrated trend; and a 1~s ramp produces less drift than the bare policy. \textbf{Classification boundary:} a rapidly intermittent force (0.5~s on/off) remains ambiguous between repeated pushes and a sustained force. The persistence blend does not select a stabilizing regime for that case, which defines an operating boundary in Section~\ref{sec:limits}.
 
 \textbf{V4 (statistical significance).} 40 paired held-out seeds; transient by fall count with an exact McNemar test, sustained by the floor-corrected paired drift (the offset with force minus the same-seed offset without force, which cancels the gait-sway/reference phase drift).
 
@@ -313,7 +313,7 @@ The transient benefit is strongly significant, and no paired trial was worsened 
 
 \textbf{V6 (estimator implementation).} The finite-difference estimator \eqref{eq:fext} and the momentum observer produce comparable estimates in the evaluated scenarios; the finite-difference form is cleaner on the false-positive metric here, because in simulation the CoM velocity is already clean. The observer's advantage---robustness to \emph{noisy} velocity---is a hardware consideration. We keep the finite-difference form as default.
 
-\textbf{Capture-amplification failure mode.} Balance metrics alone hide a failure visible only in lateral position: under process noise exceeding the deadband, an ungated capture path amplifies any drift it engages on but cannot classify as a force, driving a runaway lateral excursion (no-force drift 1539~mm at 4~N noise) that never causes a fall. This is a control-logic problem, not a tuning one---capture steps toward an unclassified drift, closing a positive feedback loop---and it is what the Level-1 confidence gate (Section~\ref{sec:gate}) is designed to prevent, by enabling capture only on confident evidence of a real interaction. With the gate, the no-force drift falls to $\sim 95$~mm (the policy's own floor), while the transient and sustained benefits are preserved or improved (Tables~\ref{tab:ablation}--\ref{tab:stats}). The online noise-scaled threshold \eqref{eq:fcap} recovers the value appropriate to a fixed noise level without hand-tuning:
+\textbf{Capture-amplification mechanism.} Balance metrics alone do not reveal a lateral-position response: under process noise exceeding the deadband, an ungated capture path amplifies drift that it engages on but cannot classify as a force, producing 1539~mm no-force drift at 4~N noise without a fall. Capture steps toward the unclassified drift and closes a positive-feedback path. The Level-1 confidence gate (Section~\ref{sec:gate}) disables that path until the wrench estimate provides evidence of an interaction. With the gate, no-force drift is $\sim 95$~mm (the policy's own floor), while the transient and sustained results are preserved or improved (Tables~\ref{tab:ablation}--\ref{tab:stats}). The online noise-scaled threshold \eqref{eq:fcap} recovers the value appropriate to a fixed noise level without hand-tuning:
 
 \begin{table}[t]
 \caption{The confidence threshold self-adapts to the sensing noise (sensitive when clean, conservative when noisy), 
@@ -335,7 +335,7 @@ process noise & settled $F_{\rm cap}$\\
 \section{Humanoid Demonstration}
 \label{sec:demo}
 
-On the frozen policy, the layer runs in-situ during walking. Under lateral single-support pushes it extends the recovery envelope (Fig.~\ref{fig:envelope}, left) and, under sustained lateral force, it holds the CoM near the nominal path where the policy droops (Fig.~\ref{fig:envelope}, right). On terrain, a \textbf{step-down} the policy already handles is unaffected by the layer, while a blind \textbf{step-up} beyond a few centimeters causes a toe-stub \emph{trip} for every controller---the policy is flat-trained and cannot see the step. This is not a weakness of the interaction layer: it shows that interaction control cannot invent terrain geometry. Once perception detects the step, the planner can raise or reposition the swing foot, while the interaction layer maintains stability through the planning latency---each acting on its own time scale. It is the boundary that Section~\ref{sec:discussion} turns into a systems argument.
+On the frozen policy, the layer runs in-situ during walking. Under lateral single-support pushes it extends the recovery envelope (Fig.~\ref{fig:envelope}, left) and, under sustained lateral force, it holds the CoM near the nominal path where the policy drifts (Fig.~\ref{fig:envelope}, right). On terrain, a \textbf{step-down} the policy already handles is unaffected by the layer, while a blind \textbf{step-up} beyond a few centimeters causes a toe-stub \emph{trip} for every controller. This separates the roles of the layers: interaction control responds to measured physical effects, whereas terrain geometry must enter through perception and planning. Section~\ref{sec:discussion} states this system boundary explicitly.
 
 \begin{figure*}[t]
 \centering
@@ -361,23 +361,25 @@ A higher layer could consume the estimated wrench, its regime, and falling rate 
 
 \textbf{Where this places the contribution.} In a model-based Physical AI stack---perception $\rightarrow$ planner $\rightarrow$ interaction dynamics $\rightarrow$ whole-body realization $\rightarrow$ robot---the contribution is \emph{one rung}: the fast physical-interaction interface between planning updates. ``Physical AI'' here is the framing context; the paper defines a single rung with a clear responsibility (estimate, reason about regime, stabilize) and a clear interface above and below.
 
-\section{Limitations}
+\section{Operating Envelope and Validation Scope}
 \label{sec:limits}
 
-\textbf{Intermittent forcing} at a period near the detection time scale defeats the persistence discriminator
-(V3); this and, before the gate, sub-threshold noise share a root cause---when the layer 
-cannot confidently classify the interaction, the capture path is unsafe. The confidence gate resolves the 
-noise case; the intermittent case is genuinely ambiguous and remains open.
-\textbf{Whole-body realization on a learned policy} was found to destabilize walking (Section~\ref{sec:realize});
-the interaction correction is injected through the policy's command interface. On a model-based walker, a QP
-realization may be preferable; that comparison is a separate study.
-\textbf{Perception is a separate rung.} The layer provides immediate stabilization within its authority; terrain
-geometry (blind step-up) and disturbance anticipation come from perception and planning, and the layer's
-authority boundary is a signal for those layers.
-The study is on one simulated humanoid and \textbf{one locomotion policy}. The layer couples to the policy only 
-through its command interface, so policy-independence holds by construction; still, a second-policy demonstration 
-would substantiate the architectural claim empirically and remains future work, alongside other task coordinates, 
-long-distance walking, deformable ground, and simultaneous manipulation.
+\textbf{Interaction classification.} Intermittent forcing at a period near the
+detection time scale does not produce a stable persistence classification
+(V3). The confidence gate addresses sub-threshold noise, while the intermittent
+case requires a classifier or control mode designed for repeated forcing.
+\textbf{Realization interface.} Replacing the learned policy's low-level loop
+with the evaluated whole-body QP produced an unstable walking response
+(Section~\ref{sec:realize}), so this study injects the correction through the
+policy's command interface. A model-based walker with a QP-native interface is
+a distinct realization case.
+\textbf{System boundary.} Terrain geometry and disturbance anticipation enter
+through perception and planning; the interaction layer responds after physical
+effects become observable and exposes its authority boundary upward.
+The evidence covers one simulated humanoid and \textbf{one locomotion policy}.
+The interface is policy-agnostic in construction, while empirical transfer
+requires evaluation on additional policies, task coordinates, long-distance
+walking, deformable ground, and simultaneous manipulation.
 
 \section{Conclusion}
 \label{sec:conclusion}
@@ -388,9 +390,9 @@ estimates the external wrench from a CoM momentum residual, and reasons over it 
 gate and a persistence-based blend of opposite-signed capture and hold. Added atop a \emph{frozen} RL policy through 
 its command interface, it reduces push falls (with no paired degradation at the tested push magnitudes) and rejects sustained forces to 
 near-specialist accuracy, with nominal walking untouched; a six-stage validation supports these claims
-and identifies a capture-amplification failure mode that the confidence gate resolves. We propose Interaction Dynamics as a
+and characterizes the capture-amplification mechanism addressed by the confidence gate. We propose Interaction Dynamics as a
 candidate \emph{fast physical-interaction layer} between perception-driven planning and whole-body 
-realization---one rung of a model-based Physical AI hierarchy whose end-to-end validation remains future work.
+realization---one rung of a model-based Physical AI hierarchy. End-to-end planner coupling is a separate validation stage.
 
 \begin{thebibliography}{19}
 

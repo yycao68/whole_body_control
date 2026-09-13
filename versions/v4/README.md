@@ -15,7 +15,8 @@ execution of the current Python QP.
 - `code/`: benchmark, verification, plotting, and video source.
 - `code/results/uneven_ground_benchmark.json`: 120-trial terrain record.
 - `code/results/external_push_benchmark.json`: 120-trial push record.
-- `code/results/continuous_flat_idmpc.mp4`: no-root-assist torque-level video.
+- `code/results/continuous_flat_idmpc.mp4`: required no-root-assist torque-level
+  video. It is absent from the current checkout; regenerate it before release.
 - `code/results/uneven_ground_verification.json`: hashes and evidence-gate result.
 - `V3_TO_V4_DETAILED_COMPARISON.md`: version comparison.
 - `CORRECTED_EXPERIMENT_STATUS.md`: experiment-history and validity notes.
@@ -32,6 +33,8 @@ python3 -m py_compile code/*.py figures/*.py
 The verifier checks the exact controller/terrain/seed matrices, obstacle-contact
 validity, measured-phase push gating, zero QP fallback, frozen controller
 settings, paper figures, and the hash of the no-root-assist video.
+The terrain, push, configuration, figure, and timing checks pass in the current
+checkout; the full verifier stops at the missing MP4.
 
 ## Regenerate benchmarks and figures
 

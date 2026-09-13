@@ -88,10 +88,10 @@ def get_mass_matrix(model, data):
     nv = model.nv
     M = np.zeros((nv, nv))
     try:
-        mujoco.mj_fullM(model, M, data.qM)
-    except TypeError:
         # MuJoCo >= 3.10 Python bindings use (model, data, dst).
         mujoco.mj_fullM(model, data, M)
+    except TypeError:
+        mujoco.mj_fullM(model, M, data.qM)
     return M
 
 def get_bias_force(data):

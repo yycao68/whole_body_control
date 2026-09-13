@@ -14,7 +14,11 @@ from pathlib import Path
 
 import numpy as np
 import mujoco
-import torch
+
+try:
+    import torch
+except ModuleNotFoundError:
+    torch = None
 
 HERE = Path(__file__).resolve().parent
 SCENE = HERE / "g1_description" / "scene.xml"
@@ -52,6 +56,10 @@ def pd_control(target_q, q, kp, dq, kd):
 
 
 def run(duration=20.0, cmd=(0.5, 0.0, 0.0), seed=0, settle=0.5):
+    if torch is None:
+        raise ModuleNotFoundError(
+            "run_policy_walk.py requires PyTorch; install it with `pip install torch`."
+        )
     model = mujoco.MjModel.from_xml_path(str(SCENE))
     model.opt.timestep = SIM_DT
     data = mujoco.MjData(model)

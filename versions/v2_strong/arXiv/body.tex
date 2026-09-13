@@ -1,5 +1,5 @@
 \begin{abstract}
-Safe physical human--robot interaction on floating-base robots requires
+Physical human--robot interaction on floating-base robots requires
 interaction regulation under changing contact constraints. We develop a
 contact-consistent normalization in which the residual end-effector channel
 is represented as a linear double integrator in acceleration coordinates.
@@ -15,7 +15,7 @@ sustains near-offset-free tracking across a genuine contact-set switch and a
 scheduled support-mode transition, while disturbance estimation---not contact
 consistency alone---is the dominant source of fixed-stance accuracy; covariance
 inflation gives only scenario-dependent transient benefit. Dynamic walking
-and hardware validation remain outside the present evidence.
+and hardware experiments are outside the evaluated scope.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -27,9 +27,8 @@ contact-consistent dynamics, legged manipulation.
 % ----------------------------------------------------------
 \section{Introduction}
 
-Legged and floating-base robots must increasingly do more than locomote: they
-must physically interact with people and their surroundings while keeping
-balance. Safe interaction on such platforms is fundamentally a problem of
+Legged and floating-base robots increasingly combine locomotion with physical
+interaction while maintaining balance. Interaction on such platforms is a problem of
 \emph{interaction dynamics}---the closed-loop relation between the arm
 end-effector force and motion---coupled, through the contact constraints, to
 the whole-body balance task.
@@ -38,8 +37,8 @@ mass~(CoM), changing contact force distribution, while ground reactions
 propagate back through the body and appear as disturbances at the
 end-effector.
 Classical fixed-base impedance control~\cite{hogan1985impedance} and its
-MPC extensions~\cite{cao2023passive,cao2026impedance} cannot address this
-coupling because they assume the robot base is rigidly anchored.
+MPC extensions~\cite{cao2023passive,cao2026impedance} are formulated for a
+rigidly anchored base and therefore do not represent this floating-base coupling.
 
 The dominant paradigm for whole-body control of legged systems decouples
 the problem into two layers: a centroidal MPC that optimizes ground
@@ -47,30 +46,25 @@ reaction forces~(GRFs) using a linearized single rigid-body dynamics~(SRBD)
 model~\cite{dicarlo2018dynamic,kim2019highly}, and an inner WBC layer that
 resolves these forces into joint torques via a prioritized
 QP~\cite{bellicoso2016perception,koolen2016design}.
-This architecture achieves remarkable locomotive agility---the MIT Cheetah
+This architecture supports highly dynamic locomotion---the MIT Cheetah
 3~\cite{dicarlo2018dynamic} executes high-speed bounding and stair
-climbing---but allocates 100\% of the robot's control authority to
-locomotion and base-posture maintenance.
-Any external arm interaction is treated as a disturbance to be suppressed,
-not as a channel to be actively regulated.
-A biped reaching to assist a human standing beside it, or a quadruped
-manipulating a valve while maintaining stance, cannot be handled by these
-frameworks with the compliance and zero-steady-state-error guarantees
-required for safe pHRI.
+climbing---and allocates its modeled objectives to locomotion and base-posture
+maintenance. External arm interaction consequently enters as a disturbance
+rather than a separately regulated channel. Tasks such as a biped assisting a
+nearby person or a quadruped manipulating a valve while standing motivate an
+additional compliant, offset-rejecting interaction channel.
 
 Conversely, impedance MPC methods designed for fixed-base
 manipulators~\cite{cao2026impedance,cao2023passive,haninger2022model,roveda2020model}
-lack an unactuated base state, generalized-coordinate partitioning, or
-contact-consistent mass inverses.
-They assume an infinite-mass ground connection and cannot model the
-propagation of foot contact forces to end-effector apparent inertia.
-Deploying them directly on a floating-base platform produces steady-state
-torque errors and potential instability during contact transitions.
+omit the unactuated base state, generalized-coordinate partitioning, and
+contact-consistent mass inverse by design. Their fixed-ground formulation does
+not capture the propagation of foot-contact forces to end-effector apparent
+inertia, so direct transfer to a floating-base platform changes the modeled
+torque balance during contact transitions.
 
-The technical gap is therefore not merely the absence of another whole-body
-controller. It is the absence of a representation in which interaction
+The technical opportunity is a representation in which interaction
 dynamics remain structurally the same as robot posture, contact mode, and
-apparent inertia change. This paper closes that gap through a simple
+apparent inertia change. This paper develops such a representation through a
 sequence: interaction dynamics are first normalized through contact
 consistency, the normalized dynamics become a linear double integrator,
 predictive regulation is applied to that linear interaction model, and
@@ -334,10 +328,10 @@ depending on the metric, but \eqref{eq:Mbar} is the definition used in the
 task inertia $\Lambda_i=(J_i\Mbar J_i^\top)^{-1}$.
 The simulations regularize the contact-space inverse as
 $(J_cM^{-1}J_c^\top+0.1I)^{-1}$ and eigenvalue-clamp the task mobility.
-This prevents numerical singularity in the point-contact model but makes
+This prevents numerical singularity in the point-contact model and makes
 contact decoupling approximate; exact projector identities apply only in the
-zero-regularization limit.
-The approximation is not marginal, and the regularization is not optional.
+zero-regularization limit. The regularization materially changes the projector
+and is part of the simulated realization.
 At the double-support stance of Scenarios~A--C, the contact null-space
 projector $P_c$ is an exact oblique projector only as the regularization
 vanishes, where $\|P_c\|_2=28.0$; at the $0.1$ actually used,
@@ -345,12 +339,12 @@ $\|P_c\|_2=12.6$ but $\|P_c-P_c^2\|=6.8$ and the six contact-direction
 eigenvalues have drifted from $0$ to $0.65$. The large operator norm at low
 regularization is what forces this choice: because $P_c$ is oblique rather
 than orthogonal, being a projector does not bound its gain, and below
-${\approx}3\times10^{-3}$ the amplified feedforward destabilizes the closed
-loop outright. The reported results therefore demonstrate predictive
-interaction regulation running \emph{above} a contact-consistent projection,
-not validated contact non-interference; establishing the latter needs a
-torque-level constrained inverse-dynamics realization with explicit
-contact, friction, and priority residuals.
+${\approx}3\times10^{-3}$ the amplified feedforward produces an unstable
+closed-loop response in this setup. The reported results therefore evaluate
+predictive interaction regulation above a regularized contact-aware
+projection. Exact contact non-interference would require a torque-level
+constrained inverse-dynamics realization with explicit contact, friction, and
+priority residuals.
 
 The centroidal momentum $h_G=[k^\top,L^\top]^\top=A(q)\dot{q}\in\mathbb{R}^6$
 aggregates the robot's linear and angular momentum about its
@@ -1076,7 +1070,7 @@ The interaction layer runs above the balance controller with a sustained
 $8$\,N pHRI force on the arm; the arm regulates a target fixed relative to the
 torso, isolating its disturbance-rejection task from the balancing motion.
 
-\emph{Balance stand-in and its limitations.} Realizing a standing single-support
+\emph{Balance stand-in and interpretation.} Realizing a standing single-support
 phase requires \emph{ankle-roll} (lateral centre-of-pressure) authority, which
 the biped of Scenarios~A/B/E lacks; hip-roll balancing alone produces a
 foot-tipping moment that cannot be countered and the robot falls. We therefore
@@ -1106,9 +1100,9 @@ and covariance inflation across the transition.
 \toprule
 \textbf{Controller} & \textbf{RMS err [mm]} & \textbf{Peak at switch [mm]} \\
 \midrule
-D5 no Kalman               & 24.11 & 25.72 \\
-D6 Kalman, no infl. ($\alpha=1$) & 12.48 & 16.68 \\
-D7 Kalman + infl. ($\alpha=4$)   & \textbf{12.42} & \textbf{16.68} \\
+D5 no Kalman               & 24.01 & 25.65 \\
+D6 Kalman, no infl. ($\alpha=1$) & 12.11 & 16.66 \\
+D7 Kalman + infl. ($\alpha=4$)   & \textbf{12.04} & \textbf{16.65} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1118,9 +1112,10 @@ precludes a physical single-support claim. The recovered inertia changes by
 less than two percent: $[1.11,1.04,2.30]$\,kg in the double-support model
 versus $[1.09,1.04,2.31]$\,kg in the right-foot model.
 
-The observer reduces RMS error from 24.11 to 12.42\,mm. Inflation is neutral
-within numerical variation: RMS changes from 12.48 to 12.42\,mm while switch
-peak is 16.68\,mm for both controllers.
+The observer reduces RMS error from 24.01 to 12.04\,mm. Inflation is neutral
+within numerical variation: RMS changes from 12.11 to 12.04\,mm while switch
+peak is 16.66\,mm (no inflation) versus 16.65\,mm (with inflation), essentially
+unchanged between the two.
 
 \begin{figure}[!t]
   \centering
@@ -1171,17 +1166,15 @@ contact-rich systems: first represent the task as interaction dynamics, then
 normalize those dynamics into a configuration-invariant predictive control
 problem.
 
-The proposed framework occupies a structural niche not addressed by prior
-locomotion-centric frameworks~\cite{dicarlo2018dynamic,kim2019highly,bellicoso2016perception,koolen2016design}:
-it deliberately halts the WBC stack after balance constraints are satisfied
-and injects normalized predictive interaction regulation into the residual
-null space.
+The framework complements locomotion-centric
+architectures~\cite{dicarlo2018dynamic,kim2019highly,bellicoso2016perception,koolen2016design}
+by placing normalized predictive interaction regulation in the residual null
+space after higher-priority balance constraints are represented.
 
-Future work includes hardware validation on a Unitree R1 or G1~EDU platform
-(the low-level SDK torque interface is directly compatible with the proposed
-architecture), extension to variable contact modes during dynamic walking,
-and integration of force-torque sensor feedback for improved Kalman
-convergence at contact transitions.
+The next validation stages are torque-level hardware experiments on a Unitree
+R1 or G1~EDU platform, variable contact modes during dynamic walking, and
+force-torque sensing for disturbance-estimator evaluation at contact
+transitions.
 
 % ----------------------------------------------------------
 \bibliographystyle{IEEEtran}

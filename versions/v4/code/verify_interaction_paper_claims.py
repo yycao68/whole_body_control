@@ -318,6 +318,38 @@ def verify_push(manuscript: str) -> dict:
     }
 
 
+def verify_timing(manuscript: str, data: dict) -> dict:
+        """Match manuscript timing summaries to the authoritative terrain trials."""
+        report = {}
+        for kind in ("wbc", "mpc"):
+                timings = [trial["timing"][kind] for trial in data["trials"]]
+                report[kind] = {
+                        "median_of_trial_medians_ms": float(np.median(
+                                [item["median_ms"] for item in timings]
+                        )),
+                        "median_of_trial_p99_ms": float(np.median(
+                                [item["p99_ms"] for item in timings]
+                        )),
+                        "median_deadline_miss_pct": 100.0 * float(np.median(
+                                [item["deadline_miss_fraction"] for item in timings]
+                        )),
+                        "maximum_ms": float(max(item["max_ms"] for item in timings)),
+                }
+        expected = (
+                f"{report['wbc']['median_of_trial_medians_ms']:.2f} ms",
+                f"{report['wbc']['median_of_trial_p99_ms']:.2f} ms",
+                f"{report['wbc']['median_deadline_miss_pct']:.0f}%",
+                f"{report['mpc']['median_of_trial_medians_ms']:.2f}",
+                f"{report['mpc']['median_of_trial_p99_ms']:.2f} ms",
+                f"{report['mpc']['median_deadline_miss_pct']:.2f}%",
+                f"{report['wbc']['maximum_ms']:.2f} ms",
+                f"{report['mpc']['maximum_ms']:.2f} ms",
+        )
+        for value in expected:
+                require(value in manuscript, f"manuscript timing claim is stale: {value}")
+        return report
+
+
 def main() -> None:
     raw = DATASET.read_bytes()
     data = json.loads(raw)
@@ -390,10 +422,11 @@ def main() -> None:
                 f"manuscript still contains superseded numerical claim: {stale!r}")
     for claim in ("three controllers", "0.30", "0.50", "0.70",
                   "prototype measurement on a non-real-time host",
-                  "240 torque-level", "8.0%", "22.8%"):
+                  "240 torque-level", "7.0%", "22.7%"):
         require(claim in manuscript, f"manuscript evidence statement missing: {claim!r}")
 
-    config_report = verify_configuration()
+        timing_report = verify_timing(manuscript, data)
+        config_report = verify_configuration()
     figure_report = verify_figures(manuscript)
     video_report = verify_continuous_video(expected_gait)
     push_report = verify_push(manuscript)
@@ -404,6 +437,7 @@ def main() -> None:
         "sha256": hashlib.sha256(raw).hexdigest(),
         "reported_controllers": list(CONTROLLERS),
         "obstacle_interaction_vs_nominal_peak_pct": obstacle_pct,
+        "timing": timing_report,
         **config_report,
         **figure_report,
         **video_report,
