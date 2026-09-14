@@ -159,6 +159,20 @@ semantics tests pass without warnings. They confirm the implemented semantics:
 - the outer deadband supplies full nominal-loop transparency;
 - the adversarial band can command through hold while capture remains closed.
 
+### Capture-amplification mechanism -- comparison video (2026-09-13)
+
+Added `make_gate_comparison_video.py`: reruns the paper's own headline
+ablation (identical 4N process noise, no real external force) with the gate
+forced open vs the shipped confidence gate, rendered as a dark-themed
+two-panel MuJoCo comparison. One seed reproduces the qualitative and
+roughly quantitative story exactly -- +1074mm (ungated) vs +30mm (gated)
+windowed drift, against the paper's 20-seed median of 1539 vs ~95mm. Cited
+as a footnote at the capture-amplification claim in both `wbc_v5.tex` and
+`wbc_v5_zh.tex`; both PDFs rebuilt and content-verified. The supporting
+`stage2_id_on_policy.py` changes (an opt-in `force_gate_open` flag and an
+opt-in `video` capture parameter) default to the prior behavior and do not
+touch any existing return value; `test_gate_semantics.py` still 6/6.
+
 ### Tone and bilingual synchronization
 
 “Limitations” is now “Operating Envelope and Validation Scope” in English and
