@@ -127,9 +127,14 @@ class IDResidual:
     mechanism it is strong at. Output units are m/s.
     """
 
-    def __init__(self, kind, control_dt, mode="transient"):
+    def __init__(self, kind, control_dt, mode="transient", force_gate_open=False):
         self.kind = kind
         self.dt = control_dt
+        # Illustration-only bypass: forces g_cap=1.0 unconditionally, reproducing
+        # the pre-gate (ungated) capture law so its runaway failure mode can be
+        # shown side by side with the gated one. Default False leaves every
+        # existing caller's behaviour, and every reported number, unchanged.
+        self.force_gate_open = bool(force_gate_open)
         # 'transient': capture-assist (step toward the fall) for pushes.
         # 'sustained': step AGAINST the disturbance; id_mpc adds an integral term
         #  for offset-free rejection of a constant force. The two disturbance
@@ -245,7 +250,9 @@ class IDResidual:
         # quiescence). Latch on confident evidence; hold open while still recovering
         # (deviation large) so a long capture recovery keeps full capture; decay
         # once recovered. Sub-threshold noise never latches it -> no runaway.
-        if f_ext is not None:
+        if self.force_gate_open:
+            self.g_cap = 1.0                    # illustration bypass: see __init__
+        elif f_ext is not None:
             fmag = float(np.linalg.norm(f_ext))
             if emag < self.deadband:             # quiescent -> track the noise floor
                 self.sig2_f = (1 - self.a_sig) * self.sig2_f + self.a_sig * fmag * fmag
@@ -296,7 +303,7 @@ class IDResidual:
 def run(controller, push_n=0.0, push_t=2.5, push_dir=(0, 1), push_dur=0.15,
         duration=8.0, seed=0, push_phase="time", process_noise=0.0,
         scene_path=None, init_base_z=0.793, id_mode="transient", force_override=None,
-        grf_bias=(0.0, 0.0), grf_noise=0.0):
+        grf_bias=(0.0, 0.0), grf_noise=0.0, disable_gate=False, video=None):
     """push_phase: 'time' fires at push_t; 'DS'/'SS' gate the push on the first
     measured double-/single-support after push_t (paper's phase-locked protocol).
     process_noise: std [N] of a seeded lateral force on the torso each control
@@ -333,7 +340,25 @@ def run(controller, push_n=0.0, push_t=2.5, push_dir=(0, 1), push_dur=0.15,
     mujoco.mj_forward(model, data)
 
     policy = torch.jit.load(str(POLICY))
-    idr = IDResidual(controller, CONTROL_DECIMATION * SIM_DT, mode=id_mode)
+    idr = IDResidual(controller, CONTROL_DECIMATION * SIM_DT, mode=id_mode,
+                     force_gate_open=disable_gate)
+
+    # Optional offscreen video capture (illustration runs only; default None
+    # leaves every existing caller's return signature unchanged).
+    renderer = None
+    frames: list = []
+    cam = None
+    v_stride = 1
+    if video is not None:
+        renderer = mujoco.Renderer(model, height=video.get("height", 480),
+                                   width=video.get("width", 640))
+        v_stride = max(1, round(1.0 / (video.get("fps", 30) * SIM_DT)))
+        cam = mujoco.MjvCamera()
+        cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        cam.trackbodyid = pelvis
+        cam.distance = video.get("distance", 2.2)
+        cam.azimuth = video.get("azimuth", 135.0)
+        cam.elevation = video.get("elevation", -12.0)
 
     def com_state():
         com = (model.body_mass[1:, None] * data.xipos[1:]).sum(0) / mass
@@ -402,6 +427,12 @@ def run(controller, push_n=0.0, push_t=2.5, push_dir=(0, 1), push_dur=0.15,
                 data.xfrc_applied[pelvis, :3] += push_n * push_vec
         data.ctrl[:] = tau
         mujoco.mj_step(model, data)
+        if renderer is not None and k % v_stride == 0:
+            # Rendered as-is post-step (no extra mj_forward): keeps video capture
+            # fully decoupled from the control loop's own state so the ID law's
+            # numerics are byte-identical to a video=None run of the same seed.
+            renderer.update_scene(data, camera=cam)
+            frames.append(renderer.render().copy())
         counter += 1
 
         if t >= settle and counter % CONTROL_DECIMATION == 0:
@@ -471,10 +502,18 @@ def run(controller, push_n=0.0, push_t=2.5, push_dir=(0, 1), push_dur=0.15,
         for j in range(pi, len(latv) - w):
             if np.all(latv[j:j + w] < band):
                 rec = (j - pi) * SIM_DT; break
-    return {"fell": fell is not None, "peak_roll_deg": peak_roll,
-            "peak_pitch_deg": peak_pitch, "peak_tilt_deg": max(peak_roll, peak_pitch),
-            "recovery_s": rec, "survived": duration if fell is None else fell,
-            "lat_offset_mm": lat_off, "lat_drift_mm": lat_drift, "push_onset": push_start}
+    out = {"fell": fell is not None, "peak_roll_deg": peak_roll,
+           "peak_pitch_deg": peak_pitch, "peak_tilt_deg": max(peak_roll, peak_pitch),
+           "recovery_s": rec, "survived": duration if fell is None else fell,
+           "lat_offset_mm": lat_off, "lat_drift_mm": lat_drift, "push_onset": push_start}
+    if renderer is not None:
+        renderer.close()
+        out["frames"] = frames
+        out["video_fps"] = int(video.get("fps", 30))
+        out["t"] = np.arange(len(comy)) * SIM_DT
+        out["com_y_mm"] = comy * 1000.0
+        out["ey_mm"] = ey * 1000.0
+    return out
 
 
 def stats_cell(controller, push_n, push_dir, push_phase, seeds, process_noise, id_mode="transient"):
