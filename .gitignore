@@ -54,6 +54,7 @@ __pycache__/
 # clone or the gate/citation can never resolve from one.
 !versions/v4/code/results/continuous_flat_idmpc.mp4
 !versions/v5/figures/gate_comparison.mp4
+!versions/v2_strong/code/results/scenario_a_video.mp4
 
 # Vendored third-party assets (mujoco_menagerie model zoo, >1 GB of meshes)
 external_deps/

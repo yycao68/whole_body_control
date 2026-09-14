@@ -163,7 +163,7 @@ def _settle(model, data, ids, arm_grav, n=N_SETTLE):
 
 # ── Per-controller episode runner ──────────────────────────────────────────
 
-def run_controller(name, cfg, seed=None):
+def run_controller(name, cfg, seed=None, video=None):
     """
     Run one 5-second episode and return (t_log, e_log) arrays.
     cfg keys: use_mpc, use_kalman, use_contact_consist, use_integral, Ki, alpha
@@ -173,6 +173,13 @@ def run_controller(name, cfg, seed=None):
     seeds -- but the same cfg -- sample a distribution of disturbance
     parameters instead of the single fixed nominal case. seed=None
     reproduces the original deterministic F_DIST/T_DIST exactly.
+
+    video: optional dict (fps/width/height/distance/azimuth/elevation) to
+    opt into offscreen MuJoCo frame capture for illustration videos. When
+    given, returns a THIRD value (a dict with "frames"/"video_fps"); every
+    existing caller passes nothing and keeps the original 2-tuple return,
+    so this is fully backward compatible (test_code_paper_consistency.py
+    still exercises the untouched default path).
     """
     f_dist = F_DIST
     t_dist = T_DIST
@@ -222,6 +229,22 @@ def run_controller(name, cfg, seed=None):
     e_log = np.zeros((N_RUN, 3))
 
     hand_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, 'right_hand')
+
+    # Optional offscreen video capture (illustration runs only; default None
+    # leaves every existing caller's return signature/behaviour unchanged).
+    renderer = None
+    frames = []
+    cam = None
+    v_stride = 1
+    if video is not None:
+        renderer = mujoco.Renderer(model, height=video.get('height', 480),
+                                   width=video.get('width', 640))
+        v_stride = max(1, round(1.0 / (video.get('fps', 30) * 0.001)))
+        cam = mujoco.MjvCamera()
+        cam.lookat[:] = [0., 0., 0.75]
+        cam.distance = video.get('distance', 3.0)
+        cam.azimuth = video.get('azimuth', 75.0)
+        cam.elevation = video.get('elevation', -12.0)
 
     for step in range(N_RUN):
         t = step * 0.001
@@ -323,6 +346,14 @@ def run_controller(name, cfg, seed=None):
         for _ in range(2):
             mujoco.mj_step(model, data)
 
+        if renderer is not None and step % v_stride == 0:
+            cam.lookat[0] = data.xpos[1, 0]
+            renderer.update_scene(data, camera=cam)
+            frames.append(renderer.render().copy())
+
+    if renderer is not None:
+        renderer.close()
+        return t_log, e_log, {"frames": frames, "video_fps": int(video.get('fps', 30))}
     return t_log, e_log
 
 
