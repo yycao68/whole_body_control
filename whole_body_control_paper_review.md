@@ -25,8 +25,8 @@ reviewed only to establish version boundaries and were not edited.
   defect.
 - **V4:** manuscript tables, prose, timing, and timing figure are now aligned
   with the authoritative schema-2 JSON. All numerical, configuration, figure,
-  and timing checks pass. Release remains blocked by the absent hashed
-  no-root-assist MP4.
+  timing, and video checks pass -- the full fail-closed evidence gate is
+  green end to end (2026-09-13).
 - **V5:** the gate semantics tests pass 6/6. The oracle-ablation table now uses
   one consistent 20-seed source in English and Chinese. Full campaign
   regeneration, previously blocked locally by missing PyTorch and the frozen
@@ -111,12 +111,20 @@ checks the timing prose against the authoritative trials, preventing recurrence.
 The update rates are explicitly simulation schedules rather than real-time
 claims.
 
-### Missing release video
+### Missing release video -- resolved 2026-09-13
 
 The numerical tables, timing, configuration, figures, and push checks pass.
-The full verifier stops because `code/results/continuous_flat_idmpc.mp4` is
-absent, although its JSON metadata and expected hash remain. The README,
-experiment-status note, and manuscript now state this release boundary.
+The full verifier used to stop because `code/results/continuous_flat_idmpc.mp4`
+was absent, although its JSON metadata and expected hash remained (a stray
+copy from v3, even pointing at a `versions/v3/...` path). The dedicated
+`make_continuous_flat_video.py` script already existed and needed only to be
+rerun with the documented parameters (`interaction_mpc`, seed 4300, duration
+15 s): `fell: false`, `qp_fallbacks: 0`, lateral RMS 4.66 mm (matches the
+stale JSON's 4.68 mm), and the full fail-closed verifier now reports
+`"status": "PASS"` end to end, including the video-hash check. The script's
+`video` field is now written as a repo-relative path instead of an absolute
+one. The README, experiment-status note, and manuscript now state the gate is
+fully satisfied.
 
 ### Tone
 
@@ -171,7 +179,8 @@ headline numbers match.
   machine.
 - V4 terrain, push, timing, configuration, and figure checks: pass (reverified
   2026-09-13).
-- V4 full gate: blocked only by the missing MP4.
+- V4 full gate: `"status": "PASS"` end to end, including the video-hash check
+  (regenerated 2026-09-13; see Missing release video above).
 - V5 confidence-gate tests: 6/6 pass (reverified 2026-09-13).
 - V5 full platform check: PyTorch and the frozen reference were both
   obtainable on this workstation (`pip`-installed torch was already present;
@@ -197,8 +206,9 @@ headline numbers match.
 1. Supply the full Menagerie G1 mesh set and rerun all 20 v2 tests plus Scenario C
    (resolved on this workstation 2026-09-13; still applies to environments
    without the full mesh set).
-2. Regenerate and commit v4's hashed no-root-assist MP4, then rerun the complete
-   fail-closed verifier.
+2. ~~Regenerate and commit v4's hashed no-root-assist MP4, then rerun the
+   complete fail-closed verifier.~~ -- done 2026-09-13; the verifier reports
+   `"status": "PASS"` end to end.
 3. ~~Install PyTorch, regenerate v5's frozen reference, and rerun
    `revalidate_gated.py`~~ -- done 2026-09-13; every headline number
    reproduces exactly (see Validation Record). The frozen reference itself

@@ -145,7 +145,10 @@ def render(controller: str, seed: int, duration: float, output: Path) -> dict:
     summary["lateral_error_mean_mm"] = lat_mean
     summary["lateral_error_final_second_rms_mm"] = lat_tail_rms
     summary["lateral_error_final_second_mean_mm"] = lat_tail_mean
-    summary["video"] = str(output)
+    try:
+        summary["video"] = str(output.relative_to(RESULTS.parent))
+    except ValueError:
+        summary["video"] = str(output)
     return summary
 
 

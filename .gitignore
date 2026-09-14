@@ -49,6 +49,9 @@ __pycache__/
 
 # Large binaries (compiled paper PDFs are tracked deliverables, not ignored)
 *.mp4
+# ...except release videos the paper's own fail-closed verifier hash-checks --
+# these must survive a fresh clone or the gate can never pass from one.
+!versions/v4/code/results/continuous_flat_idmpc.mp4
 
 # Vendored third-party assets (mujoco_menagerie model zoo, >1 GB of meshes)
 external_deps/

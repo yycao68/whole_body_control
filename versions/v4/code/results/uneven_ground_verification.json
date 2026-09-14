@@ -1,13 +1,27 @@
 {
   "status": "PASS",
   "dataset": "uneven_ground_benchmark.json",
-  "sha256": "da87a08b198abfa82d05eae0e028cea4a484c41a31d5022d5066ca554cb2b4d1",
+  "sha256": "87e7fc151a6eafc1d8ada69b0588d643b2976d12eb7d718756d0bca6bc828586",
   "reported_controllers": [
     "impedance",
     "nominal_mpc",
     "interaction_mpc"
   ],
-  "obstacle_interaction_vs_nominal_peak_pct": -6.976215915320033,
+  "obstacle_interaction_vs_nominal_peak_pct": -6.976315884924357,
+  "timing": {
+    "wbc": {
+      "median_of_trial_medians_ms": 3.8246667481871555,
+      "median_of_trial_p99_ms": 10.681524696810811,
+      "median_deadline_miss_pct": 100.0,
+      "maximum_ms": 37.93537499586819
+    },
+    "mpc": {
+      "median_of_trial_medians_ms": 1.6804690003482392,
+      "median_of_trial_p99_ms": 2.773989211273146,
+      "median_deadline_miss_pct": 0.2006688963210702,
+      "maximum_ms": 24.926957994466648
+    }
+  },
   "realizer": "soft (exact_realizer=False)",
   "estimator": "single FilteredAccelerationResidualEstimator",
   "paper_figures": [
@@ -21,20 +35,20 @@
     "uneven_ground_timing.png"
   ],
   "continuous_video": "continuous_flat_idmpc.mp4",
-  "continuous_video_sha256": "56648b7f1a11d572f6c6733031285d91ed2fe576b4b61982712759099f3735db",
-  "continuous_video_lateral_rms_mm": 4.680868034005387,
-  "continuous_video_lateral_peak_mm": 10.632684743780235,
-  "continuous_video_lateral_mean_mm": -1.4776325510153792,
-  "continuous_video_final_second_lateral_rms_mm": 3.081054074380771,
+  "continuous_video_sha256": "01e9083732920c0ac91a72c8810ff0a098fe41da0d79f56fe3401f602d77e885",
+  "continuous_video_lateral_rms_mm": 4.658932785260512,
+  "continuous_video_lateral_peak_mm": 10.632529221782274,
+  "continuous_video_lateral_mean_mm": -1.3121002524818024,
+  "continuous_video_final_second_lateral_rms_mm": 3.2366693936892332,
   "push_dataset": "external_push_benchmark.json",
-  "push_sha256": "1b74c4453e084d951447e90d09a1a20d752a80322c4ae7c0c5410a6996096bd3",
-  "lateral_ss_nominal_peak_mm": 15.99636468060503,
-  "lateral_ss_interaction_peak_mm": 12.378460041245862,
+  "push_sha256": "54bd0a6d7eeadaab305b42c74b187a6e0c1be579cac9092490b9f60603096337",
+  "lateral_ss_nominal_peak_mm": 15.99636574026421,
+  "lateral_ss_interaction_peak_mm": 12.371121867192816,
   "push_interaction_vs_nominal_peak_pct": {
-    "lateral/double_support": -14.03298619758902,
-    "lateral/single_support": -22.617042756881734,
-    "forward/double_support": -6.226790694082938,
-    "forward/single_support": -13.665126038614371
+    "lateral/double_support": -13.921184639635728,
+    "lateral/single_support": -22.662921890728892,
+    "forward/double_support": -6.198661913195455,
+    "forward/single_support": -13.30683257466962
   },
-  "push_max_torque_utilization": 0.7189448787556028
+  "push_max_torque_utilization": 0.7205613542629657
 }
