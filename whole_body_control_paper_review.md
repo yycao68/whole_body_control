@@ -61,6 +61,18 @@ realization. The experiments evaluate predictive interaction regulation above
 a regularized contact-aware projection; they do not claim exact contact
 non-interference.
 
+### D1-vs-D7 comparison video (2026-09-13)
+
+Added `make_scenario_a_video.py`: reruns the exact, audited D1 and D7
+controllers Table III reports (through the real contact-consistent
+WBCController + ImpedanceMPC + Kalman path, via a new opt-in `video`
+parameter on `run_controller()` that defaults to the prior behavior and
+return signature) under the identical 8N step disturbance. Reproduces the
+paper's headline 73x figure on the rendered episode: D1 10.17mm vs D7
+0.14mm steady-state error (paper: 10.17 vs 0.139mm). Cited as a footnote
+at the 73x claim in `arXiv/body.tex`; both PDFs rebuilt and
+content-verified. `test_code_paper_consistency.py` still 20/20.
+
 ### Tone and provenance
 
 Deficit-oriented comparisons with fixed-base and locomotion methods were
